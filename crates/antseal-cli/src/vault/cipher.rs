@@ -224,8 +224,11 @@ impl From<CipherError> for CliError {
             CipherError::AuthFailure | CipherError::BlobTooShort { .. } => {
                 CliError::VaultAuthFailure
             }
-            CipherError::RngFailure => CliError::Internal {
-                detail: "OS random source failed while drawing a record nonce".to_owned(),
+            // D201 (`U104`): the nonce is drawn before anything is encrypted,
+            // so the record it was for is never written.
+            CipherError::RngFailure => CliError::RandomSourceUnavailable {
+                what: "a vault record's nonce",
+                consequence: "that record was not written",
             },
             CipherError::AadEncode | CipherError::EncryptFailure => CliError::Internal {
                 detail: "vault record encryption failed on a fixed-shape input".to_owned(),
@@ -446,5 +449,61 @@ mod tests {
                 assert_ne!(suffixes[i], suffixes[j], "{:?} vs {:?}", ids[i], ids[j]);
             }
         }
+    }
+
+    /// The OS random source with nothing to give: every draw fails with
+    /// `getrandom`'s own error, as [`crate::rng::OsEntropy`]'s would.
+    struct UnavailableRandomSource;
+
+    impl rand_core::TryRng for UnavailableRandomSource {
+        type Error = getrandom::Error;
+
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            Err(getrandom::Error::UNSUPPORTED)
+        }
+
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            Err(getrandom::Error::UNSUPPORTED)
+        }
+
+        fn try_fill_bytes(&mut self, _dst: &mut [u8]) -> Result<(), Self::Error> {
+            Err(getrandom::Error::UNSUPPORTED)
+        }
+    }
+
+    impl rand_core::TryCryptoRng for UnavailableRandomSource {}
+
+    /// **D201 R2 (`U104`)** through the record cipher's own seam: a nonce the
+    /// OS cannot supply stops the record before anything is encrypted, and
+    /// the user is told it is this machine's fault, not antseal's.
+    #[test]
+    fn an_unavailable_random_source_is_a_machine_fault_not_an_antseal_bug() {
+        let id = seal_a();
+        let err = seal_record(
+            &test_key(),
+            b"header-bytes-fixture",
+            RecordIdentity::WorkMeta { seal_id: &id },
+            b"payload",
+            &mut UnavailableRandomSource,
+        )
+        .expect_err("no nonce can be drawn");
+        assert_eq!(err, CipherError::RngFailure);
+
+        let cli = CliError::from(err);
+        assert_eq!(cli.class(), crate::error::ErrorClass::Internal);
+        assert_eq!(cli.exit_code(), 1);
+        let message = cli.to_string();
+        assert!(
+            message.contains(
+                "the operating system's random source is unavailable, so a vault record's \
+                 nonce could not be generated: that record was not written."
+            ),
+            "{message}"
+        );
+        assert!(
+            message.contains("This is a fault of this machine, not a bug in antseal"),
+            "{message}"
+        );
+        assert!(!message.contains("this is a bug in antseal"), "{message}");
     }
 }

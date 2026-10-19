@@ -219,7 +219,16 @@ pub enum AnchorGateError {
     /// The OS CSPRNG is unavailable, so no timestamp request could be built.
     ///
     /// Its own arm, and deliberately: "this machine cannot produce randomness"
-    /// must never be triaged as "the TSAs are down". No request was sent.
+    /// must never be triaged as "the TSAs are down". No TSA request was sent:
+    /// every TSA nonce is drawn before any request is (`tsa.rs`'s
+    /// `capture_from_tsas`). The OTS calendars run first, so they have
+    /// already been sent the anchor digest (`submit.rs`'s `submit_anchors`;
+    /// D201 §0).
+    ///
+    /// The CLI reports it in class `internal` (1), as a fault of the machine,
+    /// not in `anchor-gate-abort` (22): neither of 22's remedies, an authority
+    /// that returns a counting token or `--force-degraded`, can supply
+    /// randomness (D201, `U103`).
     #[error(transparent)]
     Entropy(#[from] crate::nonce::NonceUnavailable),
 }

@@ -133,8 +133,12 @@ fn snapshot_enumerates_every_command_node() {
 /// - the global flag states the recorded-network rule **precisely**:
 ///   `restore`, and `reveal` when it must fetch, use the network the work
 ///   was sealed on (D170 §2 R3; D175 §2 R2/R3), so "flag > config > default"
-///   is the rule for **new** work only — and `status`, `show` and `list`
-///   read no network, so the sentence claims nothing for them.
+///   is the rule for **new** work and for `verify --online`/`--live` only;
+///   `init` writes the flag's network into config.toml; and every other
+///   command is quantified — "no other command takes a network from this
+///   flag" — never listed (U102: the list it replaced, "status, show and
+///   list read no network", went stale when `abandon` landed, and was false
+///   for `status`, whose receipt backfill reads the work's own chain).
 #[test]
 fn the_network_help_names_the_export_carries_no_node_count_and_states_the_recorded_rule() {
     let mut root = Cli::command();
@@ -161,8 +165,22 @@ fn the_network_help_names_the_export_carries_no_node_count_and_states_the_record
          D175 §2 R2/R3): {flag_help}"
     );
     assert!(
-        flag_help.contains("status, show and list read no network"),
-        "and names the commands the rule does not reach, which act on no network: {flag_help}"
+        flag_help.contains("and for verify --online and --live"),
+        "the help names verify --online and --live, which take their network from this flag \
+         too (flag > config > default): {flag_help}"
+    );
+    assert!(
+        flag_help.contains("init writes it into config.toml as default_network"),
+        "the help names init, which writes the flag's network into config.toml: {flag_help}"
+    );
+    assert!(
+        flag_help.contains("no other command takes a network from this flag"),
+        "and quantifies every other command instead of listing them (U102): {flag_help}"
+    );
+    assert!(
+        !flag_help.contains("status, show and list"),
+        "the stale enumeration is gone — it listed three of the commands that take no network \
+         from this flag and missed abandon (U102): {flag_help}"
     );
     assert!(
         flag_help.contains("421614"),

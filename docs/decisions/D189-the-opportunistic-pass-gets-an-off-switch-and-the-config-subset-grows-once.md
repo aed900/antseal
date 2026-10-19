@@ -386,3 +386,31 @@ It adds a config key and grows the config grammar inside the wave's own
 commits. Nothing in it authorises a push, a workflow dispatch, a deploy or any
 other outward act; each of those needs the maintainer's express consent naming
 the action, the destination and the account.
+
+## Addendum — 2026-10-19 (wave 39, D196 §2 R1–R2; D202): an unknown key still only warns while a known key in the wrong table is refused, and `A141` is answered
+
+1. **§2 R3's promise for unknown keys stands (D196 §2 R2).** §2 R3 reads *"Unknown keys warn on
+   the key alone"* (`:211`), and its *Why now* — the first released binary cannot be patched, so
+   a config written by a newer antseal must still load (`:216-219`) — is unchanged. D196 refuses
+   only a key this build **knows**, written in a table where it does not live (D196 §2 R1). That
+   refusal is raised on the key before its value is parsed, so no value is read for it either,
+   and the `[networks.<id>]` name check still runs first, as §2 R3's first bullet requires. The
+   refusal rests on D180's ground, not on this record's: D180 already refused a known key the
+   binary cannot honour, and D196 measured that a misplaced recognised key only warns today, so
+   the override it carried is silently lost (D196 §1.1). The cost is the one D180 accepted for
+   `rpc_url`: a later build that gives a known key a second home would make this build refuse
+   that file, and no release exists yet for such a refusal to break (D196 §4).
+2. **§4's `A141` bullet (`:291-301`) is answered by D202.** §4 offered two remedies: check the
+   remaining budget before `confirm_header` and drop the merge, or restate the bound wherever it
+   is printed. D202 takes the first and widens it. A time-only gate
+   (`started.elapsed() >= budget.total`, never `budget.exhausted(..)`, which would drop the last
+   permitted poll's upgrade) runs immediately before `confirm_header`, and each of the
+   confirmation's esplora requests checks the same deadline before it starts. So
+   `budget.total + one in-flight call` is true as written, and no figure is restated. Its tests
+   are the ones §4 asked for: a late-answering upgraded stub and slow esplora stubs, the shape
+   asserted exactly and the wall clock loosely (D202 §3). The ≈12 s of §1.2 stays correct as a
+   derivation, but §0's *"no offline run can reach it"* (`:55-57`) did not hold: a loopback-only
+   run with the real opportunistic client and budget measured 9.4 s at `07a170c`, because Q16
+   refuses non-loopback hosts, not loopback stubs (D202 §1.3).
+
+The rest of this record stands. The text above stays as written.

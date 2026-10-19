@@ -1174,3 +1174,469 @@ fn the_seam_scan_reports_a_planted_call_and_ignores_definitions_and_tests() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// A141 / D202: no request of the pass starts after its time budget, the
+// header confirmation included
+// ─────────────────────────────────────────────────────────────────────
+
+/// `MERGED_A`'s three pending calendars, in the order the engine polls them
+/// — the order [`assert_calendar_order`] pins before any test below relies
+/// on alice being polled before bob.
+const ALICE_URI: &str = "https://alice.btc.calendar.opentimestamps.org";
+const BOB_URI: &str = "https://bob.btc.calendar.opentimestamps.org";
+const CATALLAXY_URI: &str = "https://btc.calendar.catallaxy.com";
+
+/// The late-upgrade round's clock (`a_late_upgrade_starts_no_header_request`).
+/// Alice answers "pending" after [`LATE_ALICE_STALL`], so bob's poll starts
+/// ~0.5 s in — 1.5 s inside [`LATE_BUDGET`] — and answers its upgrade no
+/// earlier than 0.5 + 2.5 = 3 s: a full second past the budget, by
+/// construction rather than by scheduling luck.
+const LATE_BUDGET: Duration = Duration::from_secs(2);
+const LATE_ALICE_STALL: Duration = Duration::from_millis(500);
+const LATE_BOB_STALL: Duration = Duration::from_millis(2_500);
+/// Each of the pair's GETs in the late-upgrade round: a confirmation that
+/// slipped past the gate would cost seconds here, not microseconds.
+const LATE_ESPLORA_STALL: Duration = Duration::from_secs(1);
+
+/// The slow-block-hash round's clock
+/// (`a_confirmation_starts_no_request_after_the_budget`). Alice answers her
+/// upgrade at once, so the confirmation starts ~1.5 s inside
+/// [`CONFIRM_BUDGET`]; each endpoint's block-hash GET answers no earlier
+/// than [`CONFIRM_HASH_STALL`], a full second past it.
+const CONFIRM_BUDGET: Duration = Duration::from_millis(1_500);
+const CONFIRM_HASH_STALL: Duration = Duration::from_millis(2_500);
+
+/// Slack on every wall-clock UPPER bound in this section — generous, because
+/// this host has two cores and other builds share them. The upper bounds are
+/// the loose half of A141's Accept ("wall-clock asserted loosely, the shape
+/// exactly"); the exact shape is what discriminates.
+const A141_SLACK: Duration = Duration::from_millis(1_500);
+
+/// A budget that never runs out in these rounds.
+const ROOMY: UpgradeBudget = UpgradeBudget {
+    total: Duration::from_secs(60),
+    max_polls: 4,
+};
+
+/// One attempt, and phase rungs far wider than any stall in this section.
+///
+/// Not [`client`]: the opportunistic rungs put `recv_response` at 2.5 s, and
+/// a stall near a rung could time a request out. A timed-out block-hash GET
+/// would ALSO leave the header GET unsent, so "the header GET never started"
+/// would pass for the wrong reason. With a 30 s global every stall here is
+/// many seconds from any timeout, and the single attempt keeps
+/// `connections()` an exact count of requests.
+fn patient_client() -> HttpClient {
+    let mut policy = HttpPolicy::opportunistic();
+    policy.timeouts = crate::http::HttpTimeouts::within(30_000);
+    HttpClient::new(policy)
+}
+
+/// The premise every test below stands on: the engine polls `MERGED_A`'s
+/// calendars in this order. A "late bob" polled first would measure nothing.
+fn assert_calendar_order() {
+    let uris: Vec<String> = crate::ots::pending_refs(fixtures::MERGED_A, &fixtures::DIGEST_A)
+        .expect("parses")
+        .into_iter()
+        .map(|reference| reference.uri)
+        .collect();
+    assert_eq!(
+        uris,
+        [ALICE_URI, BOB_URI, CATALLAXY_URI],
+        "the polling order these tests rely on"
+    );
+}
+
+/// A calendar whose upgrade poll answers after `delay`: `200` with `upgrade`
+/// when one is given, else the real "pending" `404`.
+fn slow_calendar(delay: Duration, upgrade: Option<&[u8]>) -> StubServer {
+    use crate::testing::stub::{StubMatch, StubReply, StubScript};
+    let reply = match upgrade {
+        Some(body) => StubReply::SlowBody {
+            delay,
+            status: 200,
+            content_type: "application/vnd.opentimestamps.v1",
+            bytes: body.to_vec(),
+        },
+        None => StubReply::SlowBody {
+            delay,
+            status: 404,
+            content_type: "text/plain",
+            bytes: fixtures::CALENDAR_PENDING_BODY.to_vec(),
+        },
+    };
+    StubServer::spawn(StubScript::new().route(StubMatch::target("timestamp/"), reply))
+}
+
+/// One esplora endpoint replaying **its own** recorded exchange for `block`,
+/// each of its two GETs answering after its own delay.
+fn slow_esplora(
+    block: crate::testing::replay::AttestedBlock,
+    endpoint: RecordedEndpoint,
+    hash_get: Duration,
+    header_get: Duration,
+) -> StubServer {
+    use crate::testing::stub::{StubMatch, StubReply, StubScript};
+    let slow = |delay: Duration, bytes: &[u8]| StubReply::SlowBody {
+        delay,
+        status: 200,
+        content_type: "text/plain",
+        bytes: bytes.to_vec(),
+    };
+    StubServer::spawn(
+        StubScript::new()
+            .route(
+                StubMatch::target(format!("/block-height/{}", block.height)),
+                slow(hash_get, block.hash_hex(endpoint)),
+            )
+            .route(
+                StubMatch::target("/header"),
+                slow(header_get, block.header_hex(endpoint)),
+            ),
+    )
+}
+
+/// The stubs of one round — three calendars, each on its own stub so one can
+/// be slow and another upgraded, and an esplora pair — so that the instrument
+/// check below runs the very same stubs the gated rows do.
+struct Round {
+    alice: StubServer,
+    bob: StubServer,
+    catallaxy: StubServer,
+    blockstream: StubServer,
+    mempool: StubServer,
+}
+
+impl Round {
+    /// Bob's upgrade (block 960768) arrives after `bob_stall`; alice is
+    /// pending after `alice_stall`; both of the pair's GETs take
+    /// `esplora_stall`.
+    fn bob_upgrades(alice_stall: Duration, bob_stall: Duration, esplora_stall: Duration) -> Self {
+        let block = attested_block(960_768).expect("bob's attesting block is committed");
+        Self {
+            alice: slow_calendar(alice_stall, None),
+            bob: slow_calendar(bob_stall, Some(fixtures::UPGRADE_A_BOB)),
+            catallaxy: slow_calendar(Duration::ZERO, None),
+            blockstream: slow_esplora(
+                block,
+                RecordedEndpoint::Blockstream,
+                esplora_stall,
+                esplora_stall,
+            ),
+            mempool: slow_esplora(
+                block,
+                RecordedEndpoint::Mempool,
+                esplora_stall,
+                esplora_stall,
+            ),
+        }
+    }
+
+    /// Alice's upgrade (block 960767) arrives at once; each endpoint's
+    /// block-hash GET takes `hash_stall`, and its header GET answers at once.
+    fn alice_upgrades(hash_stall: Duration) -> Self {
+        let block = attested_block(960_767).expect("alice's attesting block is committed");
+        Self {
+            alice: slow_calendar(Duration::ZERO, Some(fixtures::UPGRADE_A_ALICE)),
+            bob: slow_calendar(Duration::ZERO, None),
+            catallaxy: slow_calendar(Duration::ZERO, None),
+            blockstream: slow_esplora(
+                block,
+                RecordedEndpoint::Blockstream,
+                hash_stall,
+                Duration::ZERO,
+            ),
+            mempool: slow_esplora(block, RecordedEndpoint::Mempool, hash_stall, Duration::ZERO),
+        }
+    }
+
+    /// One engine pass over `MERGED_A`, and its wall clock.
+    fn run(&self, budget: UpgradeBudget) -> (UpgradeReport, Duration) {
+        let (alice, bob, catallaxy) = (
+            self.alice.base_url(),
+            self.bob.base_url(),
+            self.catallaxy.base_url(),
+        );
+        // A URI that is none of the three is refused, so a fixture that grew
+        // a fourth calendar shows up as a `Refused` note in the exact note
+        // lists below rather than being polled somewhere unplanned.
+        let resolve = move |uri: &str| {
+            let base = match uri {
+                ALICE_URI => &alice,
+                BOB_URI => &bob,
+                CATALLAXY_URI => &catallaxy,
+                _ => return Err(UpgradeUriRefusal::HostNotAllowed),
+            };
+            Ok(UpgradeTarget::loopback_for_tests(base))
+        };
+        let started = Instant::now();
+        let report = upgrade_pending_with(
+            &patient_client(),
+            &esplora_pair(&self.blockstream, &self.mempool),
+            &[work_with(fixtures::MERGED_A)],
+            budget,
+            HEADER_FETCH_DATE,
+            &resolve,
+        );
+        (report, started.elapsed())
+    }
+
+    fn calendar_connections(&self) -> (usize, usize, usize) {
+        (
+            self.alice.connections(),
+            self.bob.connections(),
+            self.catallaxy.connections(),
+        )
+    }
+
+    fn esplora_connections(&self) -> (usize, usize) {
+        (self.blockstream.connections(), self.mempool.connections())
+    }
+}
+
+/// **A141's Accept, the poll half.** A poll that STARTED inside the budget
+/// and answered with an upgrade after it starts no header request: the merge
+/// is dropped under a note naming the calendar, and the slow esplora pair is
+/// never contacted.
+///
+/// Red at HEAD's behaviour (neither of D202's checks): both endpoints are
+/// asked twice and the upgrade is recorded. With only the pre-confirmation
+/// check removed, the per-GET deadline still starts nothing, so the NOTE is
+/// what reds: it would be a `HeaderUnconfirmed` blaming the endpoints, where
+/// the cause is the budget.
+#[test]
+fn a_late_upgrade_starts_no_header_request() {
+    assert_calendar_order();
+    let round = Round::bob_upgrades(LATE_ALICE_STALL, LATE_BOB_STALL, LATE_ESPLORA_STALL);
+    let (report, wall) = round.run(UpgradeBudget {
+        total: LATE_BUDGET,
+        max_polls: 4,
+    });
+
+    // The instrument first, as `the_two_endpoints_are_queried_concurrently`
+    // does: a pass faster than the two calendar stalls measured nothing.
+    assert!(
+        wall >= LATE_ALICE_STALL + LATE_BOB_STALL,
+        "the stubs did not actually stall ({wall:?}); the test would measure nothing"
+    );
+
+    // The shape, exactly.
+    assert_eq!(
+        round.esplora_connections(),
+        (0, 0),
+        "a header request started after the budget was spent; notes: {:?}",
+        report.notes
+    );
+    assert_eq!(
+        report.polls, 2,
+        "alice and bob, and no poll after the budget"
+    );
+    assert_eq!(round.calendar_connections(), (1, 1, 0));
+    assert!(report.upgraded.is_empty(), "{:?}", report.upgraded);
+    assert!(report.budget_exhausted);
+    assert_eq!(
+        report.notes,
+        vec![
+            UpgradeNote::NotYetConfirmed {
+                uri: ALICE_URI.to_owned()
+            },
+            UpgradeNote::BudgetSpentBeforeHeader {
+                uri: BOB_URI.to_owned()
+            },
+            UpgradeNote::BudgetExhausted,
+        ]
+    );
+
+    // The bound, loosely: `budget.total + one in-flight call` — bob's poll.
+    assert!(
+        wall < LATE_BUDGET + LATE_BOB_STALL + A141_SLACK,
+        "later than `budget.total + one in-flight call` and the slack: {wall:?}"
+    );
+}
+
+/// **A141's Accept, the confirmation half.** A confirmation that starts
+/// inside the budget starts none of its requests after it: each esplora
+/// endpoint is asked for the block hash, answers after the budget, and is
+/// never asked for the header. The merge is dropped (`HeaderUnconfirmed`,
+/// re-pollable) and nothing is recorded.
+///
+/// Red at HEAD's behaviour, and with only the check before the header GET
+/// removed: each endpoint is asked both questions.
+#[test]
+fn a_confirmation_starts_no_request_after_the_budget() {
+    assert_calendar_order();
+    let round = Round::alice_upgrades(CONFIRM_HASH_STALL);
+    let (report, wall) = round.run(UpgradeBudget {
+        total: CONFIRM_BUDGET,
+        max_polls: 4,
+    });
+
+    assert!(
+        wall >= CONFIRM_HASH_STALL,
+        "the stubs did not actually stall ({wall:?}); the test would measure nothing"
+    );
+
+    assert_eq!(
+        round.esplora_connections(),
+        (1, 1),
+        "a header GET started after the budget was spent; notes: {:?}",
+        report.notes
+    );
+    for server in [&round.blockstream, &round.mempool] {
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1, "one request per endpoint");
+        let line = crate::testing::replay::request_line(&requests[0]);
+        assert!(
+            line.contains("/block-height/960767"),
+            "the one request is the block-hash GET: {line}"
+        );
+    }
+    assert_eq!(report.polls, 1, "bob and catallaxy wait for a later pass");
+    assert_eq!(round.calendar_connections(), (1, 0, 0));
+    assert!(report.upgraded.is_empty(), "{:?}", report.upgraded);
+    assert!(report.budget_exhausted);
+    assert_eq!(
+        report.notes,
+        vec![
+            UpgradeNote::HeaderUnconfirmed {
+                uri: ALICE_URI.to_owned(),
+                source: HeaderError::NotAgreed { height: 960_767 },
+            },
+            UpgradeNote::BudgetExhausted,
+        ]
+    );
+
+    // The bound, loosely: `budget.total + one in-flight call` — the pair's
+    // concurrent block-hash GETs.
+    assert!(
+        wall < CONFIRM_BUDGET + CONFIRM_HASH_STALL + A141_SLACK,
+        "later than `budget.total + one in-flight call` and the slack: {wall:?}"
+    );
+}
+
+/// The instrument check for the two rows above: the SAME stubs, inside a
+/// budget that does not run out, record the upgrade, and each esplora
+/// endpoint answers both its questions. So what dropped the merge above was
+/// the budget — not a stub that could not answer, not a client that timed
+/// out, and not a header that fails to commit.
+#[test]
+fn a_slow_round_inside_the_budget_still_upgrades() {
+    assert_calendar_order();
+
+    // The late-upgrade round's stubs.
+    let round = Round::bob_upgrades(LATE_ALICE_STALL, LATE_BOB_STALL, LATE_ESPLORA_STALL);
+    let (report, wall) = round.run(ROOMY);
+    assert!(
+        wall >= LATE_ALICE_STALL + LATE_BOB_STALL + 2 * LATE_ESPLORA_STALL,
+        "the stubs did not actually stall ({wall:?}); the test would measure nothing"
+    );
+    assert_eq!(
+        round.esplora_connections(),
+        (2, 2),
+        "notes: {:?}",
+        report.notes
+    );
+    assert_eq!(report.upgraded.len(), 1, "notes: {:?}", report.notes);
+    assert_eq!(
+        report.upgraded[0]
+            .upgrade
+            .as_ref()
+            .map(OtsUpgrade::block_height),
+        Some(960_768)
+    );
+    assert_eq!(report.polls, 3);
+    assert_eq!(round.calendar_connections(), (1, 1, 1));
+    assert!(!report.budget_exhausted);
+    assert_eq!(
+        report.notes,
+        vec![
+            UpgradeNote::NotYetConfirmed {
+                uri: ALICE_URI.to_owned()
+            },
+            UpgradeNote::NotYetConfirmed {
+                uri: CATALLAXY_URI.to_owned()
+            },
+        ]
+    );
+
+    // The slow-block-hash round's stubs.
+    let round = Round::alice_upgrades(CONFIRM_HASH_STALL);
+    let (report, wall) = round.run(ROOMY);
+    assert!(
+        wall >= CONFIRM_HASH_STALL,
+        "the stubs did not actually stall ({wall:?}); the test would measure nothing"
+    );
+    assert_eq!(
+        round.esplora_connections(),
+        (2, 2),
+        "notes: {:?}",
+        report.notes
+    );
+    assert_eq!(report.upgraded.len(), 1, "notes: {:?}", report.notes);
+    assert_eq!(
+        report.upgraded[0]
+            .upgrade
+            .as_ref()
+            .map(OtsUpgrade::block_height),
+        Some(960_767)
+    );
+    assert_eq!(report.polls, 3);
+    assert_eq!(round.calendar_connections(), (1, 1, 1));
+    assert!(!report.budget_exhausted);
+    assert_eq!(
+        report.notes,
+        vec![
+            UpgradeNote::NotYetConfirmed {
+                uri: BOB_URI.to_owned()
+            },
+            UpgradeNote::NotYetConfirmed {
+                uri: CATALLAXY_URI.to_owned()
+            },
+        ]
+    );
+}
+
+/// **D202 R1's spelling, pinned on its own row.** The gate before a
+/// confirmation is on TIME alone: bob's upgrade arrives on the last poll the
+/// budget permits (`max_polls: 2`) with all the time in the world, and is
+/// confirmed and recorded.
+///
+/// A gate spelled `budget.exhausted(started, report.polls)` counts that poll
+/// against its own confirmation and drops the upgrade (planted on
+/// 2026-10-19: this row and the three `max_polls: 1` rows that reach a
+/// confirmation all red) — the same thing it would do to the last poll of
+/// every later work, which is exactly how the opportunistic hook hands polls
+/// out. No stub stalls: the row is about the count, not the clock.
+#[test]
+fn the_last_permitted_poll_still_has_its_header_confirmed() {
+    assert_calendar_order();
+    let round = Round::bob_upgrades(Duration::ZERO, Duration::ZERO, Duration::ZERO);
+    let (report, _) = round.run(UpgradeBudget {
+        total: Duration::from_secs(60),
+        max_polls: 2,
+    });
+
+    assert_eq!(report.polls, 2);
+    assert_eq!(report.upgraded.len(), 1, "notes: {:?}", report.notes);
+    assert_eq!(
+        report.upgraded[0]
+            .upgrade
+            .as_ref()
+            .map(OtsUpgrade::block_height),
+        Some(960_768)
+    );
+    assert_eq!(round.esplora_connections(), (2, 2));
+    assert_eq!(round.calendar_connections(), (1, 1, 0));
+    // The poll count, not the clock, leaves catallaxy for a later pass.
+    assert!(report.budget_exhausted);
+    assert_eq!(
+        report.notes,
+        vec![
+            UpgradeNote::NotYetConfirmed {
+                uri: ALICE_URI.to_owned()
+            },
+            UpgradeNote::BudgetExhausted,
+        ]
+    );
+}

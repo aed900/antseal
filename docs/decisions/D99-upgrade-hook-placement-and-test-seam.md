@@ -869,3 +869,28 @@ doing so it measured three things in this record:
 
 R8's placement ruling, its machine-mode reasoning and §8's trigger stand. The
 text above stays as written.
+
+## Addendum — 2026-10-19 (wave 39, D202 §2 R3): the exit-lateness bound holds as written again
+
+The 2026-10-17 addendum's first item found that R8's and §8's ≈ 6 s omitted a step —
+`confirm_header` ran after an upgraded poll with no budget check — and handed the bound to
+`A141`. **D202 (`A141`) closes that hand-off.**
+
+- A time-only gate (`started.elapsed() >= budget.total`) runs immediately before
+  `confirm_header`, and each of the confirmation's esplora requests checks the same deadline
+  before it starts. When the budget is spent the merge is dropped with its own note; nothing
+  durable is lost, because the engine persists nothing and the next pass polls the same calendar
+  again.
+- No request of the pass therefore starts after the budget, and the bound R8 states —
+  *"`budget.total + one in-flight call` ≈ 6 s late to exit"* (`:594-596`) — is true as written
+  again, and so are §8's *"~6 s late"* (`:750`) and §9's *"(~6 s)"* (`:803`). No figure in this
+  record changes.
+- That addendum also said *"It is derived from code, not measured: with Q16's gate armed no
+  offline run can reach it"* (`:856-857`). That did not hold. Q16 refuses non-loopback hosts, not
+  loopback stubs, and a loopback-only probe with the real opportunistic client and budget
+  measured 9.4 s at `07a170c`, before the fix (D202 §1.3). D202's engine tests assert the gate's
+  shape with such stubs (D202 §3).
+
+That addendum's second and third items (`U58` is `U60`; the D41 mis-citation) are unchanged, and
+R8's placement ruling, its machine-mode reasoning and §8's trigger stand. The text above stays as
+written.

@@ -411,7 +411,7 @@ mod tests {
             // refusals is licensed by.
             //
             // This is a ROUTING assertion — which constant the producer
-            // selected — and NOT the banned shape `vault/keyfile.rs:418-422`
+            // selected — and NOT the banned shape `vault/keyfile.rs:422-426`
             // warns about, which compares a claim against the string that
             // makes it. The constants' own wording stays pinned by
             // `tests/snapshots/init-report.txt:68` and `:79`.

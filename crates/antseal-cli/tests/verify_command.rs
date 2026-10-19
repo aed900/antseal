@@ -623,7 +623,7 @@ fn live_over_a_tampered_bundle_is_rejected_at_forty_with_zero_fetches() {
         CollectedInputs::none(),
         async {
             connected.store(true, Ordering::SeqCst);
-            SharedMock(std::sync::Arc::clone(&network))
+            degrade("verify", Ok(SharedMock(std::sync::Arc::clone(&network))))
         },
     )) {
         Ok(_) => panic!("a tampered bundle must not verify under --live"),
@@ -674,7 +674,7 @@ fn live_over_a_tampered_bundle_is_rejected_at_forty_with_zero_fetches() {
         CollectedInputs::none(),
         async {
             control_connected.store(true, Ordering::SeqCst);
-            SharedMock(std::sync::Arc::clone(&control))
+            degrade("verify", Ok(SharedMock(std::sync::Arc::clone(&control))))
         },
     ))
     .expect("the untampered twin verifies under --live");
@@ -704,7 +704,7 @@ fn live_over_a_network_holding_every_blob_reports_persisted_and_moves_nothing() 
         &options(),
         VerifyModes::OFFLINE,
         CollectedInputs::none(),
-        async { SharedMock(std::sync::Arc::clone(&network)) },
+        async { degrade("verify", Ok(SharedMock(std::sync::Arc::clone(&network)))) },
     ))
     .expect("the linked fixture verifies under --live");
 
@@ -746,23 +746,30 @@ fn live_over_a_network_holding_every_blob_reports_persisted_and_moves_nothing() 
     );
 }
 
-/// **D170 §2 R2 with R6 — an unreachable network.** In both shapes it takes
-/// at the seam, `verify --live` renders its offline verdict in full, reports
-/// the live section *Inconclusive* with every row a fetch failure, and exits
-/// with the evidence verdict's code — 43 for this unanchored work, never the
-/// network class's 23:
+/// **D170 §2 R2 with R6 — an unreachable network; R98 (D199) — whether a
+/// connection was made.** In both shapes it takes at the seam, `verify
+/// --live` renders its offline verdict in full and exits with the evidence
+/// verdict's code — 43 for this unanchored work, never the network class's
+/// 23 — and the live section says which of the two happened:
 ///
 /// - **connect-failed** — the connection attempt fails and `degrade` hands
-///   over the unreachable backend, so the (reachable) network below is never
-///   asked;
+///   over the unreachable backend. Since R98 nothing is fetched from it: the
+///   section is `not-connected`, with no rows, every count zero and
+///   [`wording::LIVE_NOT_CONNECTED_LINE`], and the (reachable) network below
+///   is never asked. Until R98 this shape reported *Inconclusive* with one
+///   fetch failure per subject, for fetches that were never made;
 /// - **every-fetch-fails** — the connection succeeds and every fetch fails in
 ///   the network class, which is what ant-core 0.5.0 does for a dead or empty
 ///   bootstrap (measured on a live devnet 2026-09-13; the adapter reports it
-///   in the network class rather than as absence). That arm runs over a
-///   network that **holds** every blob, armed with one fault per subject, so a
-///   fetch that escaped its fault would be served and would move the verdict.
+///   in the network class rather than as absence). It stays *Inconclusive*,
+///   every row a fetch failure: the connected control R98's branch is keyed
+///   against, on the backend's type and never on its failures. That arm runs
+///   over a network that **holds** every blob, armed with one fault per
+///   subject, so a fetch that escaped its fault would be served and would move
+///   the verdict.
 #[test]
-fn live_over_an_unreachable_network_is_inconclusive_and_exits_with_the_evidence_verdict() {
+fn live_over_an_unreachable_network_exits_with_the_evidence_verdict_and_says_whether_it_connected()
+{
     let bytes = linked_bundle();
     let bundle = BundleV1::decode(&bytes).expect("the fixture decodes");
     let offline = verify_offline_run(&bytes);
@@ -825,29 +832,57 @@ fn live_over_an_unreachable_network_is_inconclusive_and_exits_with_the_evidence_
             .outcome()
             .live()
             .expect("--live attaches a live section");
-        assert_eq!(
-            section.verdict,
-            LiveLayerVerdict::Inconclusive,
-            "{shape}: {:?}",
-            section.counts
-        );
-        assert_eq!(
-            section.counts.checked, subjects,
-            "{shape}: {:?}",
-            section.counts
-        );
-        assert_eq!(
-            section.counts.fetch_failed, section.counts.checked,
-            "{shape}: every row is a fetch failure, and none is a negative answer: {:?}",
-            section.counts
-        );
         let reached_network = network.calls(Method::GetData) - before;
+        let rendered = run.render();
         if shape == "connect-failed" {
+            // R98 (D199 §2 R1/R2): a connection not made is NOT a fetch
+            // failure per subject — it is its own closed state, with nothing
+            // fetched.
+            assert_eq!(
+                section.verdict,
+                LiveLayerVerdict::NotConnected,
+                "{shape}: {:?}",
+                section.counts
+            );
+            assert!(section.rows.is_empty(), "{shape}: {:?}", section.rows);
+            assert_eq!(
+                section.counts,
+                Default::default(),
+                "{shape}: every count is zero"
+            );
             assert_eq!(
                 reached_network, 0,
-                "{shape}: the degraded backend fails every fetch itself; nothing reaches a network"
+                "{shape}: the degraded backend is never fetched from; nothing reaches a network"
+            );
+            assert!(
+                rendered
+                    .iter()
+                    .any(|line| line.contains(wording::LIVE_NOT_CONNECTED_LINE)),
+                "{shape}: the rendered storage layer says no connection was made: {rendered:#?}"
+            );
+            assert!(
+                !rendered
+                    .iter()
+                    .any(|line| line.contains("transport failure") || line.contains("inconclusive")),
+                "{shape}: no fetch failure is reported for a fetch never made: {rendered:#?}"
             );
         } else {
+            assert_eq!(
+                section.verdict,
+                LiveLayerVerdict::Inconclusive,
+                "{shape}: {:?}",
+                section.counts
+            );
+            assert_eq!(
+                section.counts.checked, subjects,
+                "{shape}: {:?}",
+                section.counts
+            );
+            assert_eq!(
+                section.counts.fetch_failed, section.counts.checked,
+                "{shape}: every row is a fetch failure, and none is a negative answer: {:?}",
+                section.counts
+            );
             assert_eq!(
                 network.armed_faults(),
                 0,
@@ -857,14 +892,13 @@ fn live_over_an_unreachable_network_is_inconclusive_and_exits_with_the_evidence_
                 reached_network as u64, subjects,
                 "{shape}: every subject was asked of the network exactly once"
             );
+            assert!(
+                rendered
+                    .iter()
+                    .any(|line| line.contains(&wording::live_inconclusive_line(subjects))),
+                "{shape}: the rendered storage layer says inconclusive: {rendered:#?}"
+            );
         }
-        assert!(
-            run.render()
-                .iter()
-                .any(|line| line.contains(&wording::live_inconclusive_line(subjects))),
-            "{shape}: the rendered storage layer says inconclusive: {:#?}",
-            run.render()
-        );
     }
 }
 

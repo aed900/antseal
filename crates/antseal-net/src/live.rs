@@ -185,9 +185,15 @@ pub const fn fetch_failure_class(error: &StorageError) -> Option<FetchFailureCla
 /// the caller's connectivity ([`StorageError::NotFound`] vs
 /// [`StorageError::Network`] draw the same line at the trait boundary).
 ///
-/// Serialized externally tagged (serde default, matching the house
-/// convention recorded on the receipt envelope).
+/// Serialized externally tagged with kebab-case variant names —
+/// `"identical"`, `{"fetch-error":{"class":"transport"}}` — the house
+/// pattern for every enum on verify's JSON path and in this crate's live
+/// report family (D200, R99): `rename_all` renames variants only, so field
+/// names stay snake_case. The receipt journal's variant-name tagging
+/// (`receipt.rs`) is an at-rest format rule versioned by
+/// `RECEIPT_JOURNAL_VERSION`, not this one.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum PersistenceOutcome {
     /// The network returned exactly the expected bytes.
     Identical,
@@ -678,9 +684,20 @@ mod tests {
             !json.contains("CIPHERTEXT"),
             "no blob bytes in the report: {json}"
         );
-        // The outcome names are the machine-readable classification keys.
-        assert!(json.contains("Identical") && json.contains("Different"));
-        assert!(json.contains("NotFound"));
+        // The outcome names are the machine-readable classification keys,
+        // kebab-case like every enum on verify's JSON path (D200, R99): a
+        // unit variant is a bare string, a struct variant a one-key object.
+        for tag in [
+            r#""outcome":"identical""#,
+            r#""outcome":{"different":"#,
+            r#""outcome":"not-found""#,
+        ] {
+            assert!(
+                json.contains(tag),
+                "the outcome tag `{tag}` is missing — outcome variants serialize kebab-case \
+                 (D200, R99): {json}"
+            );
+        }
 
         let summary_json = serde_json::to_string(&report.summary()).expect("summary serializes");
         let summary_back: PersistenceSummary =

@@ -97,6 +97,7 @@ impl TlsPolicy {
 pub struct Endpoint {
     url: String,
     origin: String,
+    disclosed: String,
     https: bool,
     loopback_literal: bool,
 }
@@ -152,14 +153,20 @@ impl Endpoint {
             return Err(invalid("no host"));
         }
 
-        let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
+        let default_port = if https { 443 } else { 80 };
+        let port = uri.port_u16().unwrap_or(default_port);
+        let scheme = if https { "https" } else { "http" };
+        let lower_host = host.to_ascii_lowercase();
         let endpoint = Self {
             url: url.to_owned(),
-            origin: format!(
-                "{}://{}:{port}",
-                if https { "https" } else { "http" },
-                host.to_ascii_lowercase()
-            ),
+            origin: format!("{scheme}://{lower_host}:{port}"),
+            // U98 (D195 R1): the same parse's fields, so the disclosure and
+            // the URL that is dialled cannot be read by two parsers.
+            disclosed: if port == default_port {
+                format!("{scheme}://{lower_host}")
+            } else {
+                format!("{scheme}://{lower_host}:{port}")
+            },
             https,
             loopback_literal: host_is_loopback_literal(host),
         };
@@ -192,6 +199,24 @@ impl Endpoint {
     #[must_use]
     pub fn origin(&self) -> &str {
         &self.origin
+    }
+
+    /// The endpoint as antseal **discloses** it: `scheme://host`, plus
+    /// `:port` only when the port is not the scheme's default — host
+    /// lower-cased, an IPv6 literal in its brackets (U98, D195 R1).
+    ///
+    /// Not [`Self::origin`], which always carries the port because it is a
+    /// comparison key: this is a display form. Everything after the
+    /// authority — path, query, fragment — is left out, because a provider's
+    /// API key commonly lives there (a path segment such as `/v2/<key>`, or a
+    /// `?key=` parameter) and a disclosure ends up in terminals, logs and
+    /// `--json` output. Userinfo never reaches here: [`Self::parse`] refuses
+    /// it. The two endpoints of a must-agree pair are two origins by
+    /// construction ([`crate::agree::EndpointPair::new`]), so their
+    /// disclosures still tell them apart.
+    #[must_use]
+    pub fn disclosed(&self) -> &str {
+        &self.disclosed
     }
 
     /// Whether the scheme is `https`.
@@ -230,6 +255,28 @@ fn host_is_loopback_literal(host: &str) -> bool {
     }
     host.parse::<Ipv4Addr>()
         .is_ok_and(|address| address.is_loopback())
+}
+
+/// What [`disclosed`] says for a string that does not parse as an endpoint:
+/// a fixed phrase, so a disclosure never carries any of its input.
+const UNPARSEABLE_DISCLOSURE: &str = "an endpoint whose URL does not parse";
+
+/// `url` as antseal discloses it ([`Endpoint::disclosed`]), for a caller that
+/// holds a string rather than an [`Endpoint`] — a probe failure names the URL
+/// its request went to, which for esplora is the configured base with the
+/// request's path appended (U98, D195 R1).
+///
+/// Parsed under [`TlsPolicy::Optional`], because this decides what to print,
+/// not what to contact. A string that does not parse is disclosed as a fixed
+/// phrase that contains none of it: unreachable in practice from the CLI,
+/// whose failure strings are the URLs of endpoints it already parsed, and
+/// kept total so that no future caller can turn it into an echo.
+#[must_use]
+pub fn disclosed(url: &str) -> String {
+    Endpoint::parse(url, TlsPolicy::Optional).map_or_else(
+        |_| UNPARSEABLE_DISCLOSURE.to_owned(),
+        |endpoint| endpoint.disclosed,
+    )
 }
 
 /// An endpoint URL was refused before any socket work happened.
@@ -478,5 +525,41 @@ mod tests {
         TlsPolicy::Optional
             .admits(&endpoint)
             .expect("the permissive policy still admits it");
+    }
+
+    /// **U98 (D195 R1).** The disclosure is `scheme://host`, plus the port
+    /// only when it is not the scheme's default: host case folded; path,
+    /// query and fragment gone; an IPv6 literal bracketed; a non-default port
+    /// kept even when it is the OTHER scheme's default. The string form agrees
+    /// with the parsed one, and a string that does not parse is disclosed as
+    /// the fixed phrase, which carries none of it.
+    #[test]
+    fn disclosure_is_scheme_host_and_a_non_default_port_only() {
+        let cases = [
+            ("HTTPS://Example.ORG:443/v2/K?x=y#f", "https://example.org"),
+            ("http://127.0.0.1:8080/a?k=1", "http://127.0.0.1:8080"),
+            ("https://[::1]:8443/x", "https://[::1]:8443"),
+            ("https://h.example:80/", "https://h.example:80"),
+            ("http://h.example:80/rpc", "http://h.example"),
+            ("https://blockstream.info/api", "https://blockstream.info"),
+        ];
+        assert_eq!(cases.len(), 6);
+        for (url, expected) in cases {
+            let endpoint = Endpoint::parse(url, TlsPolicy::Optional)
+                .unwrap_or_else(|e| panic!("{url} must parse: {e}"));
+            assert_eq!(endpoint.disclosed(), expected, "{url}");
+            assert_eq!(disclosed(url), expected, "{url}: the string form agrees");
+        }
+
+        // The comparison key keeps its port: two forms, two jobs.
+        let endpoint =
+            Endpoint::parse("https://example.org/api", TlsPolicy::Optional).expect("parses");
+        assert_eq!(endpoint.origin(), "https://example.org:443");
+        assert_eq!(endpoint.disclosed(), "https://example.org");
+
+        let unparseable = "NOT-A-KEY-canary is not a URL";
+        let said = disclosed(unparseable);
+        assert_eq!(said, UNPARSEABLE_DISCLOSURE, "the fixed phrase");
+        assert!(!said.contains("canary"), "none of the input: {said}");
     }
 }

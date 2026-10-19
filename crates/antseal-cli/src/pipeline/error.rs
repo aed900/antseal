@@ -200,7 +200,7 @@ pub enum SealError {
     // `ProofsExpired` lived here from S11 until **D147/U81**. Nothing ever
     // constructed it — the reachable expiry is
     // `StorageError::ProofsExpired`, which `resume` intercepts once
-    // (`resume.rs:274`) and otherwise hands to `storage_to_cli` — and its
+    // (`resume.rs:278`) and otherwise hands to `storage_to_cli` — and its
     // sentence was borrowed by that mapping purely for its text, which is
     // how the one message in the product containing *"the already-spent ANT
     // is not recoverable"* came to exit 2. D147 R3 moved the sentence to
@@ -316,6 +316,21 @@ impl From<SealError> for CliError {
                 problems: vec![err.to_string()],
             },
             SealError::ConsentDeclined(reason) => CliError::ConsentNotObtained { reason },
+            // D201 R1 (`U103`): no request nonce could be drawn, so no
+            // authority was asked, and `--force-degraded` cannot route around
+            // it (every nonce is drawn before the gate evaluates). Class 22's
+            // definition is false for it on both clauses, so it is reported
+            // as a fault of the machine, in class `internal` (1).
+            SealError::AnchorGate(GateRefusal {
+                error: AnchorGateError::Entropy(_),
+                ..
+            }) => CliError::RandomSourceUnavailable {
+                what: "a timestamp request nonce",
+                consequence: "no timestamp authority was asked, nothing was paid or uploaded, and \
+                              the work is left staged — running this exact command again resumes \
+                              it, quoting again and asking for your consent again, once the \
+                              random source works",
+            },
             SealError::AnchorGate(refusal) => CliError::AnchorGateAbort {
                 failures: gate_refusal_lines(&refusal.error),
                 seal_id: crate::status::hex_seal(&refusal.seal_id),
@@ -342,6 +357,13 @@ impl From<SealError> for CliError {
                 detail,
             },
             SealError::Journal(inner) => inner.into(),
+            // D201 R2 (`U104`): core's one failure that is the machine's, not
+            // antseal's. Every draw it covers (W, the seal id, each AEAD
+            // nonce) comes before the quote (`seal.rs`).
+            SealError::Crypto(CryptoError::RngFailure) => CliError::RandomSourceUnavailable {
+                what: "a random value for this seal",
+                consequence: "nothing was quoted, paid or uploaded",
+            },
             SealError::Crypto(inner) => CliError::Internal {
                 detail: inner.to_string(),
             },
@@ -369,7 +391,8 @@ const NEVER_COUNTS: &str = "a token that does not chain to a root antseal pins n
 /// class is named and a TSA trust state appears by its frozen name.
 ///
 /// The gate's other arms carry no endpoint list, so their own sentence is
-/// the one entry.
+/// the one entry. `Entropy` never reaches this function: `From<SealError>`
+/// takes it to [`CliError::RandomSourceUnavailable`] first (D201, `U103`).
 fn gate_refusal_lines(error: &AnchorGateError) -> Vec<String> {
     match error {
         AnchorGateError::MinimumAnchor {
@@ -823,6 +846,84 @@ mod tests {
         assert!(
             message.contains(&format!("`antseal abandon {}`", "b7".repeat(16))),
             "{message}"
+        );
+    }
+
+    /// **D201 R1 (`U103`)**: an OS random source that could not supply a
+    /// timestamp request nonce is not an anchor-gate abort. Class 22 means
+    /// "zero TSA tokens and no `--force-degraded`", and both clauses are false
+    /// here: no authority was asked, and the flag cannot route around a nonce
+    /// that is drawn before the gate evaluates. Built through the real
+    /// producer, `From<SealError>`, over the anchor crate's own value.
+    #[test]
+    fn an_entropy_refusal_is_a_machine_fault_in_the_internal_class() {
+        let cli: CliError = SealError::AnchorGate(GateRefusal {
+            seal_id: antseal_core::crypto::secrets::SealId::from_bytes([0xC3; 16]),
+            error: AnchorGateError::Entropy(antseal_anchor::nonce::NonceUnavailable),
+        })
+        .into();
+
+        assert_eq!(cli.class(), ErrorClass::Internal);
+        assert_eq!(cli.exit_code(), 1);
+        let message = cli.to_string();
+        assert!(!message.contains('\n'), "single-line: {message}");
+        let needles = [
+            "so a timestamp request nonce could not be generated",
+            "no timestamp authority was asked",
+            "nothing was paid or uploaded",
+            "the work is left staged",
+            "running this exact command again resumes it",
+            "once the random source works",
+            "This is a fault of this machine, not a bug in antseal",
+        ];
+        assert_eq!(needles.len(), 7, "anti-vacuity: every clause of D201 R2");
+        for needle in needles {
+            assert!(message.contains(needle), "missing {needle:?}: {message}");
+        }
+        // Each remedy class 22 offers needs the same random source, and the
+        // bug-class clause is false for a fault of the machine.
+        for forbidden in [
+            "timestamp authority returns",
+            "--force-degraded",
+            "antseal abandon",
+            "this is a bug in antseal",
+            "please report it",
+        ] {
+            assert!(
+                !message.contains(forbidden),
+                "{forbidden:?} is offered: {message}"
+            );
+        }
+    }
+
+    /// **D201 R2 (`U104`)**: of core's crypto failures, only an unavailable
+    /// random source is the machine's fault. Every other one stays in the
+    /// bug class with its own text.
+    #[test]
+    fn only_a_core_random_source_failure_is_a_machine_fault() {
+        let rng: CliError = SealError::Crypto(CryptoError::RngFailure).into();
+        assert_eq!(rng.class(), ErrorClass::Internal);
+        assert_eq!(rng.exit_code(), 1);
+        let message = rng.to_string();
+        assert!(
+            message.contains(
+                "the operating system's random source is unavailable, so a random value for \
+                 this seal could not be generated: nothing was quoted, paid or uploaded."
+            ),
+            "{message}"
+        );
+        assert!(
+            message.contains("This is a fault of this machine, not a bug in antseal"),
+            "{message}"
+        );
+        assert!(!message.contains("this is a bug in antseal"), "{message}");
+
+        // The control: a failure that is antseal's keeps the bug-class text.
+        let other: CliError = SealError::Crypto(CryptoError::AeadDecryptFailed).into();
+        assert_eq!(other.class(), ErrorClass::Internal);
+        assert_eq!(
+            other.to_string(),
+            "internal error: AEAD decryption failed (this is a bug in antseal — please report it)"
         );
     }
 }

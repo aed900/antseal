@@ -998,16 +998,23 @@ fn the_hook_runs_on_a_real_invocation_without_touching_stdout() {
     );
 }
 
-/// **U24 Accept row 2**, against the real binary: a hook that cannot even
-/// start leaves the primary command's exit code and output untouched.
+/// **U101 (D196 R3, R4) — a `[verify] bitcoin_endpoints` list the hook could
+/// not use is refused when the file is read**, against the real binary.
 ///
-/// The failure is a `[verify] bitcoin_endpoints` list of one — which parses,
-/// so the config itself is valid and every command still runs, but which
-/// `UpgradeConfig::pair` refuses because a must-agree pair of one endpoint
-/// agrees with itself and proves nothing. The hook has no way to confirm a
-/// block header, so it declines; `list` neither knows nor cares.
+/// This row used to be U24 Accept row 2's vehicle: a one-entry list loaded,
+/// every command ran, and the hook declined to start. Since U101 the same file
+/// is the malformed-config code (17) on every command, raised before dispatch
+/// — so no vault is unlocked and the hook never runs: neither of its two arms
+/// is traced. The control is the same vault with no config, which arms.
+///
+/// No config the binary can load reaches the hook's cannot-start arm any
+/// more, so that half of U24 Accept row 2 moved in-process, to
+/// `src/upgrade_hook.rs`'s `a_hook_whose_endpoints_are_unusable_declines_without_a_pass`
+/// (a struct-literal `Config` bypasses the loader by construction); the
+/// spawned exit-code and stdout half is
+/// `the_hook_runs_on_a_real_invocation_without_touching_stdout`.
 #[test]
-fn a_hook_that_cannot_start_leaves_the_command_untouched() {
+fn a_bitcoin_pair_the_hook_cannot_use_is_exit_17_before_it_can_arm() {
     let dir = TestDir::new("bad-endpoints");
     let vault = fixture_vault("hook-bad-endpoints");
     let root = vault.layout.root();
@@ -1015,6 +1022,11 @@ fn a_hook_that_cannot_start_leaves_the_command_untouched() {
 
     let healthy = spawn_at(root, &dir.0, &args, Some(HOOK_LOG));
     assert_eq!(healthy.code, Some(0), "stderr:\n{}", healthy.stderr);
+    assert!(
+        armed(&healthy),
+        "the control arms the hook; stderr:\n{}",
+        healthy.stderr
+    );
 
     std::fs::write(
         root.join("config.toml"),
@@ -1024,27 +1036,26 @@ fn a_hook_that_cannot_start_leaves_the_command_untouched() {
     let broken = spawn_at(root, &dir.0, &args, Some(HOOK_LOG));
 
     assert_eq!(
-        broken.code, healthy.code,
-        "the hook's refusal must not reach the exit code; stderr:\n{}",
+        broken.code,
+        Some(17),
+        "a one-entry pair is a malformed config; stderr:\n{}",
         broken.stderr
     );
-    assert_eq!(
-        broken.stdout, healthy.stdout,
-        "nor the output: stdout is byte-identical"
+    let doc: serde_json::Value =
+        serde_json::from_str(broken.stdout.trim()).expect("exactly one JSON document on stdout");
+    assert_eq!(doc["error"]["class"], serde_json::json!("malformed-config"));
+    let message = doc["error"]["message"].as_str().expect("a message");
+    assert!(
+        message.contains("`bitcoin_endpoints` under [verify]")
+            && message.contains("config.toml:2")
+            && message.contains("found 1")
+            && !message.contains("a.example"),
+        "names the key, the table, the line and the count, never the URL: {message}"
     );
     assert!(
-        broken.stderr.contains(HOOK_ARMED),
-        "the hook still armed — the failure is downstream of that; stderr:\n{}",
-        broken.stderr
-    );
-    assert!(
-        broken.stderr.contains("no usable endpoint configuration"),
-        "and it said why, at debug, once; stderr:\n{}",
-        broken.stderr
-    );
-    assert!(
-        !broken.stderr.contains("pass complete"),
-        "a hook that could not start performs no pass; stderr:\n{}",
+        !broken.stderr.contains(HOOK_ARMED) && !broken.stderr.contains(HOOK_NOT_ARMED),
+        "the file is refused before dispatch, so no vault is unlocked and the hook never runs; \
+         stderr:\n{}",
         broken.stderr
     );
 }

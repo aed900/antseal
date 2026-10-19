@@ -475,3 +475,29 @@ finalizing again and paying nothing. Decision 6's distinct, consented re-payment
 exit 29, `payment-proofs-expired` — is unchanged, and is now reached only on that rule.
 The window constant moved to `crates/antseal-net/src/put_policy.rs`
 (`PROOF_VALIDITY_WINDOW_SECS`). This record is not rewritten.
+
+## Addendum — 2026-10-19 (D198 §2 R5): Decision 7's ordering now holds on a failed write, and Decision 2's bound holds under a failing sink
+
+Decision 7 says the hook *"returns only once the receipt-so-far is on disk — and only then does
+the loop submit the next sub-batch"*. Until D198 that held only when the write succeeded. The
+hook returned nothing, so after a failed write it returned anyway and the loop submitted the
+next sub-batch. Under a persistent write failure every remaining sub-batch was paid unrecorded,
+and Decision 2's bound — a crash *"can therefore lose at most the one tx currently inside the
+pay→journal atomicity window"* — did not hold.
+
+D198 (`S46`) closes the gap:
+- the capture hook returns a `CaptureOutcome` (`Durable` or `NotDurable`), and the vault sink
+  answers `Durable` exactly where its write became durable;
+- when a capture is not durable and sub-batches remain, `pay()` returns `StrandedPayment` before
+  submitting the next one, and `antseal-cli` surfaces it as `payment-unrecorded` (exit 37)
+  through D186's unchanged predicate;
+- a non-durable capture of the **last** sub-batch stops nothing: `pay()` returns `Ok`, and the
+  pipeline's own post-`pay` `put_receipt` is the second chance.
+
+So Decision 7's sentence now holds on a failed write too — the loop submits no further
+sub-batch after a receipt that did not reach the disk — and Decision 2's bound holds under a
+failing sink: at most one sub-batch is paid unrecorded. Item 2 of *"Still false / still
+owed"*, *"A sink write that fails is recorded, not surfaced"*, was answered by D186 (class
+37); D198 adds the stop. Separately, `StorageError::StrandedPayment`'s rustdoc cited Decision
+3, the native fallback the adapter does not drive; D198 §2 R4 makes it cite Decisions 2 and 7.
+The decisions above are not rewritten.

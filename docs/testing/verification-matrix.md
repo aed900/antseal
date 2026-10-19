@@ -34,7 +34,7 @@
 > resolves the `tests / evidence` cell and never reads `notes`, so a line
 > number in `notes` would be a pointer nothing verifies: the worst of the two
 > shapes, not a compromise between them. Shipped behaviour is therefore named
-> by **symbol** here — `KdfParams::check_ranges`, not `kdf.rs:280` — which is
+> by **symbol** here — `KdfParams::check_ranges`, not `kdf.rs:284` — which is
 > exact, greppable and survives an edit above it. Q251 supplied the
 > demonstration as well as the request: of the eighteen `path:line` locators
 > its own row and the records feeding it carried, **three did not survive

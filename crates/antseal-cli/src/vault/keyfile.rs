@@ -144,7 +144,8 @@ impl WrapChoice {
 /// # Errors
 ///
 /// [`CliError::Usage`] when the path already exists; [`CliError::Io`] for
-/// a failed create/write; [`CliError::Internal`] if the OS CSPRNG fails.
+/// a failed create/write; [`CliError::RandomSourceUnavailable`] if the OS
+/// CSPRNG fails (D201).
 pub fn generate<R: TryCryptoRng + ?Sized>(
     path: &Path,
     rng: &mut R,
@@ -160,9 +161,12 @@ pub fn generate<R: TryCryptoRng + ?Sized>(
         });
     }
     let mut bytes = [0u8; KEYFILE_LEN];
+    // D201 (`U104`): drawn before the file is created, so a failure leaves
+    // no keyfile behind.
     rng.try_fill_bytes(&mut bytes)
-        .map_err(|_| CliError::Internal {
-            detail: "the OS CSPRNG failed while generating a vault keyfile".to_owned(),
+        .map_err(|_| CliError::RandomSourceUnavailable {
+            what: "the vault keyfile",
+            consequence: "no keyfile was written",
         })?;
 
     let write = || -> std::io::Result<()> {
@@ -435,5 +439,56 @@ mod tests {
         let rendered = format!("{secret:?}");
         assert_eq!(rendered, "KeyfileSecret(<redacted>)");
         assert!(!rendered.contains("ab"), "{rendered}");
+    }
+
+    /// The OS random source with nothing to give: every draw fails with
+    /// `getrandom`'s own error, as [`crate::rng::OsEntropy`]'s would.
+    struct UnavailableRandomSource;
+
+    impl rand_core::TryRng for UnavailableRandomSource {
+        type Error = getrandom::Error;
+
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            Err(getrandom::Error::UNSUPPORTED)
+        }
+
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            Err(getrandom::Error::UNSUPPORTED)
+        }
+
+        fn try_fill_bytes(&mut self, _dst: &mut [u8]) -> Result<(), Self::Error> {
+            Err(getrandom::Error::UNSUPPORTED)
+        }
+    }
+
+    impl rand_core::TryCryptoRng for UnavailableRandomSource {}
+
+    /// **D201 R2 (`U104`)** through `generate` itself: the keyfile's bytes
+    /// are drawn before the file is created, so an OS that cannot supply them
+    /// leaves no file behind (read back below), and the user is told it is
+    /// this machine's fault, not antseal's.
+    #[test]
+    fn an_unavailable_random_source_writes_no_keyfile_and_blames_the_machine() {
+        let dir = Dir::new("no-randomness");
+        let path = dir.0.join("antseal-keyfile.bin");
+        let err = generate(&path, &mut UnavailableRandomSource)
+            .expect_err("no keyfile bytes can be drawn");
+        assert!(!path.exists(), "a keyfile was written: {}", path.display());
+
+        assert_eq!(err.class(), crate::error::ErrorClass::Internal);
+        assert_eq!(err.exit_code(), 1);
+        let message = err.to_string();
+        assert!(
+            message.contains(
+                "the operating system's random source is unavailable, so the vault keyfile \
+                 could not be generated: no keyfile was written."
+            ),
+            "{message}"
+        );
+        assert!(
+            message.contains("This is a fault of this machine, not a bug in antseal"),
+            "{message}"
+        );
+        assert!(!message.contains("this is a bug in antseal"), "{message}");
     }
 }

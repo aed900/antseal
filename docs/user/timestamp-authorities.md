@@ -99,13 +99,13 @@ network path can neither forge a token, replay an old one, nor substitute one
 issued for a different digest. What plain HTTP does cost is **privacy**: a
 passive observer learns that this machine timestamped a particular 32-byte
 digest at a particular moment, and could link it to a bundle you publish later
-(`docs/config.md:175-183`). If that matters to you, drop DigiCert from your
+(`docs/config.md:191-199`). If that matters to you, drop DigiCert from your
 list — nothing else changes, and FreeTSA is HTTPS.
 
 By contrast, the endpoints under `[verify]` in your config **must** be
 `https://`, and antseal refuses the file at load if one is not. Their replies
 carry no signature of their own, so transport is their only integrity control
-(`docs/config.md:115-119, 168-173`; `crates/antseal-cli/src/config.rs:962-996`).
+(`docs/config.md:123-127, 184-189`; `crates/antseal-cli/src/config.rs:1159-1197`).
 
 ---
 
@@ -213,7 +213,7 @@ config edit.
 
 The slot is `[anchors] tsa_urls` in `config.toml`, which lives **in the vault
 directory** — `~/.antseal/config.toml`, or `$ANTSEAL_DIR/config.toml`
-(`docs/config.md:1-11`). `antseal init` writes the initial file; edit it by
+(`docs/config.md:1-14`). `antseal init` writes the initial file; edit it by
 hand afterwards.
 
 ```toml
@@ -234,30 +234,32 @@ The behaviour, read off the implementation rather than off intent:
   (`crates/antseal-anchor/src/tsa.rs:112-126`).
 - **Every entry is parsed at config load**, through the same endpoint parser
   the HTTP client uses, under a policy that allows plain HTTP because DigiCert
-  requires it (`crates/antseal-cli/src/config.rs:834-856, 923-929`). A URL with
+  requires it (`crates/antseal-cli/src/config.rs:1015-1048, 1119-1125`). A URL with
   no host (`http:///tsr`), an unusable scheme, or embedded credentials
   (`http://user:pw@host/`) is refused **at load**, naming the key and the line
   — exit code **17**, class `malformed-config` — rather than surfacing as a
   failed anchor midway through a seal
   (`crates/antseal-cli/tests/snapshots/cli-errors.display.txt:43`).
+- **antseal prints TSA and calendar URLs in full** — in the seal report, in
+  a gate abort and in `--json` — so none of them may carry a credential.
 - **A malformed config is never silently ignored.** It is a hard error on
   every command; a silently dropped override is worse than a loud stop
-  (`docs/config.md:12-22`).
+  (`docs/config.md:15-25`).
 - **`seal` answers both of its config questions from a single read.** The
   effective network and this TSA list come from one `load()`, so an invocation
   can never resolve its network from one read of the file and its endpoints
-  from another (`crates/antseal-cli/src/commands.rs:280-286`). Stated exactly,
+  from another (`crates/antseal-cli/src/commands.rs:296-302`). Stated exactly,
   because it is easy to over-read: the *process* reads `config.toml` twice —
   once at dispatch, which is where a malformed file hard-fails every command
   (`crates/antseal-cli/src/lib.rs:127`), and once inside `seal`
-  (`crates/antseal-cli/src/commands.rs:286`). What is guaranteed is that the
+  (`crates/antseal-cli/src/commands.rs:302`). What is guaranteed is that the
   two answers `seal` acts on come from the same read, not that the file is
   opened once. There is exactly one place in the product that turns config
   into an anchor-stage endpoint set
-  (`crates/antseal-cli/src/commands.rs:394-397`).
+  (`crates/antseal-cli/src/commands.rs:424-427`).
 - **Unknown keys and sections are warnings**, printed to stderr, so a config
-  written by a newer antseal still loads. Invalid *values* for recognised keys
-  are hard errors.
+  written by a newer antseal still loads; a known key in the wrong table is an
+  error. Invalid *values* for recognised keys are hard errors.
 
 ### Two things configuration cannot do for you
 
@@ -322,7 +324,7 @@ When the gate refuses, `antseal seal` prints one line. It names every endpoint
 that failed, verbatim and with its failure class in brackets, because your next
 action is to look at those URLs, and it says what has become of the work
 (`crates/antseal-cli/src/error.rs:719-764`; each entry is built at
-`crates/antseal-cli/src/pipeline/error.rs:356-397` from the gate's own failure
+`crates/antseal-cli/src/pipeline/error.rs:378-420` from the gate's own failure
 form, `crates/antseal-anchor/src/gate.rs:149-161`):
 
 ```
@@ -356,7 +358,7 @@ configuration or root-store fact rather than an incident
 This is the committed golden rendering of a seal that lost its only authority
 and proceeded anyway
 (`crates/antseal-cli/tests/snapshots/seal-degraded-report.txt`, produced by
-`crates/antseal-cli/src/seal_run.rs:163-215`):
+`crates/antseal-cli/src/seal_run.rs:167-219`):
 
 ```
   Anchors:
@@ -414,7 +416,7 @@ permanent record than none at all, and it is your judgement to make.
 Almost always, the better move is to wait and re-run. An anchor failure is
 cheap, reversible and usually transient, and an aborted seal leaves a staged
 work that **the same command — same files, same flags —** resumes rather than
-sealing a second time (`crates/antseal-cli/src/seal_resume.rs:44-47`). The
+sealing a second time (`crates/antseal-cli/src/seal_resume.rs:52-56`). The
 resume quotes again and asks for your consent again
 (`crates/antseal-cli/src/pipeline/resume.rs:184-197`). The gate's message says
 so.
@@ -533,6 +535,6 @@ Nothing above is asserted from memory. The primary sources:
 | the gate, its threshold and its ordering | `crates/antseal-anchor/src/submit.rs:31-48, 252-292` |
 | a `429` is never re-sent; a `503` at most twice | `crates/antseal-anchor/src/http/retry.rs` (`classify`); `crates/antseal-anchor/src/http.rs:117-125` |
 | the degraded rendering, byte for byte | `crates/antseal-cli/tests/snapshots/seal-degraded-report.txt` |
-| the config slot and its validation | `crates/antseal-cli/src/config.rs:170-175, 834-856, 923-929`; `docs/config.md:77-183` |
+| the config slot and its validation | `crates/antseal-cli/src/config.rs:186-191, 1015-1048, 1119-1125`; `docs/config.md:83-199` |
 | root-store update procedure | `docs/anchors/root-store-update.md` |
 | how a real-endpoint run is conducted | `docs/anchors/real-smoke-runbook.md` |

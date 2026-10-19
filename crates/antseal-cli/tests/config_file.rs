@@ -116,9 +116,9 @@ fn initial_config_round_trips() {
 // The full schema loads
 // ─────────────────────────────────────────────────────────────────────
 
-#[test]
-fn full_schema_parses_with_every_slot() {
-    let text = r#"
+/// Every slot of the v1 schema, each once in its home table — the fixture
+/// `every_full_schema_key_is_refused_outside_its_home` derives its keys from.
+const FULL_SCHEMA: &str = r#"
 # full fixture
 default_network = "devnet"
 
@@ -139,7 +139,10 @@ rpc_endpoints = ['https://arb-a.example', 'https://arb-b.example']
 [verify.arbitrum-sepolia]
 rpc_endpoints = ["https://sep-a.example", "https://sep-b.example"]
 "#;
-    let config = parse(text).expect("full schema parses");
+
+#[test]
+fn full_schema_parses_with_every_slot() {
+    let config = parse(FULL_SCHEMA).expect("full schema parses");
     assert_eq!(config.default_network, Some(NetworkId::Devnet));
     // D173 §2 R4: the peer override, carried as parsed socket addresses.
     assert_eq!(
@@ -187,10 +190,10 @@ rpc_endpoints = ["https://sep-a.example", "https://sep-b.example"]
 /// one on-path attacker both halves and the agreement becomes a tautology
 /// that still reports success.
 ///
-/// Refused at **load**, before any network call. The Bitcoin pair's refusal
-/// names the endpoint; the Arbitrum RPC pair's names the entry by INDEX and
-/// never the URL (U44, D188 R5: an RPC URL that answers
-/// `eth_getTransactionReceipt` commonly carries an API key).
+/// Refused at **load**, before any network call. Both pairs' refusals name the
+/// entry by its POSITION and never the URL: an RPC URL that answers
+/// `eth_getTransactionReceipt` commonly carries an API key (U44, D188 R5), and
+/// any URL can carry a credential (U99, D195 R4).
 #[test]
 fn a_plain_http_verify_endpoint_is_refused_at_config_load() {
     let text = "[verify]\nbitcoin_endpoints = [\"https://good.example\", \"http://plain.example/api\"]\n\
@@ -198,8 +201,8 @@ fn a_plain_http_verify_endpoint_is_refused_at_config_load() {
     let err = parse(text).expect_err("a plain-http must-agree endpoint is refused");
     let rendered = err.detail.clone();
     assert!(
-        rendered.contains("http://plain.example/api"),
-        "the failure must name the offending endpoint: {rendered}"
+        rendered.contains("entry 1") && !rendered.contains("plain.example"),
+        "the failure names the offending entry's position, never its URL (U99): {rendered}"
     );
     assert!(
         rendered.contains("must be https"),
@@ -269,10 +272,19 @@ rpc_endpoints = ["https://arb-a.example", "http://[::1]:8545/"]
     );
 
     // The carve-out is IP literals only: a NAME that resolves to loopback,
-    // and a hostname that merely contains one, are both refused.
+    // and a hostname that merely contains one, are both refused — FOR THE
+    // TRANSPORT, in a pair whose count and origins are otherwise valid. Since
+    // U101 checks the count at load, a one-entry list is refused for its count
+    // and would keep this row green whatever the carve-out admitted.
     for hostile in ["http://localhost:8332/", "http://127.0.0.1.evil.example/"] {
-        let text = format!("[verify]\nbitcoin_endpoints = [\"{hostile}\"]\n");
-        parse(&text).expect_err(hostile);
+        let text =
+            format!("[verify]\nbitcoin_endpoints = [\"https://btc-a.example\", \"{hostile}\"]\n");
+        let err = parse(&text).expect_err(hostile);
+        assert!(
+            err.detail.contains("entry 1 must be https"),
+            "{hostile}: refused for its transport, not its count: {}",
+            err.detail
+        );
     }
 }
 
@@ -285,8 +297,9 @@ rpc_endpoints = ["https://arb-a.example", "http://[::1]:8545/"]
 /// TLS policy (`TlsPolicy::Optional`, the one `ots/submit.rs` applies), so
 /// load and use apply one rule: plain http loads — a calendar cannot forge an
 /// OpenTimestamps proof — while a hostless URL, a scheme the substrate cannot
-/// speak and embedded credentials are refused, naming the key, the entry and
-/// the line. Order is kept as written and `[]` loads; that both collapse to
+/// speak and embedded credentials are refused, naming the key, the entry's
+/// position and the line, never the entry (U99, D195 R4: D188 R1's echo of a
+/// calendar URL is retired). Order is kept as written and `[]` loads; that both collapse to
 /// D54's defaults downstream is asserted in `anchor_stage.rs`, the one suite
 /// allowed to name the stage's constructor.
 #[test]
@@ -337,8 +350,9 @@ fn ots_calendars_load_validated_and_replace_wholesale() {
             err.detail
         );
         assert!(
-            err.detail.contains(entry),
-            "{entry}: names the entry (a calendar URL is no credential): {}",
+            err.detail.contains("entry 1") && !err.detail.contains(entry),
+            "{entry}: names the entry's position, never the entry — a URL can carry a \
+             credential (U99): {}",
             err.detail
         );
         assert!(
@@ -566,8 +580,9 @@ fn a_verify_rpc_override_is_exactly_two_distinct_origins_at_load() {
 /// a warning would leave `verify --online` probing the pinned pair the user
 /// configured away from (D180's reason, one table over). The refusal names
 /// the key, the table, the line and the two replacement tables, and never the
-/// value, whatever its shape — including the unquoted one, which the subset's
-/// own error would have repeated had the refusal waited for the value.
+/// value, whatever its shape — including the unquoted one, which a refusal
+/// that waited for the value would answer with the subset's own sentence, not
+/// the replacement tables (a sentence that repeated the URL until U99, D195 R4).
 #[test]
 fn the_flat_arbitrum_endpoints_key_is_refused_by_name() {
     let c = RPC_URL_CANARY;
@@ -607,11 +622,24 @@ fn the_flat_arbitrum_endpoints_key_is_refused_by_name() {
         );
     }
 
-    // The retirement is the flat [verify] key's: under a per-network table the
-    // name is an ordinary unknown key.
-    let elsewhere = parse("[verify.arbitrum-one]\narbitrum_endpoints = [\"https://a.example\"]\n")
-        .expect("not the retired key");
-    assert_eq!(elsewhere.warnings.len(), 1, "{:?}", elsewhere.warnings);
+    // U100 (D196 R2): the retired name is refused in every table — under a
+    // per-network table it is one key name away from the right line, and the
+    // refusal says so.
+    let err = parse(&format!(
+        "[verify.arbitrum-one]\narbitrum_endpoints = [\"https://a.example/v2/{c}\"]\n"
+    ))
+    .expect_err("the retired key is refused under a per-network table too");
+    assert_eq!(err.line, 2, "the key's line: {err:?}");
+    assert!(
+        err.detail
+            .contains("`arbitrum_endpoints` under [verify.arbitrum-one]")
+            && err
+                .detail
+                .contains("write `rpc_endpoints` in this table instead")
+            && !err.detail.contains(c),
+        "names the key, the table and the replacement, never the value: {}",
+        err.detail
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1152,11 +1180,11 @@ const RPC_URL_CANARY: &str = "NOT-A-KEY-canary";
 /// **U94 (D180 U94 R1, R2).** `rpc_url` under every network's table is a
 /// malformed config that names the key, the table and the line — and never
 /// the value, whatever shape it is written in. The unquoted shape is the one
-/// that pins *where* the refusal is raised: the subset's own *not a quoted
-/// string* error repeats the raw value it rejects, so a refusal raised after
-/// the value is parsed would echo the URL for exactly the typo a user makes
-/// most. The section name is judged first: an unknown network keeps its own
-/// answer.
+/// that pins *where* the refusal is raised: a refusal raised after the value
+/// is parsed would answer exactly the typo a user makes most with the
+/// subset's own *not a quoted string* sentence, which names no table (and,
+/// until U99 made it value-free, D195 R4, repeated the URL). The section name
+/// is judged first: an unknown network keeps its own answer.
 #[test]
 fn rpc_url_is_refused_at_load_under_every_network() {
     let shapes = [
@@ -1434,4 +1462,606 @@ fn exported_config_survives_import_and_resolves() {
     assert_eq!(config.opportunistic_upgrades, Some(false));
     assert!(config.warnings.is_empty(), "{:?}", config.warnings);
     assert_eq!(effective_network(None, &config), NetworkId::Devnet);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U99 (D195 R4) — no URL-list refusal repeats its value
+// ─────────────────────────────────────────────────────────────────────
+
+/// What a URL-list refusal must never repeat: a credential in a URL's
+/// userinfo. NON-SECRET: a marker string, not a password.
+const URL_CANARY: &str = "NOT-A-PW-canary";
+
+/// The three URL-list keys whose refusals repeated their entry before U99,
+/// each with its table (`rpc_endpoints`' never did — D188 R5).
+const URL_LIST_KEYS: [(&str, &str); 3] = [
+    ("anchors", "tsa_urls"),
+    ("anchors", "ots_calendars"),
+    ("verify", "bitcoin_endpoints"),
+];
+
+/// **U99 Accept, at load (D195 R4).** Seven shapes in which a URL-list entry
+/// carries a credential, each refused on the key's line naming the key — and
+/// no refusal carries the value. The shapes are the three paths that repeated
+/// it before: the substrate's parser (userinfo with and without a password,
+/// and userinfo in a URL that does not parse at all, where no structural
+/// redaction could find the credential), the shape check (no scheme,
+/// `ftp://`) and the subset's own sentence (an unquoted entry, an unquoted
+/// value). Each hostile entry sits FIRST in a list whose second entry is
+/// valid, so a `bitcoin_endpoints` list is refused for its entry and not for
+/// its count (U101). The control is the same list without the credential.
+#[test]
+fn no_url_list_refusal_repeats_its_value() {
+    let c = URL_CANARY;
+    let ok = "\"https://ok.example/\"";
+    let shapes = [
+        (
+            "https userinfo",
+            format!("[\"https://user:{c}@host.example/x\", {ok}]"),
+            "entry 0 is not a usable endpoint URL (userinfo",
+        ),
+        (
+            "userinfo without a password",
+            format!("[\"http://{c}@host.example/x\", {ok}]"),
+            "entry 0 is not a usable endpoint URL (userinfo",
+        ),
+        (
+            "userinfo in a URL that does not parse",
+            format!("[\"https://user:{c} x@host.example/x\", {ok}]"),
+            "entry 0 is not a usable endpoint URL (not a valid URI)",
+        ),
+        (
+            "no scheme",
+            format!("[\"user:{c}@host.example/x\", {ok}]"),
+            "entry 0 is not an http:// or https:// URL",
+        ),
+        (
+            "ftp",
+            format!("[\"ftp://user:{c}@host.example/x\", {ok}]"),
+            "entry 0 is not an http:// or https:// URL",
+        ),
+        (
+            "an unquoted entry",
+            format!("[https://user:{c}@host.example/x, {ok}]"),
+            "not a quoted string",
+        ),
+        (
+            "an unquoted value",
+            format!("https://user:{c}@host.example/x"),
+            "not a quoted string",
+        ),
+    ];
+    assert_eq!(
+        shapes.len() * URL_LIST_KEYS.len(),
+        21,
+        "seven shapes, three keys"
+    );
+    let mut checked = 0;
+    for (table, key) in URL_LIST_KEYS {
+        for (shape, value, needle) in &shapes {
+            let err = parse(&format!("[{table}]\n{key} = {value}\n")).expect_err(shape);
+            assert_eq!(err.line, 2, "`{key}`, {shape}: the key's line: {err:?}");
+            // First, so a restored echo fails on the echo and not on wording.
+            assert!(
+                !err.detail.contains(c) && !err.detail.contains("example"),
+                "`{key}`, {shape}: the refusal must not carry the value — a URL can carry a \
+                 credential: {}",
+                err.detail
+            );
+            assert!(
+                err.detail.contains(&format!("`{key}`")) && err.detail.contains(needle),
+                "`{key}`, {shape}: expected the key and {needle:?} in {}",
+                err.detail
+            );
+            checked += 1;
+        }
+        let clean = format!("[{table}]\n{key} = [\"https://host.example/x\", {ok}]\n");
+        let config = parse(&clean).unwrap_or_else(|e| panic!("`{key}`: the control loads: {e:?}"));
+        assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+    }
+    assert_eq!(checked, 21, "every case ran");
+}
+
+/// **U99 Accept, through the binary (D195 R4).** A `tsa_urls`,
+/// `ots_calendars` or `bitcoin_endpoints` entry carrying `user:<canary>@` is
+/// the malformed-config code (17) with its envelope, on a command that needs
+/// no vault and never prompts (`verify`'s own code would be 4 — the bundle
+/// does not exist — so the 17 is the config loader's). The message names the
+/// key and `config.toml:2`, and the canary is on neither stream, in `--json`
+/// mode or plain. The control is the same vehicle with the userinfo removed.
+#[test]
+fn a_credential_in_a_url_entry_is_exit_17_and_never_printed() {
+    let dir = TestDir::new("url-credential-wiring");
+    let layout = layout_with_config(&dir, None);
+    let root = layout.root().to_path_buf();
+    let c = URL_CANARY;
+    let mut checked = 0;
+    for (table, key) in URL_LIST_KEYS {
+        let config = layout.beside_path(BesideFile::Config);
+        let hostile = format!(
+            "[{table}]\n{key} = [\"https://user:{c}@host.example/x\", \"https://ok.example/\"]\n"
+        );
+        std::fs::write(&config, hostile).expect("write config");
+
+        let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+        assert_eq!(
+            out.status.code(),
+            Some(17),
+            "`{key}`: malformed-config code; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
+                .expect("one JSON document");
+        assert_eq!(doc["error"]["class"], serde_json::json!("malformed-config"));
+        let message = doc["error"]["message"].as_str().expect("a message");
+        assert!(
+            message.contains(&format!("`{key}`")) && message.contains("config.toml:2"),
+            "`{key}`: names the key and the line: {message}"
+        );
+        for (stream, bytes) in [("stdout", &out.stdout), ("stderr", &out.stderr)] {
+            let text = String::from_utf8_lossy(bytes);
+            assert!(
+                !text.contains(c),
+                "`{key}`: --json {stream} must not carry the credential: {text}"
+            );
+        }
+
+        let out = spawn(&root, &["verify", "b.sealproof"]);
+        assert_eq!(
+            out.status.code(),
+            Some(17),
+            "`{key}`: plain mode, the same code"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(&format!("`{key}`")) && !stderr.contains(c),
+            "`{key}`: plain stderr names the key and never the credential: {stderr}"
+        );
+        assert!(
+            out.stdout.is_empty(),
+            "`{key}`: plain mode prints nothing on stdout"
+        );
+
+        let clean =
+            format!("[{table}]\n{key} = [\"https://host.example/x\", \"https://ok.example/\"]\n");
+        std::fs::write(&config, clean).expect("write config");
+        let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+        assert_eq!(
+            out.status.code(),
+            Some(4),
+            "`{key}`: without the userinfo the config loads and the handler's own code \
+             follows; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 3, "every key ran");
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U101 (D196 R3) — `[verify] bitcoin_endpoints` is checked when the file is read
+// ─────────────────────────────────────────────────────────────────────
+
+/// **U101 Accept, at load (D196 R3).** `[verify] bitcoin_endpoints` is exactly
+/// two endpoints at two origins, checked when the file is read by the one
+/// validator `verify --online`, `status --upgrade` and the opportunistic pass
+/// also build their pair with — so a list of none, one or three, two URLs at
+/// one origin, or a bad entry (one with a query or a fragment included: esplora
+/// appends request paths to it), is a malformed config naming the key, the
+/// table, the line and the count or the entry's position, never a URL (U99).
+/// The canary sits in each URL's path. The control is two https endpoints at
+/// two origins.
+#[test]
+fn bitcoin_endpoints_is_exactly_two_distinct_origins_at_load() {
+    let c = URL_CANARY;
+    let cases = [
+        (
+            "no entries",
+            "[]".to_owned(),
+            "must list exactly two endpoints (found 0)",
+        ),
+        (
+            "one entry",
+            format!("[\"https://a.example/{c}\"]"),
+            "must list exactly two endpoints (found 1)",
+        ),
+        (
+            "three entries",
+            format!(
+                "[\"https://a.example/{c}\", \"https://b.example/{c}\", \"https://c.example/{c}\"]"
+            ),
+            "must list exactly two endpoints (found 3)",
+        ),
+        (
+            "one origin, two spellings",
+            format!("[\"https://a.example/{c}\", \"https://A.example:443/{c}/y\"]"),
+            "entries 0 and 1 are one origin",
+        ),
+        (
+            "userinfo in entry 1",
+            format!("[\"https://a.example/{c}\", \"https://user:{c}@b.example/\"]"),
+            "entry 1 is not a usable endpoint URL (userinfo",
+        ),
+        (
+            "plain http in entry 1",
+            format!("[\"https://a.example/{c}\", \"http://b.example/{c}\"]"),
+            "entry 1 must be https",
+        ),
+        // D196 R3, widened: esplora appends request paths to the base, so a
+        // query or a fragment would swallow them. A key in a query is the
+        // shape a keyed provider uses, so the canary sits there.
+        (
+            "a query in entry 0",
+            format!("[\"https://a.example/api?key={c}\", \"https://b.example/api\"]"),
+            "entry 0 carries a query or a fragment",
+        ),
+        (
+            "a fragment in entry 1",
+            format!("[\"https://a.example/api\", \"https://b.example/api#{c}\"]"),
+            "entry 1 carries a query or a fragment",
+        ),
+    ];
+    assert_eq!(cases.len(), 8);
+    for (shape, value, needle) in &cases {
+        let text = format!("[verify]\nbitcoin_endpoints = {value}\n");
+        let err = match parse(&text) {
+            Err(err) => err,
+            Ok(config) => panic!(
+                "{shape}: must be refused at load, got {:?}",
+                config.verify_bitcoin_endpoints
+            ),
+        };
+        assert_eq!(err.line, 2, "{shape}: the key's line: {err:?}");
+        assert!(
+            !err.detail.contains(c) && !err.detail.contains("example"),
+            "{shape}: never a URL or a host: {}",
+            err.detail
+        );
+        assert!(
+            err.detail.contains("`bitcoin_endpoints` under [verify]")
+                && err.detail.contains(needle),
+            "{shape}: expected the key, the table and {needle:?} in {}",
+            err.detail
+        );
+    }
+
+    let ok = parse(&format!(
+        "[verify]\nbitcoin_endpoints = [\"https://a.example/{c}\", \"https://b.example/{c}\"]\n"
+    ))
+    .expect("two https endpoints at two origins load");
+    assert_eq!(ok.verify_bitcoin_endpoints.as_ref().map(Vec::len), Some(2));
+}
+
+/// **U101 Accept, through the binary (D196 R3).** A one-entry
+/// `bitcoin_endpoints` is the malformed-config code (17) with its envelope on
+/// a command that needs no vault and never prompts (`verify`'s own code would
+/// be 4 — the bundle does not exist), naming the key, the table, the line and
+/// the count. Before U101 the same file loaded, `verify` without `--online`
+/// never noticed, and the opportunistic pass skipped silently. The control is
+/// the same vehicle with a valid pair.
+#[test]
+fn a_bad_bitcoin_pair_is_exit_17_before_any_command_runs() {
+    let dir = TestDir::new("bitcoin-pair-wiring");
+    let layout = layout_with_config(&dir, None);
+    let root = layout.root().to_path_buf();
+    let config = layout.beside_path(BesideFile::Config);
+
+    std::fs::write(
+        &config,
+        "[verify]\nbitcoin_endpoints = [\"https://a.example\"]\n",
+    )
+    .expect("write config");
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+    assert_eq!(
+        out.status.code(),
+        Some(17),
+        "malformed-config code; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let doc: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
+            .expect("one JSON document");
+    assert_eq!(doc["error"]["class"], serde_json::json!("malformed-config"));
+    let message = doc["error"]["message"].as_str().expect("a message");
+    assert!(
+        message.contains("`bitcoin_endpoints` under [verify]")
+            && message.contains("config.toml:2")
+            && message.contains("found 1"),
+        "names the key, the table, the line and the count: {message}"
+    );
+    assert!(!message.contains("a.example"), "never the URL: {message}");
+
+    std::fs::write(
+        &config,
+        "[verify]\nbitcoin_endpoints = [\"https://a.example\", \"https://b.example\"]\n",
+    )
+    .expect("write config");
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "a valid pair loads and the handler's own code follows; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U100 (D196 R1, R2) — a known key outside its home table is refused
+// ─────────────────────────────────────────────────────────────────────
+
+/// **U100 Accept, at load (D196 R1, R2).** Every key this build reads, written
+/// in a table where it does not live, is a malformed config — not a warning —
+/// naming the key, the table it was found in, the line and where it belongs,
+/// and never the value. The value is an inline table holding the canary: it
+/// is outside the subset, so a refusal that waited for the value would fail on
+/// the value instead, and one that repeated it would carry the canary. The
+/// retired `arbitrum_endpoints` is refused in every table, and under a
+/// per-network table it points at `rpc_endpoints` in that same table. The
+/// control: an unknown key in each of the same tables still only warns
+/// (D189 R3).
+#[test]
+fn a_known_key_outside_its_table_is_refused_by_name() {
+    let c = RPC_URL_CANARY;
+    let value = format!("{{ url = \"https://a.example/v2/{c}\" }}");
+    let tables = [
+        None,
+        Some("anchors"),
+        Some("verify"),
+        Some("verify.arbitrum-one"),
+        Some("networks.arbitrum-one"),
+        Some("future"),
+    ];
+    // Each key's home and its words, written down here apart from the
+    // loader's own table, so the two are independent witnesses.
+    let live = [
+        (
+            "default_network",
+            None,
+            "it belongs at the top of the file, before the first [table] header",
+        ),
+        (
+            "bootstrap",
+            Some("networks.arbitrum-one"),
+            "it belongs under [networks.arbitrum-one]",
+        ),
+        ("tsa_urls", Some("anchors"), "it belongs under [anchors]"),
+        (
+            "ots_calendars",
+            Some("anchors"),
+            "it belongs under [anchors]",
+        ),
+        (
+            "opportunistic_upgrades",
+            Some("anchors"),
+            "it belongs under [anchors]",
+        ),
+        (
+            "bitcoin_endpoints",
+            Some("verify"),
+            "it belongs under [verify]",
+        ),
+        (
+            "rpc_endpoints",
+            Some("verify.arbitrum-one"),
+            "it belongs under [verify.arbitrum-one] or [verify.arbitrum-sepolia]",
+        ),
+    ];
+    let mut cases: Vec<(&str, Option<&str>, &str)> = Vec::new();
+    for (key, home, belongs) in live {
+        for table in tables {
+            if table != home {
+                cases.push((key, table, belongs));
+            }
+        }
+    }
+    for table in [
+        None,
+        Some("anchors"),
+        Some("verify.arbitrum-one"),
+        Some("verify.arbitrum-sepolia"),
+        Some("networks.arbitrum-one"),
+        Some("future"),
+    ] {
+        let instead = if table.is_some_and(|t| t.starts_with("verify.")) {
+            "write `rpc_endpoints` in this table instead"
+        } else {
+            "write `rpc_endpoints` under [verify.arbitrum-one] or [verify.arbitrum-sepolia] instead"
+        };
+        cases.push(("arbitrum_endpoints", table, instead));
+    }
+    assert_eq!(
+        cases.len(),
+        7 * 6 - 7 + 6,
+        "seven live keys in five foreign tables each, and the retired one in six"
+    );
+
+    // Every case is judged and every failure kept, so a defect in ONE key's
+    // home reddens that key's rows alone and the report shows which.
+    let mut failures = Vec::new();
+    for (key, table, belongs) in &cases {
+        let (text, line, found) = match table {
+            None => (
+                format!("# misplaced\n{key} = {value}\n"),
+                2,
+                "at the top level".to_owned(),
+            ),
+            Some(table) => (
+                format!("# misplaced\n[{table}]\n{key} = {value}\n"),
+                3,
+                format!("under [{table}]"),
+            ),
+        };
+        let failure = match parse(&text) {
+            Ok(config) => Some(format!(
+                "`{key}` {found} must be refused, not warned on: {:?}",
+                config.warnings
+            )),
+            Err(err) if err.line != line => Some(format!(
+                "`{key}` {found}: the key's line is {line}: {err:?}"
+            )),
+            Err(err) if err.detail.contains(c) => Some(format!(
+                "`{key}` {found}: the refusal must not carry the value: {}",
+                err.detail
+            )),
+            Err(err)
+                if !(err.detail.contains(&format!("`{key}`"))
+                    && err.detail.contains(&found)
+                    && err.detail.contains(belongs)) =>
+            {
+                Some(format!(
+                    "`{key}` {found}: expected the key, the table and {belongs:?} in {}",
+                    err.detail
+                ))
+            }
+            Err(_) => None,
+        };
+        failures.extend(failure);
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} cases failed:\n{}",
+        failures.len(),
+        cases.len(),
+        failures.join("\n")
+    );
+
+    // The order (D196 R1): a table's network name is judged before its key,
+    // so an unknown network keeps its own answer and `[verify.devnet]` its
+    // own refusal, whatever known key sits in the table.
+    for (text, needle) in [
+        (
+            "[networks.ropsten]\nrpc_endpoints = [\"https://a.example\"]\n",
+            "`[networks.ropsten]` is not a known network",
+        ),
+        (
+            "[verify.ropsten]\nbitcoin_endpoints = [\"https://a.example\"]\n",
+            "`[verify.ropsten]` is not a known network",
+        ),
+        (
+            "[verify.devnet]\nbitcoin_endpoints = [\"https://a.example\"]\n",
+            "`[verify.devnet]` is refused",
+        ),
+    ] {
+        let err = parse(text).expect_err(text);
+        assert!(
+            err.detail.contains(needle),
+            "{text:?}: the table is judged before the key: {}",
+            err.detail
+        );
+    }
+
+    // The control: a key this build does not know only warns, in each table.
+    let unknown: String = tables
+        .iter()
+        .map(|table| match table {
+            None => "future_knob = 1\n".to_owned(),
+            Some(table) => format!("[{table}]\nfuture_knob = 1\n"),
+        })
+        .collect();
+    let config = parse(&unknown).expect("an unknown key only warns, in any table");
+    assert_eq!(config.warnings.len(), 6, "{:#?}", config.warnings);
+}
+
+/// **U100 Accept, through the binary (D196 R1).** A flat `[verify]
+/// rpc_endpoints` is exit 17 with its envelope before any command runs (on
+/// `verify`, whose own code for a missing bundle would be 4), naming the key,
+/// the table it was found in, where it belongs and the line, with the value on
+/// neither stream; the control is the same line under `[verify.arbitrum-one]`.
+/// And a `default_network` written after a table header — which TOML puts in
+/// that table — is exit 17 rather than a run on the built-in arbitrum-one; its
+/// control is the same key moved to the top, which the envelope reports.
+#[test]
+fn a_misplaced_rpc_endpoints_is_exit_17_before_any_command_runs() {
+    let dir = TestDir::new("misplaced-key-wiring");
+    let layout = layout_with_config(&dir, None);
+    let root = layout.root().to_path_buf();
+    let config = layout.beside_path(BesideFile::Config);
+    let c = RPC_URL_CANARY;
+    let pair =
+        format!("rpc_endpoints = [\"https://a.example/v2/{c}\", \"https://b.example/v2/{c}\"]\n");
+    let message_of = |out: &std::process::Output| -> String {
+        let doc: serde_json::Value =
+            serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
+                .expect("one JSON document");
+        assert_eq!(doc["error"]["class"], serde_json::json!("malformed-config"));
+        doc["error"]["message"]
+            .as_str()
+            .expect("a message")
+            .to_owned()
+    };
+
+    std::fs::write(&config, format!("[verify]\n{pair}")).expect("write config");
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+    assert_eq!(
+        out.status.code(),
+        Some(17),
+        "malformed-config code; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let message = message_of(&out);
+    assert!(
+        message.contains("`rpc_endpoints` is not read under [verify]")
+            && message.contains("[verify.arbitrum-one]")
+            && message.contains("config.toml:2"),
+        "names the key, the table, where it belongs and the line: {message}"
+    );
+    for (stream, bytes) in [("stdout", &out.stdout), ("stderr", &out.stderr)] {
+        let text = String::from_utf8_lossy(bytes);
+        assert!(
+            !text.contains(c),
+            "{stream} must not carry the value: {text}"
+        );
+    }
+
+    std::fs::write(&config, format!("[verify.arbitrum-one]\n{pair}")).expect("write config");
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "under its own table the pair loads and the handler's own code follows; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let anchors = "[anchors]\ntsa_urls = [\"https://tsa.example/tsr\"]\n";
+    let sepolia = "default_network = \"arbitrum-sepolia\"\n";
+    std::fs::write(&config, format!("{anchors}{sepolia}")).expect("write config");
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+    assert_eq!(
+        out.status.code(),
+        Some(17),
+        "a default_network after a header is refused, not ignored; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let message = message_of(&out);
+    assert!(
+        message.contains("`default_network` is not read under [anchors]")
+            && message.contains("config.toml:3"),
+        "names the key, the table and the line: {message}"
+    );
+
+    std::fs::write(&config, format!("{sepolia}{anchors}")).expect("write config");
+    let out = spawn(&root, &["--json", "verify", "b.sealproof"]);
+    assert_eq!(out.status.code(), Some(4), "at the top the key loads");
+    let doc: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
+            .expect("one JSON document");
+    assert_eq!(doc["network"], serde_json::json!("arbitrum-sepolia"));
+}
+
+/// **G100-3 (D196 R5).** Every key of the full schema has a home: moved under a
+/// table no key lives in, each is refused, never warned on — so a key added to
+/// the loader and to `FULL_SCHEMA` without a home reddens here. Measured yield
+/// when written: 0 (every key already had one).
+#[test]
+fn every_full_schema_key_is_refused_outside_its_home() {
+    let keys: Vec<&str> = FULL_SCHEMA
+        .lines()
+        .filter_map(|line| line.split_once(" = ").map(|(key, _)| key.trim()))
+        .collect();
+    assert_eq!(keys.len(), 8, "{keys:?}");
+    for key in keys {
+        let refused = parse(&format!("[future]\n{key} = 1\n")).is_err();
+        assert!(refused, "`{key}` only warns outside its home");
+    }
 }

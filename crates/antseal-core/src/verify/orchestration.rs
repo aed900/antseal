@@ -304,6 +304,11 @@ impl FetchFailureClass {
 /// Four outcomes, and they are S15's four. `Different` is its own outcome
 /// rather than a flavour of `NotFound` because under content addressing it
 /// should be unreachable, which is R11's reason for ranking it worst.
+///
+/// The machine spelling is serde's and nothing else's (D200, R99): no
+/// hand-written token method mirrors the variant names.
+/// `tests/r89_live_outcome_json.rs` pins every outcome's wire shape and
+/// asserts that the method is absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LiveBlobOutcome {
@@ -343,18 +348,6 @@ impl LiveBlobOutcome {
     pub const fn is_identical(&self) -> bool {
         matches!(self, Self::Identical)
     }
-
-    /// This outcome's stable token — wildcard-free, so a fifth outcome cannot
-    /// land unnamed.
-    #[must_use]
-    pub const fn token(&self) -> &'static str {
-        match self {
-            Self::Identical => "identical",
-            Self::Different => "different",
-            Self::NotFound => "not-found",
-            Self::FetchFailed { .. } => "fetch-failed",
-        }
-    }
 }
 
 /// One live-check row as the host observed it: which blob, and what the
@@ -371,10 +364,16 @@ pub struct LiveBlobRow {
     pub outcome: LiveBlobOutcome,
 }
 
-/// Everything a host's `--live` run observed, in row order.
+/// Everything a host's `--live` run observed, in row order — or that it
+/// observed nothing at all, because its storage client made **no connection**
+/// to the network ([`Self::not_connected`]; R98, D199 §2 R2). `Default` is a
+/// connected host with no rows ([`Self::none`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LiveInputs {
     rows: Vec<LiveBlobRow>,
+    /// `true` only through [`Self::not_connected`], which carries no rows:
+    /// nothing was fetched, so there is nothing for the fold to read.
+    connection_not_made: bool,
 }
 
 impl LiveInputs {
@@ -384,13 +383,32 @@ impl LiveInputs {
     /// [`LiveLayerVerdict::NothingChecked`] rather than a vacuous pass.
     #[must_use]
     pub const fn none() -> Self {
-        Self { rows: Vec::new() }
+        Self {
+            rows: Vec::new(),
+            connection_not_made: false,
+        }
     }
 
     /// Build from the host's rows, in the order the records were supplied.
     #[must_use]
     pub const fn from_rows(rows: Vec<LiveBlobRow>) -> Self {
-        Self { rows }
+        Self {
+            rows,
+            connection_not_made: false,
+        }
+    }
+
+    /// A host whose storage client made no connection to the network: nothing
+    /// was fetched, so there are no rows, and the section reports
+    /// [`LiveLayerVerdict::NotConnected`] — never a fetch failure per blob,
+    /// for fetches that were never made (R98, D199 §2 R1/R2). The host knows
+    /// this from the type of the client it holds, never from an error message.
+    #[must_use]
+    pub const fn not_connected() -> Self {
+        Self {
+            rows: Vec::new(),
+            connection_not_made: true,
+        }
     }
 
     /// The rows.
@@ -723,11 +741,22 @@ fn rendered_slot(
 /// would report `AllPersisted` vacuously"*). A rendering layer cannot refuse,
 /// so the vacuum gets a name of its own rather than being folded into the
 /// pass.
+///
+/// [`Self::NotConnected`] has no counterpart in R11 either, and **the fold
+/// never produces it**: the host's inputs set it ([`LiveInputs::not_connected`])
+/// when its storage client made no connection, so there are no rows to fold
+/// (R98, D199 §2 R2). It is declared beside `NothingChecked`, below every
+/// verdict the fold can reach, and like it is never a pass. Added before U32,
+/// an additive enum value under D65 §6 rider 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LiveLayerVerdict {
     /// No rows were supplied. Never a pass.
     NothingChecked,
+    /// No connection to the network was made, so nothing was fetched and
+    /// nothing is established either way. Set by the inputs, never by the
+    /// fold. Never a pass.
+    NotConnected,
     /// Every record came back byte-identical.
     AllPersisted,
     /// Nothing negative was established, but at least one fetch failed.
@@ -822,8 +851,15 @@ impl LiveSection {
             })
             .collect();
 
-        let verdict = live_verdict(counts);
+        // A host that made no connection supplies no rows: its verdict is set
+        // here, from the inputs, and never by the fold (R98, D199 §2 R2).
+        let verdict = if inputs.connection_not_made {
+            LiveLayerVerdict::NotConnected
+        } else {
+            live_verdict(counts)
+        };
         let verdict_line = match verdict {
+            LiveLayerVerdict::NotConnected => Some(wording::LIVE_NOT_CONNECTED_LINE.to_owned()),
             LiveLayerVerdict::NothingChecked => None,
             LiveLayerVerdict::AllPersisted => {
                 Some(wording::live_all_persisted_line(counts.checked))
@@ -881,7 +917,9 @@ fn live_verdict(counts: LiveCounts) -> LiveLayerVerdict {
         LiveLayerVerdict::Inconclusive => counts.fetch_failed > 0,
         LiveLayerVerdict::SomeMissing => counts.not_found > 0,
         LiveLayerVerdict::Divergent => counts.different > 0,
-        LiveLayerVerdict::NothingChecked => false,
+        // Not candidates: set outside the fold (the empty vacuum above; a
+        // connection not made, in `LiveSection::new`).
+        LiveLayerVerdict::NothingChecked | LiveLayerVerdict::NotConnected => false,
     })
     .max()
     .unwrap_or(LiveLayerVerdict::AllPersisted)

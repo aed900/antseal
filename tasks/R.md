@@ -1265,6 +1265,7 @@
 - Accept:
   - A `verify --live` run whose client is refused names the refusal in human output and in `--json`, asserted by message; a plant restoring today's classification reddens it.
 - Notes: **[2026-10-18, wave 38 — two restatements for this row's scope.]** Lane L-NET found two sentences that still describe a failed connection as an unreachable network: `verify_host.rs:449` (*"A backend that cannot reach the network — `UnreachableBackend`, which a failed connection degrades to"*) and `antseal-net/src/error.rs:140-142` (`StorageError::Network`, *"timeouts, unreachable peers, RPC transport errors"*, silent on the refusals that travel in it by design). U96 changed `degrade`'s words (D191), not these.
+- Notes: **[2026-10-19, wave 39 — TICKED (D199, lane L-VOCAB2).]** Captures on the `TODO.md` row; D199 §6 records what was built and every deviation.
 
 ### R99 — Four more `pub const fn token()`s in the verify core have no production caller
 - Milestone: M4
@@ -1277,3 +1278,15 @@
 - Accept:
   - Every class enum on verify's JSON path follows the one ruled pattern, asserted per type or by absence.
 - Notes: **[2026-10-17, wave 38 — one more member for the ruling.]** Lane L-VOCAB measured that antseal-net's own report types (`PersistenceOutcome`, `LiveCheckReport`, `PersistenceReport`) serialize with serde's defaults, PascalCase and externally tagged, around a class that D190 made kebab: `{"FetchError":{"class":"transport"}}`. Nothing serializes them on a production path today; rule their casing with the house pattern, before any of them gains a machine consumer.
+- Notes: **[2026-10-19, wave 39 — TICKED (D200, lane L-VOCAB2).]** Captures on the `TODO.md` row; D200 §6 records what was built and every deviation.
+
+### R100 — `verify --online`'s promotion has no native test over a real attested fixture
+- Milestone: M4
+- Size: S
+- Deps: after U30 (`verify --online`); relates to D56 (O3: attested → proven at the agreed header's time) and D133 §8 item 3
+- Spec: D133 §8 item 3 (*"the native promotion row — NOT built … the highest-value one-test follow-on, and it has no id"*)
+- Discovered by: wave-39 lane L-DOCS, 2026-10-19, while rewriting the anchor runbook's `verify --online` step for `Q281`. Id assigned centrally.
+- Problem: no test drives the shipped verify path's online promotion over a real attested OTS fixture. The lane measured by hand that `attested-ots-960767.sealproof`, verified with two loopback servers replaying the committed esplora captures, exits 43 offline, 0 when both endpoints agree (`--json` class `promoted`, time 1785701746), and stays 43 when they disagree. Nothing asserts any of it.
+- Do: a native test (in-process or spawned through `tests/common/spawn.rs`) with two loopback stubs replaying the committed captures and a config pointing `[verify] bitcoin_endpoints` at them, asserting the three outcomes; the disagreement row is the control.
+- Accept:
+  - The three outcomes asserted (exit codes, the promoted class and time); a plant that makes the stubs disagree turns the promotion row red by message.

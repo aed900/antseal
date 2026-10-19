@@ -78,10 +78,16 @@ pub enum StorageError {
         reason: String,
     },
     /// Payment failed **mid-sequence with money already moved**: one or
-    /// more sub-batch txs landed before the failure (D37 Decision 3 —
-    /// the partial quote→tx map is journaled *before* this error
-    /// surfaces, so the evidence of money spent is never only in the
-    /// error). Resume treats mapped quotes as paid and pays only the
+    /// more sub-batch txs landed before the failure. The adapter hands the
+    /// partial quote→tx map to its capture hook before this error surfaces
+    /// (D37 Decisions 2 and 7), but **whether that record became durable is
+    /// the hook's to report, not this error's**: when the latest capture was
+    /// not durable, the evidence of money spent may exist only on-chain, and
+    /// `antseal-cli` surfaces that case as `payment-unrecorded` (exit 37,
+    /// D186), not as this variant's own class. The loop also returns this
+    /// variant when a capture reports not-durable, before submitting the next
+    /// sub-batch (S46), so at most one sub-batch can be paid unrecorded.
+    /// Resume treats journaled mapped quotes as paid and pays only the
     /// remainder. Carries counts, not hashes (hygiene).
     #[error(
         "payment stranded mid-sequence: {landed_tx_count} sub-batch transaction(s) landed before \
@@ -89,8 +95,8 @@ pub enum StorageError {
          mapped quotes ({reason})"
     )]
     StrandedPayment {
-        /// Sub-batch txs that landed (and were journaled) before the
-        /// failure.
+        /// Sub-batch txs that landed before the failure — journaled only as
+        /// far as the latest durable capture reached.
         landed_tx_count: usize,
         /// Diagnostic detail.
         reason: String,
@@ -137,9 +143,14 @@ pub enum StorageError {
         /// The address that resolved to nothing.
         address: Address,
     },
-    /// Transport-class failure: the operation could not get an answer
-    /// from the network (timeouts, unreachable peers, RPC transport
-    /// errors). Retryable by nature.
+    /// Transport-class failure: no answer could be obtained from the network
+    /// (timeouts, unreachable peers, RPC transport errors) — and, by recorded
+    /// design and with no variant of their own (D173 §2 R9, D178 R1, D191
+    /// §1.2), every refusal antseal makes before a storage client starts (the
+    /// storage gate, upstream's state directory, a bootstrap set no transport
+    /// can dial) and upstream's own failure to create or start the client.
+    /// Retryable only in the first sense: a refusal recurs until its cause
+    /// changes.
     #[error("network error: {reason}")]
     Network {
         /// Diagnostic detail.

@@ -140,7 +140,7 @@ where
     /// [`SealError::ConsentDeclined`] when the re-consented re-payment D36
     /// requires is refused (`:465`); [`SealError::Storage`]
     /// (`StorageError::ProofsExpired`) only if the *replacement* proofs
-    /// expire in turn — the first expiry is handled here (`:274`) and never
+    /// expire in turn — the first expiry is handled here (`:278`) and never
     /// reaches the caller; plus the
     /// storage, journal and anchor classes.
     pub async fn resume(&self, seal_id: &SealId) -> Result<SealOutcome, SealError> {
@@ -1328,6 +1328,14 @@ mod tests {
         /// through the sink's own test seam. With `strand_after: Some(k)` the
         /// payment dies after `k` landings and returns `StrandedPayment`
         /// after its latest capture; with `None` it pays every line.
+        ///
+        /// **A predicate-input double, not the adapter's loop (S46, D198).**
+        /// It ignores the sink's verdict and pays on after a failed capture.
+        /// The real loop no longer does: it submits no sub-batch after a
+        /// not-durable capture, so a failed capture healed by a later one is a
+        /// sequence `pay` cannot produce. The double keeps that sequence
+        /// because it is the one input that tells the pipeline's predicate
+        /// (`unrecorded`, the latest capture) from `fault` (the first).
         struct CapturesEachSubBatch<'m> {
             inner: &'m MockBackend,
             sink: Arc<VaultReceiptSink>,

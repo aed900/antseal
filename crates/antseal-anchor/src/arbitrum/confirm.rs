@@ -52,7 +52,7 @@
 //!
 //! A17's `Do` omits it; D55 §3 adds it, because without it a correctly
 //! agreeing pair on the **wrong network** confirms. The payment path already
-//! carries the same rule (`crates/antseal-net/src/ant_backend.rs:217`). Each
+//! carries the same rule (`crates/antseal-net/src/ant_backend.rs:243`). Each
 //! endpoint is asked `eth_chainId` before its receipt is read, and a mismatch
 //! makes that endpoint [`ArbitrumConfirmation::Unavailable`] with a message
 //! naming the expected and reported ids — never a contribution to a tuple.

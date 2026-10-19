@@ -65,12 +65,13 @@ pub struct Cli {
 /// Global flags, valid on every subcommand.
 #[derive(Debug, Args)]
 pub struct GlobalArgs {
-    /// Target network for new work (default: arbitrum-one, or config.toml's
-    /// default_network — flag > config > default). restore, and reveal when
-    /// it must fetch, use the network the work was sealed on and refuse a
-    /// --network naming another; status, show and list read no network.
-    /// "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum
-    /// Sepolia
+    /// Target network for new work, and for verify --online and --live
+    /// (default: arbitrum-one, or config.toml's default_network — flag >
+    /// config > default); init writes it into config.toml as default_network.
+    /// restore, and reveal when it must fetch, use the network the work was
+    /// sealed on and refuse a --network naming another; no other command
+    /// takes a network from this flag. "arbitrum-sepolia" is Arbitrum
+    /// Sepolia, chain 421614, not Ethereum Sepolia
     //
     // Parses as `Option` ON PURPOSE (U4): with a clap-level default an
     // explicit `--network arbitrum-one` would be indistinguishable from
@@ -78,13 +79,20 @@ pub struct GlobalArgs {
     // built-in default. Resolution lives in `crate::config`. The second
     // sentence is D174 §2 R9's: "flag > config > default" was false for
     // `restore`, which reads the work's recorded network (D170 §2 R3), and
-    // the flag renders on every subcommand's help because it is global. It
-    // names its commands precisely: `restore` reads the record eagerly;
-    // `reveal` only when a fetch is needed, so a fully cached reveal ignores
-    // the flag (D175 §2 R2/R3); `status`, `show` and `list` act on no network
-    // at all (the flag still reaches the `--json` envelope's top-level member,
-    // D174 §2 R11). `tests/cli_surface.rs` holds the network sentences by
-    // content, because the snapshot is green on any re-bless.
+    // the flag renders on every subcommand's help because it is global.
+    // `restore` reads the record eagerly; `reveal` only when a fetch is
+    // needed, so a fully cached reveal ignores the flag (D175 §2 R2/R3).
+    // Every command that takes a network from the flag is NAMED — new work
+    // (`seal`), `verify --online`/`--live` (flag > config > default), and
+    // `init`, which has no config yet (flag, else the built-in default) and
+    // writes the result as `default_network` — and every other command is
+    // QUANTIFIED, never listed (U102): "status, show and list read no
+    // network" went stale when `abandon` landed, and was false for `status`,
+    // which may backfill a receipt from the work's OWN recorded chain. The
+    // flag still reaches every `--json` envelope's top-level `network`
+    // member (D174 §2 R11) and the upgrade hook's trace; neither selects a
+    // network. `tests/cli_surface.rs` holds the network sentences by content,
+    // because the snapshot is green on any re-bless.
     #[arg(long, global = true, value_enum, value_name = "NETWORK")]
     pub network: Option<Network>,
 

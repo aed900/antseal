@@ -275,6 +275,10 @@ fn render_document() -> String {
     out.push_str(&format!("{}\n", live_divergent_line(1)));
     out.push_str(&format!("{}\n", live_some_missing_line(2)));
     out.push_str(&format!("{}\n", live_inconclusive_line(1)));
+    // R98 (D199 §2 R2): written down BY HAND, like every verdict line above —
+    // nothing here sweeps `LiveLayerVerdict`, so a line left out of this
+    // list would ship unfrozen.
+    out.push_str(&format!("{LIVE_NOT_CONNECTED_LINE}\n"));
     out.push_str(&format!("{}\n", live_blob_identical_line("unit 7")));
     out.push_str(&format!("{}\n", live_blob_different_line("unit 7")));
     out.push_str(&format!("{}\n", live_blob_not_found_line("unit 7")));
@@ -597,6 +601,10 @@ fn the_snapshot_covers_every_element_the_accept_row_names() {
         ("storage-linkage pass", storage_linkage_pass_line(4)),
         ("storage-linkage fail", storage_linkage_fail_line(1, 4)),
         ("live layer", LIVE_LAYER_LABEL.to_owned()),
+        // R98's Accept element: a client that made no connection is named in
+        // the human output. Read from the COMMITTED file, so a re-bless that
+        // drops the line from section 9 reddens here.
+        ("live not-connected", LIVE_NOT_CONNECTED_LINE.to_owned()),
         ("mirror policy", MIRROR_PARTIAL_REVEAL_POLICY.to_owned()),
     ];
     for (name, line) in required {

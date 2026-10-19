@@ -92,7 +92,7 @@
   abandon declined: nothing was changed, and the interrupted seal is still in the vault
 [abandon-machine-mode] class=consent-not-obtained code=10
   abandoning requires confirmation: machine mode (--json, non-TTY stdin, or --passphrase-fd 0) never prompts — pass --yes to confirm in advance; nothing was changed
-[usage (seal interrupted before staging finished)] class=usage code=2
-  usage error: seal e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4 was interrupted before its staging finished: nothing was anchored or paid for it and there is nothing to resume — discard it with `antseal abandon e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4` and re-run this command
 [payment-unrecorded] class=payment-unrecorded code=37
   payment not recorded: 2 sub-batch transaction(s) landed but the vault could not record all of them (the receipt could not be journaled: work store I/O failure at /home/user/.antseal/store/works/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1/receipt: No space left on device (os error 28)) — money has moved and antseal does not know all of what it bought, so re-running `antseal seal` will quote, and charge again for, everything the vault does not show as paid; the ANT already spent on the unrecorded part cannot be recovered. If the vault's storage caused this (free space, permissions, the disk), fix it first; then review the re-run's quote instead of passing --yes (a payment sub-batch transaction reverted on-chain)
+[random-source-unavailable] class=internal code=1
+  the operating system's random source is unavailable, so a timestamp request nonce could not be generated: no timestamp authority was asked, nothing was paid or uploaded, and the work is left staged — running this exact command again resumes it, quoting again and asking for your consent again, once the random source works. This is a fault of this machine, not a bug in antseal, and antseal has no other source of randomness to fall back on

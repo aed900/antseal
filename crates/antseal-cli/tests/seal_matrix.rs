@@ -164,7 +164,7 @@ impl StorageBackend for CapturingBackend<'_> {
                 })
                 .await?;
             // The hook, doing its one job: the receipt-so-far is on disk
-            // before upstream's loop could submit the next sub-batch.
+            // before the adapter's loop could submit the next sub-batch.
             self.sink.capture(&partial);
             *self.captures.borrow_mut() += 1;
             return Err(StorageError::StrandedPayment {
@@ -697,8 +697,8 @@ fn a_kill_between_sub_batch_txs_pays_each_sub_batch_exactly_once() {
 /// A backend whose `finalize_batch` **always** reports expired proofs.
 ///
 /// D147 §1.10's reachable path to the class: `resume` intercepts the first
-/// expiry once (`resume.rs:274`) to re-quote, re-consent and re-pay, and a
-/// second expiry after that re-payment propagates through `:284`'s `?`.
+/// expiry once (`resume.rs:278`) to re-quote, re-consent and re-pay, and a
+/// second expiry after that re-payment propagates through `:295`'s `?`.
 /// `MockBackend` has no fault for this — its `Fault` enum is `AfterQuote`,
 /// `AfterPayBeforeStore`, `AfterSubBatches(k)`, `AfterStoringK(k)`,
 /// `DuringGetData`, `NetworkOn(Method)` — and a mock cannot age a quote 24 h

@@ -1511,3 +1511,150 @@ fn walk(dir: &std::path::Path) -> Vec<PathBuf> {
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// S45 (D197 R4): the one transition from an absent fine tag
+// ─────────────────────────────────────────────────────────────────────
+
+/// **D197 R4 (S45), the sibling of D106 R4's row above — watched red first.**
+/// `begin` is two writes, so a kill between them leaves a work with its `meta`
+/// record and no fine tag. `set_state` refused every transition from there as
+/// corrupt, which left that work unabandonable: the seal path's restart and
+/// `antseal abandon` both ended in exit 12. It now takes exactly ONE: to
+/// `Abandoned`, when the coarse mirror `begin` wrote is pre-pay —
+/// `can_advance_to`'s "every non-terminal state may abandon", with the mirror
+/// as the proof that the work is non-terminal and unpaid.
+///
+/// Every other transition from an absent tag stays `Corrupt` and writes
+/// nothing; a mirror that is not pre-pay refuses too; a tag that is present
+/// but unreadable is never taken for an absent one; and a missing work stays
+/// `WorkNotFound`. Private vault: this row plants on disk (D106 §7's reason).
+#[test]
+fn an_untagged_pre_pay_work_may_be_abandoned_and_take_no_other_transition() {
+    use antseal_cli::pipeline::journal::recorded_state;
+
+    let root = std::env::temp_dir().join(format!(
+        "antseal-cli-journal-d197-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("mk root");
+    let layout = VaultLayout::at(root.join("vault"));
+    let unlocked = create_vault(&layout, &passphrase(), KdfSelection::Argon2id, &mut rng())
+        .expect("create private vault");
+    let mut journal_rng = ChaCha20Rng::from_seed([0x5C; 32]);
+    let mut store_rng = ChaCha20Rng::from_seed([0x5D; 32]);
+    let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut journal_rng);
+    let store = WorkStore::new(&unlocked);
+    let begin_untagged = |seal_id: SealId| {
+        journal.begin(&identity(seal_id)).expect("begin");
+        assert!(
+            store
+                .delete_journal_entry(&seal_id, STATE_ENTRY)
+                .expect("delete"),
+            "the fine tag was there to delete"
+        );
+        assert_eq!(recorded_state(&store, &seal_id).expect("read"), None);
+    };
+
+    // The one transition: absent tag + pre-pay mirror → `Abandoned`, fine
+    // tag first and mirror second, as every transition writes them.
+    let abandoned = fixture_seal_id(40);
+    begin_untagged(abandoned);
+    journal
+        .set_state(&abandoned, SealState::Abandoned)
+        .unwrap_or_else(|err| panic!("an untagged pre-pay work may abandon (D197 R4): {err}"));
+    assert_eq!(
+        journal.state(&abandoned).expect("tagged now"),
+        SealState::Abandoned
+    );
+    assert_eq!(
+        store.load_meta(&abandoned).expect("meta").state,
+        WorkState::Abandoned
+    );
+    // From here on it is the ordinary machine: idempotent, and terminal.
+    journal
+        .set_state(&abandoned, SealState::Abandoned)
+        .expect("re-abandoning is idempotent");
+    assert!(matches!(
+        journal.set_state(&abandoned, SealState::Complete),
+        Err(JournalError::IllegalTransition { .. })
+    ));
+
+    // Every other target from an absent tag is refused, and nothing moves.
+    let others = [
+        SealState::Staged,
+        SealState::Anchored,
+        SealState::Paid,
+        SealState::Finalizing,
+        SealState::Complete,
+    ];
+    assert_eq!(others.len() + 1, SealState::ALL.len(), "all but Abandoned");
+    for (offset, target) in (41u8..).zip(others) {
+        let seal_id = fixture_seal_id(offset);
+        begin_untagged(seal_id);
+        let refused = journal.set_state(&seal_id, target);
+        assert!(
+            matches!(refused, Err(JournalError::Corrupt { .. })),
+            "{target:?} from an absent tag: {refused:?}"
+        );
+        assert_eq!(recorded_state(&store, &seal_id).expect("read"), None);
+        assert_eq!(
+            store.load_meta(&seal_id).expect("meta").state,
+            WorkState::IncompletePrePay,
+            "{target:?}: nothing written"
+        );
+    }
+
+    // An absent tag on a mirror that is not pre-pay — `Complete` is an
+    // imported work's shape — is not this transition's case.
+    for (offset, mirror) in (46u8..).zip([WorkState::Complete, WorkState::IncompletePostPay]) {
+        let seal_id = fixture_seal_id(offset);
+        begin_untagged(seal_id);
+        let mut record = store.load_meta(&seal_id).expect("meta");
+        record.state = mirror;
+        store
+            .store_meta(&record, &mut store_rng)
+            .expect("rewrite the mirror");
+        let refused = journal.set_state(&seal_id, SealState::Abandoned);
+        assert!(
+            matches!(refused, Err(JournalError::Corrupt { .. })),
+            "{mirror:?}: {refused:?}"
+        );
+        assert_eq!(recorded_state(&store, &seal_id).expect("read"), None);
+        assert_eq!(store.load_meta(&seal_id).expect("meta").state, mirror);
+    }
+
+    // A tag that is present but unreadable is never read as absent.
+    let garbled = fixture_seal_id(48);
+    journal.begin(&identity(garbled)).expect("begin");
+    store
+        .put_journal_entry(
+            &garbled,
+            STATE_ENTRY,
+            b"NON-SECRET fixture: not a state record",
+            &mut store_rng,
+        )
+        .expect("overwrite the tag");
+    let refused = journal.set_state(&garbled, SealState::Abandoned);
+    assert!(
+        matches!(refused, Err(JournalError::Corrupt { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(
+        store.load_meta(&garbled).expect("meta").state,
+        WorkState::IncompletePrePay
+    );
+
+    // A work that does not exist is still exactly that.
+    let missing = journal.set_state(&fixture_seal_id(49), SealState::Abandoned);
+    assert!(
+        matches!(missing, Err(JournalError::WorkNotFound)),
+        "{missing:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}

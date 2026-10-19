@@ -71,7 +71,7 @@ use antseal_cli::vault::store::{SealShapingFlags, WorkStore};
 use antseal_core::content::{FileFlags, SplitMode};
 use antseal_core::crypto::secrets::SealId;
 use antseal_core::crypto::sig_policy::SigPolicy;
-use antseal_net::{BlobCost, NetworkId, PaymentReceipt, StorageBackend};
+use antseal_net::{BlobCost, CaptureOutcome, NetworkId, PaymentReceipt, StorageBackend};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -310,6 +310,12 @@ impl BarrierHook for MarkAt {
 ///
 /// Blocking here parks a tokio worker thread forever, which is fine and
 /// intended: the parent is about to `SIGKILL` the process.
+///
+/// It answers [`CaptureOutcome::Durable`] whatever the inner sink said (S46,
+/// D198 R3). Its experiment is the stall, and the lossy rows — an inner sink
+/// that keeps nothing on disk — emulate the pre-S31 tree, whose loop paid on.
+/// Forwarding their not-durable answer would stop the payment at capture 1,
+/// before the stall, and the child would never wait to be killed.
 struct StallInPayAfter {
     inner: Arc<dyn ReceiptSink>,
     after: usize,
@@ -318,18 +324,20 @@ struct StallInPayAfter {
 }
 
 impl ReceiptSink for StallInPayAfter {
-    fn capture(&self, receipt: &PaymentReceipt) {
-        self.inner.capture(receipt);
+    fn capture(&self, receipt: &PaymentReceipt) -> CaptureOutcome {
+        // The inner verdict is dropped on purpose (type docs).
+        let _ = self.inner.capture(receipt);
         let seen = self.seen.fetch_add(1, Ordering::SeqCst) + 1;
         if seen == self.after {
             std::fs::write(&self.marker, format!("{seen}")).expect("write the kill marker");
-            // Nothing below may run: the next statement in upstream's loop
-            // is the submission of sub-batch `seen + 1`, and letting it
+            // Nothing below may run: the next statement in the adapter's
+            // loop is the submission of sub-batch `seen + 1`, and letting it
             // happen would test a different scenario.
             loop {
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
+        CaptureOutcome::Durable
     }
 }
 

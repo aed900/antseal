@@ -467,3 +467,23 @@ had timed out behind another lane's long shared hold (`docs/instrument-ledger.md
 
 It changes code, tests and module documentation in the tree. Nothing in it authorises a push,
 a dispatch, a deploy or any other outward act.
+
+## Addendum — 2026-10-19 (D199 §2 R4, D200 §2 R4): §4's `R98` bullet is answered, and §2 R2's rule reaches the whole family
+
+- **§4's `R98` bullet** asked whether the fix is a third closed class (additive under D65 §6
+  rider 2) or a section-level line. **D199** rules a closed **section** state:
+  `LiveLayerVerdict::NotConnected` (wire `not-connected`), set by the host from the degraded
+  backend's type and rendered with one R18 line and no rows. No third `FetchFailureClass`
+  value is added, so §2 R1's two wire spellings and the five `FetchFailureClass::ALL.len()`
+  pins stand. The refusal's reason is not verdict wording: it goes to stderr as an escaped note,
+  outside the verdict document (`R79`).
+- **§2 R2** deleted `FetchFailureClass::token()` under `R91`'s Accept clause 2 — a public
+  method either has a production caller or does not exist. **D200** (`R99`) applies the same
+  rule to the family's other four, `LiveBlobOutcome`, `HeadlineImpact`, `OverlayOutcomeClass`
+  and `AggregateDelta`, so serde alone spells `verify`'s wire names; that answers §4's `R99`
+  bullet. D200 §2 R2 also takes up §6's *Left open* note: antseal-net's live report enums
+  (`PersistenceOutcome`, `UnitKindTag`, `LiveSubject`, `LiveVerdict`) serialize kebab-case,
+  their structs' fields stay snake_case, and the at-rest receipt journal keeps its versioned
+  convention.
+
+This record is not rewritten.

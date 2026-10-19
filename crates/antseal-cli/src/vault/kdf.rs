@@ -203,8 +203,12 @@ impl From<KdfError> for CliError {
             KdfError::Execution { detail } => CliError::Internal {
                 detail: format!("KDF execution failed on cap-validated parameters: {detail}"),
             },
-            KdfError::RngFailure => CliError::Internal {
-                detail: "OS random source failed while drawing the KDF salt".to_owned(),
+            // D201 (`U104`): every salt is drawn before any key is derived
+            // from it (a new vault, an import's new vault, an export).
+            KdfError::RngFailure => CliError::RandomSourceUnavailable {
+                what: "a key-derivation salt",
+                consequence: "no key was derived from it and nothing that key would protect \
+                              was written",
             },
         }
     }
@@ -646,5 +650,78 @@ mod tests {
         // 1 GiB + 2 KiB rounds up to 1025 MiB — the exact peak, so the
         // low-RAM message never understates.
         assert_eq!(s.required_mib(), 1025);
+    }
+
+    /// The OS random source with nothing to give: every draw fails with
+    /// `getrandom`'s own error, as [`crate::rng::OsEntropy`]'s would.
+    struct UnavailableRandomSource;
+
+    impl rand_core::TryRng for UnavailableRandomSource {
+        type Error = getrandom::Error;
+
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            Err(getrandom::Error::UNSUPPORTED)
+        }
+
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            Err(getrandom::Error::UNSUPPORTED)
+        }
+
+        fn try_fill_bytes(&mut self, _dst: &mut [u8]) -> Result<(), Self::Error> {
+            Err(getrandom::Error::UNSUPPORTED)
+        }
+    }
+
+    impl rand_core::TryCryptoRng for UnavailableRandomSource {}
+
+    /// **D201 R2 (`U104`)** through both salt draws — a new vault's
+    /// (`generate`: `init`, and `vault import`'s new vault) and an export's
+    /// (`with_fresh_salt`). No key is derived, and the user is told it is this
+    /// machine's fault, not antseal's.
+    #[test]
+    fn both_salt_draws_report_an_unavailable_random_source_as_a_machine_fault() {
+        let existing = KdfParams {
+            alg: KdfAlg::Argon2id {
+                m_cost_kib: ARGON2ID_M_COST_KIB,
+                t_cost: ARGON2ID_T_COST,
+                p: ARGON2ID_P_COST,
+            },
+            salt: [0; 16],
+        };
+        let draws = [
+            (
+                "generate",
+                KdfParams::generate(KdfSelection::Argon2id, &mut UnavailableRandomSource),
+            ),
+            (
+                "with_fresh_salt",
+                existing.with_fresh_salt(&mut UnavailableRandomSource),
+            ),
+        ];
+        assert_eq!(draws.len(), 2, "anti-vacuity: both salt draws");
+        for (draw, result) in draws {
+            let err = result.expect_err("no salt can be drawn");
+            assert!(matches!(err, KdfError::RngFailure), "{draw}: {err:?}");
+            let cli = CliError::from(err);
+            assert_eq!(cli.class(), crate::error::ErrorClass::Internal, "{draw}");
+            assert_eq!(cli.exit_code(), 1, "{draw}");
+            let message = cli.to_string();
+            assert!(
+                message.contains(
+                    "the operating system's random source is unavailable, so a key-derivation \
+                     salt could not be generated: no key was derived from it and nothing that \
+                     key would protect was written."
+                ),
+                "{draw}: {message}"
+            );
+            assert!(
+                message.contains("This is a fault of this machine, not a bug in antseal"),
+                "{draw}: {message}"
+            );
+            assert!(
+                !message.contains("this is a bug in antseal"),
+                "{draw}: {message}"
+            );
+        }
     }
 }

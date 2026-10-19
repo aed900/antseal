@@ -421,7 +421,7 @@ pub fn apply_upgrade<R: TryCryptoRng + ?Sized>(
 ) -> Result<(), JournalError> {
     // R6. The engine's control flow makes `None` unreachable in a *returned*
     // report (`changed ⟹ upgrade.is_some()`), but that is a property of
-    // `ots/engine.rs:451-484` rather than of the type, so the write site
+    // `ots/engine.rs:557-604` rather than of the type, so the write site
     // refuses rather than trusts. If the engine ever gains a path that pushes
     // without a confirmed header, this is what stops it silently downgrading
     // an anchor to `internally-consistent-only`.

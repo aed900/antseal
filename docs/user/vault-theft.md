@@ -23,10 +23,10 @@ vault with no recorded backup prints it again:
 ```
 
 That is not a paraphrase. It is the constant `THEFT_WARNING`
-(`crates/antseal-cli/src/vault/bookkeeping.rs:74-77`), quoted byte for byte, and
+(`crates/antseal-cli/src/vault/bookkeeping.rs:79-82`), quoted byte for byte, and
 it is the same string `init` renders
-(`crates/antseal-cli/src/init.rs:353-358`) and the same string the first-seal
-export nag carries (`crates/antseal-cli/src/vault/bookkeeping.rs:264`). One
+(`crates/antseal-cli/src/init.rs:376`) and the same string the first-seal
+export nag carries (`crates/antseal-cli/src/vault/bookkeeping.rs:301`). One
 author for all three, so a sentence you met at `init` is recognisable here
 rather than being a second phrasing of the same risk. `MVP-SPEC.md` line 143
 requires both the CLI and these docs to state it.
@@ -51,7 +51,7 @@ vault, and the blast radius is every work inside it.
 Read the third row twice. **An export is not a lesser artifact than the vault.
 It is a second complete copy of it**, in a single portable file, encrypted under
 nothing but your passphrase. `vault export` says so itself when it finishes
-(`crates/antseal-cli/src/commands.rs:819-822`):
+(`crates/antseal-cli/src/commands.rs:1108-1111`):
 
 ```
 Treat this file like the vault itself: whoever holds it and the passphrase holds the keys to every sealed work, forever.
@@ -161,8 +161,8 @@ Three consequences you can observe:
   anything.** The vault header is not encrypted, because an unlock has to read
   the parameters before it can decrypt anything. Edit them below the floor and
   the header is rejected **before authentication and before any allocation**, by
-  a range check (`crates/antseal-cli/src/vault/kdf.rs:280`, floor test at
-  `:288`) that `decode` runs at `:438` — one line ahead of key derivation
+  a range check (`crates/antseal-cli/src/vault/kdf.rs:284`, floor test at
+  `:292`) that `decode` runs at `:442` — one line ahead of key derivation
   (`crates/antseal-cli/src/vault/session.rs:423-427`). It carries its own class,
   `vault-kdf-params-out-of-range`, exit code **14**
   (`crates/antseal-cli/src/error.rs:430`, `:512`), so the failure names its
@@ -238,7 +238,7 @@ nothing else (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:84-85`),
 and a vault header naming mode 2 is refused at unlock with its own class,
 `vault-wrap-mode-unsupported`, exit code **19**
 (`crates/antseal-cli/src/vault/session.rs:398-403`;
-`crates/antseal-cli/tests/vault_keyfile.rs:217-232` asserts the class, the code,
+`crates/antseal-cli/tests/vault_keyfile.rs:219-234` asserts the class, the code,
 and that the message says the vault is *intact*).
 
 The reason it was left out is this page's own argument turned around
@@ -261,19 +261,21 @@ what cannot be undone.
    defaults to `generate`;
    `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:53-66`), or imported
    from a file descriptor or a hidden paste if you asked for that — and it never
-   comes back out. Inside the vault it is read to sign a payment
-   (`crates/antseal-cli/src/commands.rs:416`, `:417`), to open the payment RPC
-   in a build with the storage backend compiled in
-   (`crates/antseal-cli/src/backend.rs:699`, `:717`, under
-   `#[cfg(feature = "ant-backend")]`), and to be copied into a `vault export`
-   (`crates/antseal-cli/src/vault/export.rs:761`) — each of them a *use* and
-   none of them an exit, so your route to the funds is the same artifact the
-   thief is holding, protected by the same
+   comes back out. Inside the vault it is read to sign a payment, which
+   happens only in a build with the storage backend compiled in
+   (`crates/antseal-cli/src/commands.rs:416`, `:417`, inside a function
+   compiled only under `#[cfg(feature = "ant-backend")]`, `:341`); to be
+   copied into a `vault export` (`crates/antseal-cli/src/vault/export.rs:761`);
+   and by `vault import`, which decrypts it from the vault it has just
+   installed to check that the copy opens
+   (`crates/antseal-cli/src/vault/export.rs:1259`) — three reads, each of them
+   a *use* and none of them an exit, so your route to the funds is the same
+   artifact the thief is holding, protected by the same
    passphrase. If you supplied the key yourself at `init` you still have it
    elsewhere and can sweep the address from any Arbitrum wallet. If antseal
    generated it, you cannot — but you can still *pay* with it: a backup you made
    before the theft restores into a working vault
-   (`crates/antseal-cli/src/vault/export.rs:1104-1106`) and seals exactly as
+   (`crates/antseal-cli/src/vault/export.rs:1109-1111`) and seals exactly as
    before. What you cannot do is move the balance somewhere the thief cannot
    reach, and the thief — holding the vault itself and racing you only for the
    passphrase — is who the small balance is for.
@@ -344,18 +346,18 @@ decade. It does.
 | `W` is per work; everything derives from it | `crates/antseal-cli/src/vault/store.rs:198-201`; `crates/antseal-core/src/crypto/hkdf.rs:137-146` |
 | an export carries `W` for every work | `crates/antseal-cli/src/vault/export.rs:99-100` |
 | the wallet sub-key decouples records, not the passphrase | `crates/antseal-cli/src/vault/wallet.rs:9-12` |
-| no command exports the wallet key; it is read to sign, to open the payment RPC, and to be copied into an export — three uses, no exit | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:53-66`; `crates/antseal-cli/src/commands.rs:416`, `:417`; `crates/antseal-cli/src/backend.rs:699`, `:717`; `crates/antseal-cli/src/vault/export.rs:761` |
+| no command prints or exports the wallet key on its own; it is read to sign (storage-backend builds only), to be copied into an export, and to check an import — three uses, no exit | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:53-66`; `crates/antseal-cli/src/vault/wallet.rs:135`; `crates/antseal-cli/src/commands.rs:341`, `:416`, `:417`; `crates/antseal-cli/src/vault/export.rs:761`, `:1259` |
 | no rotate / passwd / change-passphrase: ten commands, frozen | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16` |
 | scrypt costs more memory, not less — no low-RAM escape | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:68-75` |
 | import re-encrypts local records and never touches `W` | `crates/antseal-cli/src/vault/export.rs:130-131` |
 | 12-byte creation floor, length only, creation only | `crates/antseal-cli/src/passphrase.rs:38-51`, `:87`, `:238` |
 | frozen Argon2id and scrypt parameters | `crates/antseal-cli/src/vault/kdf.rs:104`, `:111-119` |
 | memory floor has no fallback — exit **13** | `crates/antseal-cli/src/error.rs:642-650`; exit table at `:429` |
-| below-floor parameters are refused pre-auth — exit **14** | `crates/antseal-cli/src/vault/kdf.rs:280`, `:288`, `:438`; `crates/antseal-cli/src/vault/session.rs:423-427`; `crates/antseal-cli/tests/vault_encryption.rs:505` |
+| below-floor parameters are refused pre-auth — exit **14** | `crates/antseal-cli/src/vault/kdf.rs:284`, `:292`, `:442`; `crates/antseal-cli/src/vault/session.rs:423-427`; `crates/antseal-cli/tests/vault_encryption.rs:505` |
 | the whole header is bound as associated data — exit **12** | `crates/antseal-cli/src/vault/cipher.rs:180-186`; `crates/antseal-cli/tests/vault_encryption.rs:537`, `:574` |
 | parameter ceilings, against a memory bomb | `crates/antseal-cli/src/vault/kdf.rs:126-130` |
 | keyfile is 32 CSPRNG bytes, combined by HKDF | `crates/antseal-cli/src/vault/keyfile.rs:10-24`, `:67` |
 | export and import both refuse a wrapped vault | `crates/antseal-cli/src/vault/export.rs:745-756`, `:520-535` |
-| OS-keystore wrap is reserved and refused — exit **19** | `crates/antseal-cli/src/vault/header.rs:83`; `crates/antseal-cli/src/vault/session.rs:398-403`; `crates/antseal-cli/tests/vault_keyfile.rs:217-232` |
+| OS-keystore wrap is reserved and refused — exit **19** | `crates/antseal-cli/src/vault/header.rs:83`; `crates/antseal-cli/src/vault/session.rs:398-403`; `crates/antseal-cli/tests/vault_keyfile.rs:219-234` |
 | why the keystore was left out | `docs/decisions/D50-os-keystore-scope.md:52-56` |
 | the engineering account of this failure mode | `docs/threat-model.md` §2.1 |

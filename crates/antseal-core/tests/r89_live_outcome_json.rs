@@ -122,25 +122,34 @@ fn the_machine_member_carries_no_display_word() {
     }
 }
 
-/// The outcome's own stable token is unaffected by R89 — the variant gained a
-/// payload, and `token()` names the variant, not what it carries.
+/// The outcome's own token is unaffected by R89 — the variant gained a
+/// payload, and the token names the variant, not what it carries. The token
+/// is the serde tag, read the way the verifier page reads it: a struct
+/// variant is a one-key object, and its key is the outcome's token. Until
+/// D200 (R99) this asserted a hand-written `token()` that mirrored the tag
+/// and had no production caller; serde's tag is now the one spelling.
 #[test]
 fn the_outcome_token_is_unchanged_by_the_payload() {
     assert_eq!(
-        LiveBlobOutcome::FetchFailed {
-            class: FetchFailureClass::Transport,
-        }
-        .token(),
-        "fetch-failed"
+        FetchFailureClass::ALL.len(),
+        2,
+        "the sweep below is vacuous if ALL shrinks; grow or shrink it deliberately"
     );
-    assert_eq!(
-        LiveBlobOutcome::FetchFailed {
-            class: FetchFailureClass::BackendRefused,
-        }
-        .token(),
-        "fetch-failed",
-        "the token names the outcome, so both classes share it"
-    );
+    for class in FetchFailureClass::ALL {
+        let value = serde_json::to_value(LiveBlobOutcome::FetchFailed { class })
+            .expect("the outcome serializes");
+        let keys: Vec<&str> = value
+            .as_object()
+            .unwrap_or_else(|| panic!("a struct variant serializes as an object: {value}"))
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            ["fetch-failed"],
+            "the tag names the outcome, so every class shares it: {value}"
+        );
+    }
 }
 
 /// **D190 R4 — the storage and the online failure classes share one wire
@@ -206,6 +215,58 @@ fn the_storage_and_online_failure_classes_share_one_wire_spelling() {
         assert!(
             kebab,
             "{spelling} is not a kebab-case token; both failure classes spell kebab-case (D190 R1)"
+        );
+    }
+}
+
+/// **D200 (R99) — serde is the single source of verify's wire names, held by
+/// absence.** Four hand-written `token()` methods once re-spelled serde's
+/// tags — [`LiveBlobOutcome`]'s in `orchestration.rs`, and `HeadlineImpact`'s,
+/// `OverlayOutcomeClass`'s and `AggregateDelta`'s in `overlay.rs` — with no
+/// production caller, against D190 §2 R2's rule that a public method either
+/// has a production caller or does not exist. D200 deleted all four, and the
+/// tests that read them now read the serde tag; this keeps them deleted by
+/// reading the two source files and finding no `fn token(` in either.
+///
+/// The crate's other `token()` methods (in `anchor/` and `bundle/`) return
+/// RFC 3161 token bytes, not class spellings, and are not scanned.
+#[test]
+fn no_hand_written_token_method_mirrors_a_verify_class_enum() {
+    const NEEDLE: &str = "fn token(";
+    // The needle matches the shape the deleted methods had, so a zero below
+    // is a finding about the files rather than about the needle.
+    assert_eq!(
+        "    pub const fn token(&self) -> &'static str {"
+            .matches(NEEDLE)
+            .count(),
+        1,
+        "the needle no longer matches the deleted methods' own signature"
+    );
+    let sources = [
+        (
+            "src/verify/orchestration.rs",
+            include_str!("../src/verify/orchestration.rs"),
+        ),
+        (
+            "src/verify/overlay.rs",
+            include_str!("../src/verify/overlay.rs"),
+        ),
+    ];
+    // A sweep is vacuous over an empty operand or an unread file: the operand
+    // is asserted first, and each file carries a positive control of the
+    // needle's own alphabet (both files still define `pub const fn`s).
+    assert_eq!(sources.len(), 2, "the two files the four methods lived in");
+    for (path, text) in sources {
+        assert!(
+            text.matches("pub const fn ").count() > 0,
+            "{path}: the positive control found no `pub const fn` — the scan is not reading \
+             the file it names"
+        );
+        assert_eq!(
+            text.matches(NEEDLE).count(),
+            0,
+            "{path} defines a `token()` again: a class enum's wire name has one spelling, its \
+             serde tag (D200, R99) — delete the method and read the tag in the test instead"
         );
     }
 }

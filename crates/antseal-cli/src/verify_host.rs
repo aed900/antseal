@@ -29,7 +29,8 @@
 //!
 //! `antseal-anchor`'s `EndpointFailure` carries endpoint-authored detail;
 //! core's [`ProbeFailureClass`] carries a closed three-value class and the
-//! endpoint's own configured URL. [`probe_failure`] is the narrowing, and it
+//! endpoint's origin (U98, D195 R2) — never its configured URL, which may
+//! carry a provider's key. [`probe_failure`] is the narrowing, and it
 //! is deliberate: an adversary-controlled endpoint must not get a byte
 //! channel into a display line, and the wording for each class is core's.
 
@@ -144,6 +145,14 @@ impl VerifyHost for CollectedInputs {
 /// pinned defaults. `overridden` is disclosed in the overlay, never inferred
 /// there.
 ///
+/// **What core is handed is each endpoint's origin, never its URL** (U98,
+/// D195 R1–R2): `scheme://host` plus a non-default port, for the identities
+/// here and for every failure in [`probe_failure`]. A configured URL commonly
+/// carries a provider's API key in its path or query, and the overlay is
+/// printed to terminals, logs and `--json`. The full URLs are still what is
+/// dialled; this is the one hand-off to core, so neither the wording nor the
+/// page needs to know.
+///
 /// Every failure is an *outcome*, never an error: this function is
 /// infallible by design, because a probe that could fail the run would make
 /// a third party's verification depend on a public endpoint's mood.
@@ -156,7 +165,7 @@ pub fn probe_online(
 ) -> OnlineInputs {
     let mut evidence = OnlineEvidence::new();
     let mut probes = ProbeLog::new(ProbeEndpoints::new(
-        endpoints.identities(),
+        endpoints.disclosed_identities(),
         endpoints.overridden,
     ));
 
@@ -242,7 +251,11 @@ impl OnlineEndpoints {
     }
 
     /// Every endpoint consulted, in disclosure order: the Bitcoin pair, then
-    /// the Arbitrum pair when there is one.
+    /// the Arbitrum pair when there is one — by its full URL, exactly as it
+    /// is dialled. Never handed to core (that is
+    /// [`Self::disclosed_identities`]); kept because a caller that must know
+    /// what will be contacted, such as a test's refuse-to-probe pre-flight,
+    /// needs the URL itself.
     #[must_use]
     pub fn identities(&self) -> Vec<String> {
         let mut out = vec![
@@ -252,6 +265,23 @@ impl OnlineEndpoints {
         if let Some(pair) = &self.arbitrum {
             out.push(pair.first().url().to_owned());
             out.push(pair.second().url().to_owned());
+        }
+        out
+    }
+
+    /// [`Self::identities`] as the overlay discloses them: each endpoint's
+    /// origin only — `scheme://host` plus a non-default port — never its path
+    /// or query (U98, D195 R1). Within a pair the two are distinct origins by
+    /// construction, and the pairs come in disclosure order.
+    #[must_use]
+    pub fn disclosed_identities(&self) -> Vec<String> {
+        let mut out = vec![
+            self.bitcoin.first().disclosed().to_owned(),
+            self.bitcoin.second().disclosed().to_owned(),
+        ];
+        if let Some(pair) = &self.arbitrum {
+            out.push(pair.first().disclosed().to_owned());
+            out.push(pair.second().disclosed().to_owned());
         }
         out
     }
@@ -278,11 +308,12 @@ impl OnlineEndpoints {
 /// An override **replaces the pair wholesale and must supply exactly two**: a
 /// one-element override would leave a must-agree pair agreeing with a default
 /// the user thought they had replaced, and a three-element one has no defined
-/// reading. The Arbitrum pair was already checked when the file was read, by
-/// the same function used here ([`crate::config`]'s `rpc_endpoint_pair`), so
-/// load and use cannot disagree and its refusals never repeat a URL (an RPC
-/// URL often carries an API key, D188 R5). The Bitcoin pair is checked here,
-/// at use. Both are refused as `usage` (2), before any network work.
+/// reading. Both overrides were already checked when the file was read, by the
+/// same functions used here ([`crate::config`]'s `bitcoin_endpoint_pair` and
+/// `rpc_endpoint_pair` — U101's D196 R3 and U44's D188 R4), so load and use
+/// cannot disagree and no refusal repeats a URL (D188 R5, D195 R4). A refusal
+/// here is therefore reachable only from a `Config` the loader did not build;
+/// it is `usage` (2), before any network work.
 ///
 /// Returns `None` only when this network has no Bitcoin pair to consult,
 /// which no shipped network does — the arm exists so a future one cannot
@@ -292,20 +323,23 @@ impl OnlineEndpoints {
 ///
 /// [`CliError::Usage`] — an override with the wrong number of entries, an
 /// unparseable URL, or a pair that resolves to one origin (which would
-/// report agreement between an endpoint and itself).
+/// report agreement between an endpoint and itself). None of these survives
+/// [`crate::config::load`], which applies the same validators.
 pub fn endpoints_from_config(
     config: &crate::config::Config,
     network: NetworkId,
 ) -> Result<Option<OnlineEndpoints>, CliError> {
-    let bitcoin_default: Vec<String> = antseal_anchor::esplora::DEFAULT_ESPLORA_ENDPOINTS
-        .iter()
-        .map(|url| (*url).to_owned())
-        .collect();
-    let bitcoin_urls = config
-        .verify_bitcoin_endpoints
-        .as_ref()
-        .unwrap_or(&bitcoin_default);
-    let bitcoin = parse_pair(bitcoin_urls, "`[verify] bitcoin_endpoints`")?;
+    let bitcoin = match config.verify_bitcoin_endpoints.as_deref() {
+        Some(urls) => crate::config::bitcoin_endpoint_pair(urls)
+            .map_err(|message| CliError::Usage { message })?,
+        None => {
+            let pinned: Vec<String> = antseal_anchor::esplora::DEFAULT_ESPLORA_ENDPOINTS
+                .iter()
+                .map(|url| (*url).to_owned())
+                .collect();
+            parse_pair(&pinned, "the pinned esplora pair")?
+        }
+    };
 
     let arbitrum_override = config.verify_rpc_endpoints(network);
     let arbitrum = match arbitrum_override {
@@ -329,9 +363,11 @@ pub fn endpoints_from_config(
     Ok(Some(OnlineEndpoints::new(bitcoin, arbitrum, overridden)))
 }
 
-/// Parse exactly two URLs into a must-agree pair; `what` names the list in
-/// the refusal. These refusals repeat the URL: D188 R5's no-echo rule belongs
-/// to the Arbitrum RPC override, which never reaches this function.
+/// Parse one of the PINNED pairs — A16's esplora pair, A17's per-network RPC
+/// pairs — into a must-agree pair; `what` names it in the refusal. No
+/// configured URL reaches this function (both overrides go through their
+/// config validators, U101), so its refusals, which repeat the URL, can only
+/// ever name a compiled-in constant.
 fn parse_pair(urls: &[String], what: &str) -> Result<EndpointPair, CliError> {
     let [first, second] = urls else {
         return Err(CliError::Usage {
@@ -399,6 +435,10 @@ fn receipt_probe(confirmation: &ArbitrumConfirmation) -> ReceiptProbe {
 /// not produce a usable answer and we cannot say more"* and is the class with
 /// the weakest claim. A new arm upstream therefore degrades a label rather
 /// than inventing a cause — which is the direction D66 wants.
+///
+/// The endpoint is narrowed too, to its origin (U98, D195 R2): a failure names
+/// the URL its request went to — for esplora the configured base with the
+/// request's path appended — and the base may carry a provider's key.
 fn probe_failure(failure: &EndpointFailure) -> EndpointProbeFailure {
     let class = match failure {
         EndpointFailure::Http(_) => ProbeFailureClass::Transport,
@@ -407,7 +447,7 @@ fn probe_failure(failure: &EndpointFailure) -> EndpointProbeFailure {
         _ => ProbeFailureClass::Transport,
     };
     EndpointProbeFailure {
-        endpoint: failure.endpoint().to_owned(),
+        endpoint: antseal_anchor::http::endpoint::disclosed(failure.endpoint()),
         class,
     }
 }
@@ -433,7 +473,8 @@ fn probe_failure(failure: &EndpointFailure) -> EndpointProbeFailure {
 ///    in a bundle that failed would publish interest in them for nothing.
 ///    Futures are lazy, so a caller hands over `connect_something(..)`
 ///    without anything starting.
-/// 3. **Collection**, over the bundle that verified: [`collect_live`].
+/// 3. **Collection**, over the bundle that verified: [`collect_live`] — unless
+///    the connection was **not made** (below), when nothing is fetched.
 /// 4. **The run the user sees**: `modes` with the live layer switched on and
 ///    the collected rows attached to `host`, which may already carry
 ///    `--online`'s probe results.
@@ -446,13 +487,24 @@ fn probe_failure(failure: &EndpointFailure) -> EndpointProbeFailure {
 ///
 /// # What a network failure does here
 ///
-/// Nothing to the exit code. A backend that cannot reach the network —
-/// [`crate::backend::UnreachableBackend`], which a failed connection degrades
-/// to, or a connected reader whose every fetch fails in the network class —
-/// fails each fetch, R11 reports the section *Inconclusive*, and the run exits
-/// with its evidence verdict's code. A refusal in the network class (23) is
-/// D69 §3 R6's sanction for a build with **no** backend compiled in, and this
-/// function is never reached there.
+/// Nothing to the exit code. A connection that was not made —
+/// [`crate::backend::UnreachableBackend`], to which every refused, failed or
+/// timed-out attempt degrades (D191) — is read **by type**, through
+/// [`ReadOnlyBackend::degraded`](crate::backend::ReadOnlyBackend::degraded),
+/// and is never fetched from: every fetch would fail by construction. The
+/// section reports `not-connected`, with no rows (R98, D199 §2 R1/R2), and
+/// the run carries the reason for the CLI's stderr note
+/// ([`VerifyRun::live_note`], §2 R3). A
+/// connected reader whose every fetch fails in the network class fails each
+/// fetch, and R11 reports the section *Inconclusive*. Either way the run
+/// exits with its evidence verdict's code. A refusal in the network class
+/// (23) is D69 §3 R6's sanction for a build with **no** backend compiled in,
+/// and this function is never reached there.
+///
+/// `connect` yields the [`ReadOnlyBackend`](crate::backend::ReadOnlyBackend)
+/// owned, as the handler passes it, or borrowed, so that a caller that keeps
+/// the backend can read its instrument (`UnreachableBackend::calls`) after
+/// the run.
 ///
 /// # Errors
 ///
@@ -461,7 +513,7 @@ fn probe_failure(failure: &EndpointFailure) -> EndpointProbeFailure {
 /// decode or to yield its manifest, which is an antseal bug rather than an
 /// input problem; and whatever the final [`run_verify`] reports, which for a
 /// bundle that already verified is its serializer arm only.
-pub async fn run_verify_live<B, C>(
+pub async fn run_verify_live<R, B, C>(
     bundle: &[u8],
     options: &VerifyOptions,
     modes: VerifyModes,
@@ -469,7 +521,8 @@ pub async fn run_verify_live<B, C>(
     connect: C,
 ) -> Result<VerifyRun, CliError>
 where
-    B: StorageBackend,
+    R: StorageBackend,
+    B: core::borrow::Borrow<crate::backend::ReadOnlyBackend<R>>,
     C: core::future::Future<Output = B>,
 {
     run_verify(
@@ -482,8 +535,21 @@ where
     let decoded = BundleV1::decode(bundle).map_err(|source| CliError::Internal {
         detail: format!("a verified bundle did not decode for the live check: {source}"),
     })?;
-    let backend = connect.await;
-    let live = collect_live(&decoded, &backend).await?;
+    let connection = connect.await;
+    let backend: &crate::backend::ReadOnlyBackend<R> = core::borrow::Borrow::borrow(&connection);
+    if let Some(unreachable) = backend.degraded() {
+        // R98 (D199 §2 R1/R3): keyed on the type, never on failures — a
+        // connection that was not made is not fetched from at all, and its
+        // reason rides on the run for the CLI's stderr note.
+        let run = run_verify(
+            bundle,
+            options,
+            modes.with_live(),
+            &host.with_live(LiveInputs::not_connected()),
+        )?;
+        return Ok(run.with_live_refusal(unreachable.reason()));
+    }
+    let live = collect_live(&decoded, backend).await?;
 
     run_verify(bundle, options, modes.with_live(), &host.with_live(live))
 }

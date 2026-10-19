@@ -110,6 +110,43 @@ impl<'v, R: TryCryptoRng + ?Sized> VaultJournal<'v, R> {
         self.store.store_meta(&record, &mut **rng)?;
         Ok(())
     }
+
+    /// The one transition [`SealJournal::set_state`] takes from an ABSENT
+    /// fine tag (D197 R4, S45): to [`SealState::Abandoned`], when the coarse
+    /// mirror is [`WorkState::IncompletePrePay`].
+    ///
+    /// `begin` is two writes — the work record, then the `Staged` tag — so a
+    /// kill between them leaves a work with no tag (D106 R4). Refusing every
+    /// transition from there made that work impossible to abandon: the seal
+    /// path's restart and `antseal abandon` both met `Corrupt`, which the CLI
+    /// reports as exit 12. Abandoning is the one move that needs no current
+    /// state: every non-terminal state may abandon
+    /// ([`SealState::can_advance_to`]), and the pre-pay mirror `begin` wrote
+    /// proves the work non-terminal and unpaid. Every other transition stays
+    /// refused, exactly as before — a state machine that cannot read its
+    /// current state must not advance.
+    fn abandon_untagged(&self, seal_id: &SealId, state: SealState) -> Result<(), JournalError> {
+        // `WorkNotFound` for a missing work, as `state()` reports it.
+        let mirror = self.store.load_meta(seal_id)?.state;
+        if state != SealState::Abandoned || mirror != WorkState::IncompletePrePay {
+            return Err(corrupt("work has no journal state record"));
+        }
+        self.write_state(seal_id, SealState::Abandoned)
+    }
+
+    /// Write a transition: the fine tag first (authoritative), the coarse
+    /// mirror second. A crash between them leaves the mirror one barrier
+    /// stale, which no safety rule reads — whereas the reverse could show a
+    /// work as paid before its receipt-bearing state record exists.
+    fn write_state(&self, seal_id: &SealId, state: SealState) -> Result<(), JournalError> {
+        let bytes = encode_state(state)?;
+        {
+            let mut rng = self.rng.borrow_mut();
+            self.store
+                .put_journal_entry(seal_id, STATE_ENTRY, &bytes, &mut **rng)?;
+        }
+        self.update_meta(seal_id, |record| record.state = state.work_state())
+    }
 }
 
 impl<R: TryCryptoRng + ?Sized> SealJournal for VaultJournal<'_, R> {
@@ -218,7 +255,12 @@ impl<R: TryCryptoRng + ?Sized> SealJournal for VaultJournal<'_, R> {
     }
 
     fn set_state(&self, seal_id: &SealId, state: SealState) -> Result<(), JournalError> {
-        let current = self.state(seal_id)?;
+        // Read through `recorded_state`, not `state()`: it tells an ABSENT
+        // tag (`Ok(None)`) from an unreadable one (`Corrupt`, as before),
+        // and only an absent tag may take the one transition below.
+        let Some(current) = recorded_state(&self.store, seal_id)? else {
+            return self.abandon_untagged(seal_id, state);
+        };
         if !current.can_advance_to(state) {
             return Err(JournalError::IllegalTransition {
                 from: current,
@@ -228,17 +270,7 @@ impl<R: TryCryptoRng + ?Sized> SealJournal for VaultJournal<'_, R> {
         if current == state {
             return Ok(());
         }
-        // Fine tag first (authoritative), coarse mirror second: a crash
-        // between them leaves the mirror one barrier stale, which no
-        // safety rule reads — whereas the reverse could show a work as
-        // paid before its receipt-bearing state record exists.
-        let bytes = encode_state(state)?;
-        {
-            let mut rng = self.rng.borrow_mut();
-            self.store
-                .put_journal_entry(seal_id, STATE_ENTRY, &bytes, &mut **rng)?;
-        }
-        self.update_meta(seal_id, |record| record.state = state.work_state())
+        self.write_state(seal_id, state)
     }
 
     fn state(&self, seal_id: &SealId) -> Result<SealState, JournalError> {
@@ -249,12 +281,14 @@ impl<R: TryCryptoRng + ?Sized> SealJournal for VaultJournal<'_, R> {
                 // predates this schema. `load_meta` distinguishes.
                 //
                 // This refusal stays hard, and D106 R4 moved the
-                // enumeration off it rather than softening it here: the
-                // other callers are `set_state` and the seal pipeline,
-                // which run under the U5 lock, and a state machine that
-                // cannot read the current state must not advance. Readers
-                // that only want to *classify* a work take
-                // `recorded_state`, where absent is `Ok(None)`.
+                // enumeration off it rather than softening it here: its
+                // other caller is the seal pipeline, which runs under the
+                // U5 lock, and a state machine that cannot read the current
+                // state must not advance. `set_state` reads through
+                // `recorded_state` instead, so that its one absent-tag
+                // transition (D197 R4) can tell an absent tag from an
+                // unreadable one. Readers that only want to *classify* a
+                // work take `recorded_state`, where absent is `Ok(None)`.
                 self.store.load_meta(seal_id)?;
                 Err(corrupt("work has no journal state record"))
             }

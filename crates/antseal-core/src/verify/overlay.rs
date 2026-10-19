@@ -143,7 +143,8 @@ impl ProbeFailureClass {
 /// literals ([`crate::anchor::model::ReceiptFacts`]'s precedent).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EndpointProbeFailure {
-    /// The endpoint's identity (its configured URL).
+    /// The endpoint's identity, as the host discloses it (the CLI: its
+    /// origin).
     pub endpoint: String,
     /// What went wrong, as a closed class.
     pub class: ProbeFailureClass,
@@ -376,18 +377,6 @@ impl HeadlineImpact {
             },
         }
     }
-
-    /// This class's stable token — D64 §6.2's names, wildcard-free so a new
-    /// class cannot land unnamed (the L2 discipline; the wording sweep in
-    /// `tests` is the second stop).
-    #[must_use]
-    pub const fn token(&self) -> &'static str {
-        match self {
-            Self::Supplies { .. } => "supplies",
-            Self::Stands => "stands",
-            Self::StillUnanchored => "still-unanchored",
-        }
-    }
 }
 
 /// Why a probed anchor was **not** promoted (D64 §6.2's reason set, plus the
@@ -458,18 +447,6 @@ pub enum OverlayOutcomeClass {
         /// Why not.
         reason: NotPromotedReason,
     },
-}
-
-impl OverlayOutcomeClass {
-    /// This class's stable token — D64 §6.2's names, wildcard-free (L2).
-    #[must_use]
-    pub const fn token(&self) -> &'static str {
-        match self {
-            Self::Promoted { .. } => "promoted",
-            Self::Refuted { .. } => "refuted",
-            Self::NotPromoted { .. } => "not-promoted",
-        }
-    }
 }
 
 /// One always-rendered per-probed-anchor outcome line (D64 §3): slot-named,
@@ -571,16 +548,6 @@ pub enum AggregateDelta {
         /// The augmented set's latest verified time.
         latest_unix: i64,
     },
-}
-
-impl AggregateDelta {
-    /// This delta's stable token — wildcard-free (L2).
-    #[must_use]
-    pub const fn token(&self) -> &'static str {
-        match self {
-            Self::DivergenceNewlyFlagged { .. } => "divergence-newly-flagged",
-        }
-    }
 }
 
 /// One change-only aggregate line: the datum plus its final display string.

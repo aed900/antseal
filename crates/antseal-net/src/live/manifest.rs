@@ -86,6 +86,7 @@ pub enum LiveCheckError {
 /// frozen format type for a reporting convenience). Conversion is
 /// exhaustive, so a new wire variant fails to compile here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum UnitKindTag {
     /// An ordinary unit in the file's tiling domain.
     Normal,
@@ -104,6 +105,7 @@ impl From<UnitKind> for UnitKindTag {
 
 /// The storage record a live-check row refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum LiveSubject {
     /// One unit's ciphertext blob.
     Unit {
@@ -249,6 +251,7 @@ pub struct LiveCheckRow {
 /// true regardless of what the unreachable rows would have said, and the
 /// per-outcome counts on [`LiveCheckReport::summary`] carry the rest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum LiveVerdict {
     /// Every record came back byte-identical.
     AllPersisted,
@@ -816,8 +819,29 @@ mod tests {
         let json = serde_json::to_string(&report).expect("serializes");
         let back: LiveCheckReport = serde_json::from_str(&json).expect("deserializes");
         assert_eq!(back, report);
-        assert!(json.contains("AllPersisted"));
-        assert!(json.contains("RawMirror"), "kinds are machine-readable");
+        // Every enum in the report is kebab-case (D200, R99), each pinned by
+        // its own tag: the verdict, the subject, the unit kind (both values,
+        // so kinds are machine-readable) and the outcome.
+        for tag in [
+            r#""verdict":"all-persisted""#,
+            r#""subject":{"unit":{"#,
+            r#""kind":"normal""#,
+            r#""kind":"raw-mirror""#,
+            r#""outcome":"identical""#,
+        ] {
+            assert!(
+                json.contains(tag),
+                "the tag `{tag}` is missing — the live report's enums serialize kebab-case \
+                 (D200, R99): {json}"
+            );
+        }
+        // The subject's unit variant is absent from this report (no manifest
+        // record was passed), so it is pinned directly.
+        assert_eq!(
+            serde_json::to_string(&LiveSubject::EncryptedManifest).expect("serializes"),
+            r#""encrypted-manifest""#,
+            "the manifest subject's tag is kebab-case (D200, R99)"
+        );
         // Not one ciphertext rides along: each blob's own serde rendering
         // (its leading bytes are enough to identify it) is absent.
         for ciphertext in map.values() {

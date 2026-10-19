@@ -95,6 +95,7 @@ live check: all 4 blob(s) are still served, byte-identical
 live check: 1 address(es) served different bytes — under content addressing that should be impossible
 live check: 2 blob(s) are no longer on the network
 live check: inconclusive — 1 fetch(es) failed and nothing negative was established
+live check: not performed — no connection to the Autonomi network was made, so nothing was fetched and nothing is established either way
 unit 7: still served, byte-identical
 unit 7: the network served different bytes
 unit 7: not found on the network

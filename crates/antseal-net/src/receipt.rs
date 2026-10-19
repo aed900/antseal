@@ -312,6 +312,33 @@ mod tx_map_pairs {
     }
 }
 
+/// Whether one capture of the receipt-so-far became durable — the verdict
+/// the adapter's capture hook returns after each landed sub-batch (S46,
+/// D198).
+///
+/// The payment loop reads it before submitting the next sub-batch: after a
+/// [`CaptureOutcome::NotDurable`] capture, with sub-batches remaining, it
+/// submits none of them and returns
+/// [`StorageError::StrandedPayment`](crate::StorageError::StrandedPayment), so
+/// at most one sub-batch is ever paid without a durable record — D37
+/// Decision 2's bound, held under a failing journal too. A not-durable
+/// capture of the **last** sub-batch stops nothing: `pay` returns the
+/// receipt, and the caller's own post-`pay` write is the second chance
+/// (D186 R3).
+///
+/// Ungated, because the sinks that answer it are built in every feature set.
+/// Not `#[must_use]`: a caller that captures for its own record, with no
+/// loop to stop, may ignore the answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureOutcome {
+    /// The sink recorded the receipt-so-far — for the vault's sink, an
+    /// atomic, fsync'd write that is on disk when the capture returns.
+    Durable,
+    /// The sink did not record it — a failed write, or a sink that records
+    /// nothing — so the payment it describes may exist only on-chain.
+    NotDurable,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -469,3 +469,220 @@ fn a_configured_pair_is_what_the_receipt_probe_contacts() {
         );
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// U98 (D195 R1–R2): the overlay discloses each endpoint by its origin
+// ─────────────────────────────────────────────────────────────────────
+
+/// What no disclosure may carry: a path segment, where a provider commonly
+/// puts its API key. NON-SECRET: a marker string, not a key.
+const PATH_CANARY: &str = "NOT-A-KEY-path-canary";
+/// …and a query parameter, the other place it goes. Configured on the RPC pair
+/// only: an esplora base with a query is refused at load (D196 R3), because
+/// esplora requests append their path to it.
+const QUERY_CANARY: &str = "NOT-A-KEY-query-canary";
+
+/// A stub that answers every request with `status`.
+fn stub_answering(status: u16) -> StubServer {
+    StubServer::spawn(StubScript::new().unmatched(StubReply::body(status, b"no".to_vec())))
+}
+
+/// The F13 shape — its receipt included — with one genuinely attested `.ots`
+/// anchor at `height` in place of its placeholders: the overlay renders a
+/// per-anchor outcome only for an anchor attested offline, and the failure
+/// lines this module's U98 rows read hang off that outcome.
+fn keyed_probe_bundle(height: u64) -> Vec<u8> {
+    use antseal_core::anchor::testing::ots_writer::{
+        FETCH_DATE as WRITER_FETCH_DATE, bitcoin, container, header_with,
+    };
+    let built = build(&shapes::multi_file_every_anchor_kind(), &Selection::all(3));
+    let proof =
+        antseal_core::bundle::SealProof::decode(&built.bytes).expect("the F13 fixture decodes");
+    let digest = *antseal_core::manifest::anchor_digest(proof.anchor_digest_preimage()).as_bytes();
+    let header = header_with(&digest, 1_483_398_000);
+    let mut parts = BundleV1::decode(&built.bytes)
+        .expect("the F13 fixture decodes to the model")
+        .into_parts();
+    parts.ots_anchors = vec![
+        OtsAnchor::new(
+            AnchorStatus::Attested,
+            OpaqueBytes::from_vec(container(&digest, &bitcoin(height))),
+            Some(OtsUpgrade::new(height, header, WRITER_FETCH_DATE)),
+        )
+        .expect("a synthetic committed artifact is under the D10 caps"),
+    ];
+    encode_bundle(&BundleV1::new(parts).expect("a well-formed bundle"))
+        .expect("the rebuilt bundle re-encodes")
+}
+
+/// Every string under an `"endpoint"` key anywhere in `value`.
+fn endpoint_fields(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, inner) in map {
+                if key == "endpoint"
+                    && let Some(text) = inner.as_str()
+                {
+                    out.push(text.to_owned());
+                }
+                endpoint_fields(inner, out);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                endpoint_fields(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// One `--online` run against four stubs configured as a provider would
+/// configure them — the esplora pair with a key-shaped path, the RPC pair with
+/// a key-shaped path AND query — read back as the human report, the `--json`
+/// result and the overlay's own identities. The pre-flight runs BEFORE any
+/// request: every endpoint the run would consult must be one of the stubs,
+/// so a broken resolution fails here rather than dialing a real endpoint (Q16's
+/// `cfg(test)` arm does not cover this crate's in-process tests).
+struct KeyedRun {
+    human: String,
+    json: String,
+    identities: Vec<String>,
+    origins: Vec<String>,
+}
+
+fn keyed_run(btc: [&StubServer; 2], rpc: [&StubServer; 2]) -> KeyedRun {
+    let esplora = |s: &StubServer| format!("{}/{PATH_CANARY}/x", s.base_url());
+    let keyed = |s: &StubServer| format!("{}/{PATH_CANARY}/x?apikey={QUERY_CANARY}", s.base_url());
+    let configured = vec![
+        esplora(btc[0]),
+        esplora(btc[1]),
+        keyed(rpc[0]),
+        keyed(rpc[1]),
+    ];
+    let config = crate::config::parse(&format!(
+        "[verify]\nbitcoin_endpoints = [\"{}\", \"{}\"]\n\
+         [verify.arbitrum-one]\nrpc_endpoints = [\"{}\", \"{}\"]\n",
+        configured[0], configured[1], configured[2], configured[3],
+    ))
+    .expect("keyed loopback stubs are admissible endpoints");
+    let endpoints = super::endpoints_from_config(&config, NetworkId::ArbitrumOne)
+        .expect("resolves")
+        .expect("arbitrum-one has a Bitcoin pair");
+    assert_eq!(
+        endpoints.identities(),
+        configured,
+        "the run would consult an endpoint that is not one of this test's stubs — refusing \
+         to probe"
+    );
+
+    let bytes = keyed_probe_bundle(700_511);
+    let bundle = BundleV1::decode(&bytes).expect("the keyed bundle decodes");
+    let client = HttpClient::new(HttpPolicy::verify());
+    let online = probe_online(&client, &bundle, &endpoints, NetworkId::ArbitrumOne);
+    let run = crate::verify_out::run_verify(
+        &bytes,
+        &antseal_core::verify::VerifyOptions::new(),
+        antseal_core::verify::orchestration::VerifyModes::new().with_online(),
+        &super::CollectedInputs::none().with_online(online),
+    )
+    .expect("the keyed bundle verifies");
+    let identities = run
+        .outcome()
+        .overlay()
+        .expect("an --online run renders the overlay")
+        .endpoints
+        .identities
+        .clone();
+    KeyedRun {
+        human: run.render().join("\n"),
+        json: run.json().expect("the --json result serializes"),
+        identities,
+        origins: btc.iter().chain(rpc.iter()).map(|s| s.base_url()).collect(),
+    }
+}
+
+/// **U98 Accept (D195 R1–R2), the identities.** A configured endpoint whose
+/// URL carries a key in its path or query is consulted — with that key, which
+/// each stub's request log proves — and disclosed by its origin alone: the
+/// `endpoints:` line and `--json` carry `scheme://host:port` and neither
+/// canary, and the overlay's identities ARE the stubs' origins.
+#[test]
+fn the_overlay_discloses_origins_and_never_a_configured_path_or_query() {
+    let (btc_first, btc_second, rpc_first, rpc_second) = (stub(), stub(), stub(), stub());
+    let run = keyed_run([&btc_first, &btc_second], [&rpc_first, &rpc_second]);
+
+    for (surface, text) in [("human", &run.human), ("--json", &run.json)] {
+        assert!(
+            !text.contains(PATH_CANARY) && !text.contains(QUERY_CANARY),
+            "the overlay disclosed a configured path or query on its {surface} surface:\n{text}"
+        );
+    }
+    assert_eq!(
+        run.identities, run.origins,
+        "each identity is a stub's origin"
+    );
+    for origin in &run.origins {
+        assert!(
+            run.human.contains(origin.as_str()),
+            "{origin} on the endpoints line:\n{}",
+            run.human
+        );
+    }
+
+    // The consulted half: the keyed URL was USED, not merely printed less.
+    for (label, server) in [
+        ("esplora first", &btc_first),
+        ("esplora second", &btc_second),
+    ] {
+        assert!(
+            requests(server)
+                .iter()
+                .any(|text| text.contains(PATH_CANARY)),
+            "the {label} endpoint was not asked through its configured path: {:#?}",
+            requests(server)
+        );
+    }
+    for (label, server) in [("RPC first", &rpc_first), ("RPC second", &rpc_second)] {
+        assert!(
+            requests(server)
+                .iter()
+                .any(|text| text.contains(PATH_CANARY) && text.contains(QUERY_CANARY)),
+            "the {label} endpoint was not asked through its configured path and query: {:#?}",
+            requests(server)
+        );
+    }
+}
+
+/// **U98 Accept (D195 R2), the failure lines.** The same run with every stub
+/// answering 500, so the per-anchor failure line (esplora: the configured base
+/// with the request's path appended) and the receipt failure line are
+/// rendered: neither canary on either surface, and every failure's endpoint
+/// in `--json` is one of the stubs' origins.
+#[test]
+fn a_failure_line_discloses_the_origin_and_never_a_configured_path_or_query() {
+    let (btc_first, btc_second) = (stub_answering(500), stub_answering(500));
+    let (rpc_first, rpc_second) = (stub_answering(500), stub_answering(500));
+    let run = keyed_run([&btc_first, &btc_second], [&rpc_first, &rpc_second]);
+
+    for (surface, text) in [("human", &run.human), ("--json", &run.json)] {
+        assert!(
+            !text.contains(PATH_CANARY) && !text.contains(QUERY_CANARY),
+            "a failure line disclosed a configured path or query on its {surface} surface:\n{text}"
+        );
+    }
+    let document: serde_json::Value =
+        serde_json::from_str(&run.json).expect("the --json result is one JSON document");
+    let mut failed = Vec::new();
+    endpoint_fields(&document, &mut failed);
+    let (esplora, rpc) = run.origins.split_at(2);
+    assert!(
+        esplora.iter().all(|origin| failed.contains(origin))
+            && rpc.iter().any(|origin| failed.contains(origin)),
+        "both esplora endpoints and the RPC pair must have failed by origin: {failed:#?}"
+    );
+    assert!(
+        failed.iter().all(|endpoint| run.origins.contains(endpoint)),
+        "every failure names a stub's origin and nothing more: {failed:#?}"
+    );
+}

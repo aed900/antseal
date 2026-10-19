@@ -352,3 +352,126 @@ fn the_two_endpoints_are_queried_concurrently() {
         4 * STALL
     );
 }
+
+/// **D202 R2**: the deadline-taking form starts no request at or after its
+/// deadline, checking before EACH of an endpoint's two GETs. A refused
+/// request is `NotStarted` naming its own endpoint, so the pair is
+/// `Unavailable` — never an agreed header and never an agreed absence.
+///
+/// Three legs over the same kind of stub: a deadline already passed (nothing
+/// is asked), a deadline that passes while the block-hash GETs are answering
+/// (each is asked that one question and not the header), and no deadline —
+/// the control, in which the same slow stubs agree, so the deadline is what
+/// made the middle leg unavailable.
+#[test]
+fn a_deadline_starts_no_request_at_or_after_it() {
+    use crate::testing::replay::request_line;
+    use crate::testing::stub::{StubMatch, StubReply, StubScript};
+
+    /// Each endpoint's block-hash GET answers after this; its header GET at
+    /// once.
+    const HASH_STALL: Duration = Duration::from_millis(2_000);
+    /// The middle leg's deadline, from the moment of the call: the block-hash
+    /// GETs start a second before it and answer a second after it.
+    const DEADLINE_IN: Duration = Duration::from_millis(1_000);
+
+    // One attempt and rungs far wider than the stall, so a timeout can never
+    // stand in for the deadline (a failed block-hash GET would also leave
+    // the header GET unsent).
+    let patient = {
+        let mut policy = HttpPolicy::verify();
+        policy.timeouts = HttpTimeouts::within(30_000);
+        policy.max_attempts = 1;
+        HttpClient::new(policy)
+    };
+    let slow_hash = || {
+        StubServer::spawn(
+            StubScript::new()
+                .route(
+                    StubMatch::target(format!("/block-height/{RECORDED_HEIGHT}")),
+                    StubReply::SlowBody {
+                        delay: HASH_STALL,
+                        status: 200,
+                        content_type: "text/plain",
+                        bytes: fixtures::BLOCKSTREAM_HEIGHT.to_vec(),
+                    },
+                )
+                .route(
+                    StubMatch::target("/header"),
+                    StubReply::Body {
+                        status: 200,
+                        content_type: "text/plain",
+                        bytes: fixtures::BLOCKSTREAM_HEADER.to_vec(),
+                    },
+                ),
+        )
+    };
+    let not_started = |server: &StubServer| EndpointFailure::NotStarted {
+        endpoint: endpoint(&server.base_url()).url().to_owned(),
+    };
+
+    // Leg 1: the deadline has already passed — neither endpoint is asked.
+    let (first, second) = (slow_hash(), slow_hash());
+    let outcome = fetch_agreed_header_by(
+        &patient,
+        &pair(&first, &second),
+        RECORDED_HEIGHT,
+        Some(Instant::now()),
+    );
+    assert_eq!(
+        outcome,
+        Agreement::Unavailable {
+            failures: vec![not_started(&first), not_started(&second)]
+        }
+    );
+    // The outcome alone cannot tell "never asked" from "asked for the hash,
+    // refused the header" — both end in two `NotStarted` — so the count is
+    // what pins the check before the FIRST GET.
+    assert_eq!(
+        (first.connections(), second.connections()),
+        (0, 0),
+        "a block-hash GET started after a deadline that had already passed"
+    );
+
+    // Leg 2: the deadline passes while the block-hash GETs are answering.
+    let (first, second) = (slow_hash(), slow_hash());
+    let started = Instant::now();
+    let outcome = fetch_agreed_header_by(
+        &patient,
+        &pair(&first, &second),
+        RECORDED_HEIGHT,
+        Some(started + DEADLINE_IN),
+    );
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= HASH_STALL,
+        "the stubs did not actually stall ({elapsed:?}); the leg would measure nothing"
+    );
+    assert_eq!(
+        (first.connections(), second.connections()),
+        (1, 1),
+        "a header GET started after the deadline: {outcome:?}"
+    );
+    for server in [&first, &second] {
+        let requests = server.requests();
+        assert_eq!(requests.len(), 1, "one request per endpoint");
+        let line = request_line(&requests[0]);
+        assert!(
+            line.contains(&format!("/block-height/{RECORDED_HEIGHT}")),
+            "the one request is the block-hash GET: {line}"
+        );
+    }
+    assert_eq!(into_online_block_result(&outcome), None);
+    assert_eq!(
+        outcome,
+        Agreement::Unavailable {
+            failures: vec![not_started(&first), not_started(&second)]
+        }
+    );
+
+    // Leg 3, the control: no deadline, the same slow stubs, and they agree.
+    let (first, second) = (slow_hash(), slow_hash());
+    let outcome = fetch_agreed_header_by(&patient, &pair(&first, &second), RECORDED_HEIGHT, None);
+    assert_eq!(outcome, Agreement::Agreed(Some(recorded_header_bytes())));
+    assert_eq!((first.connections(), second.connections()), (2, 2));
+}

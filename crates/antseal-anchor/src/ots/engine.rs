@@ -39,12 +39,19 @@
 //! # The budget bounds what is *started*
 //!
 //! The substrate exposes no per-call deadline, so a budget check can only sit
-//! between polls. The achievable bound is therefore
+//! between requests. The achievable bound is therefore
 //! `budget.total + one in-flight call` — with
 //! [`HttpPolicy::opportunistic`](crate::http::HttpPolicy::opportunistic) that
 //! is `budget.total + 3 s`, and it is a bound rather than a typical case
 //! because a poll that answers costs milliseconds. Stated here because the
 //! obvious reading of "a 5-second budget" is wrong by up to 3 s.
+//!
+//! The block-header confirmation that a successful poll leads to is under the
+//! same start gate (A141, D202): it is not begun once the budget is spent —
+//! the merge is dropped and the calendar polled again on a later pass — and
+//! each esplora endpoint checks the same deadline before each of its two
+//! GETs. The pair's endpoints run concurrently, so their in-flight GETs still
+//! cost one call's worth of wall clock.
 //!
 //! # This module persists nothing
 //!
@@ -62,7 +69,7 @@ use antseal_core::bundle::schema::OtsUpgrade;
 
 use super::upgrade::{
     HeaderError, MergeError, PendingRef, UpgradePoll, UpgradeTarget, already_merged,
-    confirm_header, merge_upgrade, pending_refs, poll_upgrade,
+    confirm_header_by, merge_upgrade, pending_refs, poll_upgrade,
 };
 use super::upgrade_uri::UpgradeUriRefusal;
 use crate::agree::EndpointPair;
@@ -116,8 +123,9 @@ pub struct StoredTsaAnchor {
 /// How much work one hook invocation may do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UpgradeBudget {
-    /// Wall clock available for starting polls. See the module docs for what
-    /// this does and does not bound.
+    /// Wall clock available for starting requests — the polls, and the
+    /// esplora requests of a header confirmation. See the module docs for
+    /// what this does and does not bound.
     pub total: Duration,
     /// Hard ceiling on polls, so a vault with thousands of pending anchors
     /// cannot turn one invocation into a scan of all of them.
@@ -149,7 +157,13 @@ impl UpgradeBudget {
         }
     }
 
-    /// Whether `started` has used up the wall clock.
+    /// Whether `started` has used up the wall clock, or `polls` the poll
+    /// allowance.
+    ///
+    /// The check before each **poll**. Not the check before a header
+    /// confirmation, which is on time alone (D202 R1): by then the poll that
+    /// brought the upgrade is already counted, so this would drop every
+    /// upgrade that the last permitted poll answered.
     #[must_use]
     pub fn exhausted(&self, started: Instant, polls: usize) -> bool {
         polls >= self.max_polls || started.elapsed() >= self.total
@@ -241,6 +255,24 @@ pub enum UpgradeNote {
     /// The budget ran out before this anchor was reached.
     #[error("the upgrade budget was exhausted before every pending anchor was polled")]
     BudgetExhausted,
+    /// The calendar returned an upgrade, but the time budget ran out before
+    /// its block header could be requested, so nothing was recorded for it
+    /// (A141; D202 R1).
+    ///
+    /// Not [`Self::BudgetExhausted`], whose words — "before every pending
+    /// anchor was polled" — would be false here: this anchor was polled. And
+    /// not [`Self::HeaderUnconfirmed`]: no endpoint was asked, so nothing is
+    /// known about the header. Re-pollable, as that arm is: the engine
+    /// records nothing, the stored artifact keeps its pending branch, and the
+    /// calendar is polled again on a later pass.
+    #[error(
+        "{uri}: the calendar returned an upgrade, but the time budget ran out before its block \
+         header could be requested, so the upgrade was not recorded"
+    )]
+    BudgetSpentBeforeHeader {
+        /// The calendar polled.
+        uri: String,
+    },
 }
 
 /// What one hook invocation did.
@@ -530,7 +562,28 @@ fn upgrade_one_anchor(
                 });
                 continue;
             };
-            match confirm_header(client, pair, attestation, fetch_date) {
+            // A141 (D202 R1): no request of the pass starts after its time
+            // budget, and the confirmation would start two per endpoint. On
+            // time ALONE — never `budget.exhausted(started, report.polls)`:
+            // the poll that brought this upgrade is already counted, so the
+            // poll-count half would drop every upgrade answered by the last
+            // permitted poll (the `max_polls: 1` engine tests and
+            // `the_last_permitted_poll_still_has_its_header_confirmed` pin
+            // this). Dropping the merge loses nothing durable: nothing is
+            // recorded, the stored artifact keeps its pending branch, and the
+            // calendar is polled again on a later pass.
+            if started.elapsed() >= budget.total {
+                report.budget_exhausted = true;
+                report.notes.push(UpgradeNote::BudgetSpentBeforeHeader {
+                    uri: pending.uri.clone(),
+                });
+                continue;
+            }
+            // The same budget, carried into the confirmation as the deadline
+            // each esplora request must start before. `None` (no deadline)
+            // only if the sum overflows `Instant`, which no real budget does.
+            let deadline = started.checked_add(budget.total);
+            match confirm_header_by(client, pair, attestation, fetch_date, deadline) {
                 Ok(confirmed) => upgrade = Some(confirmed),
                 Err(source) => {
                     // Atomic: the merge is dropped with the header. Nothing

@@ -1553,145 +1553,29 @@ fn the_flag_mismatch_trap_names_abandon_and_the_refused_invocation_then_seals() 
     assert!(again.already);
 }
 
-/// **T3 (D185 R6; §3 test 2) — watched red first.** A seal interrupted
-/// between `begin` and the plan write: its exact re-run used to fail with a
-/// usage error that named no exit, on every run. It now names
-/// `antseal abandon <seal-id>`, and running that lets the same command seal.
+/// **S45 (D197 R2, R3), window 2 — watched red first** (the red baseline was
+/// D185 R6's usage text, exit 2, which D197 R7 retires). A seal killed
+/// between `begin` and the plan write: its exact re-run used to end on every
+/// run in a usage error naming `antseal abandon`, three commands to undo a
+/// Ctrl-C. It now abandons the interrupted work itself and seals the same
+/// files afresh, under one invocation.
 ///
 /// One unit blob is staged before the "kill", the reachable shape:
 /// `pipeline/seal.rs` journals each unit as it is encrypted, before the plan
-/// is written. That is why the message says "before its staging finished"
-/// and not "nothing was staged" — the vault can hold staged blobs of the
-/// work, as it does here.
+/// is written. Window 1 — the kill inside `begin` itself — is
+/// `a_seal_killed_inside_begin_is_abandoned_and_sealed_afresh`, at the end of
+/// this file with the rest of S45's rows and the shared planting helper.
 #[test]
-fn a_seal_interrupted_before_its_staging_finished_names_abandon_and_then_seals() {
-    use antseal_cli::pipeline::journal::{recorded_plan, recorded_state};
-    use antseal_cli::pipeline::{BlobSlot, SealState, StagedBlob, UNIT_ENTRY_BASE, WorkIdentity};
-    use antseal_core::crypto::secrets::MasterSecret;
-
-    let work = Work::new("u41-t3");
+fn a_seal_interrupted_before_its_staging_finished_is_abandoned_and_sealed_afresh() {
+    let work = Work::new("s45-window2");
     work.file("a.txt", b"paragraph one\n\nparagraph two\n");
     let plan = work
         .plan(&["a.txt", "--no-anchor", "--yes"])
         .expect("plan validates");
-    let vault = IsolatedVault::create("u41-t3");
+    let vault = IsolatedVault::create("s45-window2");
     let session = SealSession::open(Arc::new(vault.unlock()));
-    let store = WorkStore::new(session.vault());
-    let seal_id = SealId::from_bytes([0xD3; 16]);
-    {
-        let mut rng = ChaCha20Rng::from_seed([0x47; 32]);
-        let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut rng);
-        let w = MasterSecret::from_bytes([0xD3; 32]);
-        journal
-            .begin(&WorkIdentity {
-                w: w.secret_ref(),
-                seal_id,
-                network: plan.network.as_str().to_owned(),
-                unanchored: plan.shaping.no_anchor,
-                degraded: false,
-                input_paths_as_given: plan.as_given_paths(),
-                input_paths_absolute: plan.absolute_paths(),
-                shaping: plan.shaping.clone(),
-            })
-            .expect("begin");
-        let ciphertext = vec![0x5A_u8; 48];
-        journal
-            .put_staged(
-                &seal_id,
-                &StagedBlob {
-                    slot: BlobSlot::Unit { unit_id: 0 },
-                    nonce: [0x5B; 24],
-                    address: antseal_core::storage::compute_storage_address(&ciphertext)
-                        .expect("under the chunk cap"),
-                    ciphertext,
-                },
-            )
-            .expect("stage one unit");
-    }
-    // Positive controls on the planted shape: tagged `Staged`, no plan, and
-    // a staged unit blob in the vault.
-    assert_eq!(
-        recorded_state(&store, &seal_id).expect("tag"),
-        Some(SealState::Staged)
-    );
-    assert!(
-        recorded_plan(&store, &seal_id)
-            .expect("plan read")
-            .is_none()
-    );
-    assert!(
-        store
-            .get_journal_entry(&seal_id, UNIT_ENTRY_BASE)
-            .expect("read")
-            .is_some(),
-        "a staged unit blob is in the vault"
-    );
-
-    let backend = MockBackend::new().with_balances(funded());
-    let err = block_on(run_seal(
-        &backend,
-        &session,
-        &plan,
-        &mut NeverAsked,
-        &ctx(true),
-        &mut ChaCha20Rng::from_seed([0x48; 32]),
-        &mut ChaCha20Rng::from_seed([0x49; 32]),
-    ))
-    .expect_err("there is no plan to resume from");
-    assert_eq!(err.class(), ErrorClass::Usage);
-    assert_eq!(err.exit_code(), 2);
-    let id = seal_hex(&seal_id);
-    let text = err.to_string();
-    for needle in [
-        format!("seal {id} was interrupted before its staging finished"),
-        "nothing was anchored or paid for it".to_owned(),
-        format!("discard it with `antseal abandon {id}` and re-run this command"),
-    ] {
-        assert!(text.contains(&needle), "missing `{needle}`:\n{text}");
-    }
-    assert!(
-        !text.contains("nothing was staged"),
-        "a staged blob is in the vault, so the message must not say so:\n{text}"
-    );
-    assert_eq!(backend.calls(Method::Pay), 0);
-
-    // The exit it names, then this command again: fresh, and sealed.
-    let mut shown = Vec::new();
-    let report = {
-        let mut rng = ChaCha20Rng::from_seed([0x4A; 32]);
-        let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut rng);
-        run_abandon(
-            &store,
-            &journal,
-            &id,
-            SCRIPTED,
-            |line| shown.push(line.to_owned()),
-            never_asked,
-        )
-        .expect("an interrupted, unpaid work is abandoned")
-    };
-    assert_eq!(report.previous_state, Some(SealState::Staged));
-    assert!(
-        shown.contains(
-            &"  progress: staging was interrupted before it finished; not paid".to_owned()
-        ),
-        "{shown:?}"
-    );
-    let result = block_on(run_seal(
-        &backend,
-        &session,
-        &plan,
-        &mut NeverAsked,
-        &ctx(true),
-        &mut ChaCha20Rng::from_seed([0x4B; 32]),
-        &mut ChaCha20Rng::from_seed([0x4C; 32]),
-    ))
-    .expect("the same command now seals");
-    let SealCommandResult::Sealed(sealed) = result else {
-        panic!("expected a completed seal");
-    };
-    assert!(!sealed.resumed, "a fresh seal, not a resume");
-    assert_ne!(sealed.seal_id, seal_id);
+    let stale = plant_interrupted_seal(&session, &plan, 0xD3, StagingWindow::MidStaging);
+    assert_the_exact_rerun_seals_afresh(&session, &plan, stale);
 }
 
 /// **U41 Accept 2 (D185 §3 test 3).** A paid work is refused **through the
@@ -2398,5 +2282,629 @@ fn u13_adds_no_command_surface() {
     assert!(
         !committed.contains("--resume"),
         "D45 adds no --resume flag: re-running the same command IS the resume"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// S45 (D197): a seal interrupted before its staging finished is discarded
+// by its exact re-run, which seals the same files afresh
+// ─────────────────────────────────────────────────────────────────────
+
+/// Where a planted interrupted seal was "killed": D197's two windows, both
+/// before anything was quoted, consented to, anchored or paid.
+#[derive(Debug, Clone, Copy)]
+enum StagingWindow {
+    /// Window 1, inside `VaultJournal::begin`: the work record landed and the
+    /// `Staged` tag did not (`begin` is two atomic writes to two files). The
+    /// kill is reconstructed on disk rather than raced for — deleting the tag
+    /// leaves exactly the bytes it leaves (D106 R4's reconstruction).
+    MidBegin,
+    /// Window 2, between `begin` and the plan write, with one unit blob
+    /// staged: units are journaled one by one as they are encrypted, before
+    /// the plan, which is staging's last write.
+    MidStaging,
+}
+
+/// Plant a seal of `plan`'s invocation interrupted in `window`, under the
+/// fixture seal id `[tag; 16]`, and check the planted shape before any test
+/// reads it: an incomplete pre-pay work with no plan, whose fine tag is
+/// absent (window 1) or `Staged` (window 2).
+fn plant_interrupted_seal(
+    session: &SealSession,
+    plan: &SealPlan,
+    tag: u8,
+    window: StagingWindow,
+) -> SealId {
+    use antseal_cli::pipeline::journal::{recorded_plan, recorded_state};
+    use antseal_cli::pipeline::{
+        BlobSlot, STATE_ENTRY, SealState, StagedBlob, UNIT_ENTRY_BASE, WorkIdentity,
+    };
+    use antseal_core::crypto::secrets::MasterSecret;
+
+    let store = WorkStore::new(session.vault());
+    let seal_id = SealId::from_bytes([tag; 16]);
+    {
+        let mut rng = ChaCha20Rng::from_seed([tag; 32]);
+        let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut rng);
+        // NON-SECRET fixture master secret (project rule 6).
+        let w = MasterSecret::from_bytes([tag; 32]);
+        journal
+            .begin(&WorkIdentity {
+                w: w.secret_ref(),
+                seal_id,
+                network: plan.network.as_str().to_owned(),
+                unanchored: plan.shaping.no_anchor,
+                degraded: false,
+                input_paths_as_given: plan.as_given_paths(),
+                input_paths_absolute: plan.absolute_paths(),
+                shaping: plan.shaping.clone(),
+            })
+            .expect("begin");
+        match window {
+            StagingWindow::MidBegin => assert!(
+                store
+                    .delete_journal_entry(&seal_id, STATE_ENTRY)
+                    .expect("delete the tag"),
+                "the fine tag was there to delete"
+            ),
+            StagingWindow::MidStaging => {
+                let ciphertext = vec![0x5A_u8; 48];
+                journal
+                    .put_staged(
+                        &seal_id,
+                        &StagedBlob {
+                            slot: BlobSlot::Unit { unit_id: 0 },
+                            nonce: [0x5B; 24],
+                            address: antseal_core::storage::compute_storage_address(&ciphertext)
+                                .expect("under the chunk cap"),
+                            ciphertext,
+                        },
+                    )
+                    .expect("stage one unit");
+            }
+        }
+    }
+    // Positive controls on the planted shape.
+    let (fine_tag, blob_staged) = match window {
+        StagingWindow::MidBegin => (None, false),
+        StagingWindow::MidStaging => (Some(SealState::Staged), true),
+    };
+    assert_eq!(
+        recorded_state(&store, &seal_id).expect("tag read"),
+        fine_tag,
+        "{window:?}: the fine tag"
+    );
+    assert_eq!(
+        store
+            .get_journal_entry(&seal_id, UNIT_ENTRY_BASE)
+            .expect("read")
+            .is_some(),
+        blob_staged,
+        "{window:?}: the staged unit blob"
+    );
+    assert!(
+        recorded_plan(&store, &seal_id)
+            .expect("plan read")
+            .is_none(),
+        "{window:?}: no plan — staging never finished"
+    );
+    assert_eq!(
+        store.load_meta(&seal_id).expect("meta").state,
+        WorkState::IncompletePrePay,
+        "{window:?}: the coarse mirror `begin` wrote"
+    );
+    seal_id
+}
+
+/// D197 R2/R3's outcome for an exact re-run over a work whose staging never
+/// finished, read back from the vault and from the backend's own call log:
+/// the interrupted work is abandoned — fine tag and coarse mirror both — and
+/// the same command sealed afresh, under a new seal id, paid once.
+fn assert_the_exact_rerun_seals_afresh(session: &SealSession, plan: &SealPlan, stale: SealId) {
+    use antseal_cli::pipeline::SealState;
+    use antseal_cli::pipeline::journal::recorded_state;
+
+    let store = WorkStore::new(session.vault());
+    // The decision `run_seal` acts on, read before the run changes the vault
+    // and asserted after it, so that a red names the run's own outcome first.
+    let decision = detect(&store, plan.network, &plan.absolute_paths(), &plan.shaping);
+    let backend = MockBackend::new().with_balances(funded());
+    let result = block_on(run_seal(
+        &backend,
+        session,
+        plan,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x48; 32]),
+        &mut ChaCha20Rng::from_seed([0x49; 32]),
+    ))
+    .unwrap_or_else(|err| {
+        panic!(
+            "the exact re-run must abandon the interrupted seal and seal afresh (D197); got \
+             exit {} ({:?}): {err}",
+            err.exit_code(),
+            err.class()
+        )
+    });
+    let SealCommandResult::Sealed(sealed) = result else {
+        panic!("expected a completed seal, got {result:?}");
+    };
+    assert!(!sealed.resumed, "a fresh seal, not a resume");
+    assert!(sealed.paid_here, "the fresh seal paid");
+    assert_ne!(sealed.seal_id, stale, "a new seal id (MVP-SPEC line 145)");
+    assert_eq!(
+        backend.calls(Method::Pay),
+        1,
+        "one payment: the fresh seal's"
+    );
+    assert_eq!(
+        store.load_meta(&sealed.seal_id).expect("meta").state,
+        WorkState::Complete
+    );
+
+    // The interrupted work: abandoned through the state machine (fine tag
+    // first, coarse mirror second), so it is never a candidate again.
+    assert_eq!(
+        recorded_state(&store, &stale).expect("tag read"),
+        Some(SealState::Abandoned)
+    );
+    assert_eq!(
+        store.load_meta(&stale).expect("meta").state,
+        WorkState::Abandoned
+    );
+    let mut works = store.list_works().expect("list");
+    works.sort_unstable_by_key(|id| *id.as_bytes());
+    let mut expected = vec![stale, sealed.seal_id];
+    expected.sort_unstable_by_key(|id| *id.as_bytes());
+    assert_eq!(
+        works, expected,
+        "the abandoned work and the fresh one, and nothing else"
+    );
+    // The same command once more finds nothing to resume.
+    assert_eq!(
+        detect(&store, plan.network, &plan.absolute_paths(), &plan.shaping).expect("detect"),
+        ResumeDecision::Fresh {
+            incomplete_works: 0
+        }
+    );
+
+    // The decision the run acted on, and the notice `run_seal` printed for
+    // it — at the abandon, and only for a `Restart`. No test can read the
+    // process's own streams (D146 §1.6), so the text is asserted at its
+    // producer.
+    match decision {
+        Ok(ResumeDecision::Restart(candidate)) => assert_eq!(candidate.seal_id, stale),
+        other => panic!("an exact match that never finished staging restarts; got {other:?}"),
+    }
+    let notice = antseal_cli::seal_resume::restart_notice(&stale, false);
+    assert!(
+        notice.contains(&format!(
+            "seal {} was interrupted before its staging finished",
+            seal_hex(&stale)
+        )),
+        "{notice}"
+    );
+}
+
+/// **S45 (D197 R2, R4), window 1 — watched red first** (the red baseline was
+/// exit 12, `VaultAuthFailure`: the wrong-passphrase-or-tampering sentence
+/// for a Ctrl-C, on every re-run). A kill inside `begin` leaves the work
+/// record without its fine tag, and the resume path's `state()` read refused
+/// that as corrupt. Its exact re-run now has window 2's outcome: the work is
+/// abandoned through `set_state`'s one absent-tag transition (R4), and the
+/// same files are sealed afresh.
+#[test]
+fn a_seal_killed_inside_begin_is_abandoned_and_sealed_afresh() {
+    let work = Work::new("s45-window1");
+    work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let vault = IsolatedVault::create("s45-window1");
+    let session = SealSession::open(Arc::new(vault.unlock()));
+    let stale = plant_interrupted_seal(&session, &plan, 0xD4, StagingWindow::MidBegin);
+    assert_the_exact_rerun_seals_afresh(&session, &plan, stale);
+}
+
+/// **S45 (D197 R4): `antseal abandon` in window 1 — watched red first** (the
+/// red baseline was exit 12 after the confirmation). `set_state` refused
+/// every transition from an absent fine tag, so the command D185 built to
+/// exit this trap failed on the shape that needed it, after the user had
+/// confirmed. `previous_state` is `null` — the value its rustdoc documents
+/// for a journal that carried no tag — and the preview says what happened.
+#[test]
+fn abandon_exits_a_seal_killed_inside_begin() {
+    use antseal_cli::pipeline::SealState;
+    use antseal_cli::pipeline::journal::recorded_state;
+
+    let work = Work::new("s45-abandon");
+    work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let vault = IsolatedVault::create("s45-abandon");
+    let session = SealSession::open(Arc::new(vault.unlock()));
+    let stale = plant_interrupted_seal(&session, &plan, 0xD5, StagingWindow::MidBegin);
+    let store = WorkStore::new(session.vault());
+
+    let mut shown = Vec::new();
+    let report = {
+        let mut rng = ChaCha20Rng::from_seed([0x4A; 32]);
+        let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut rng);
+        run_abandon(
+            &store,
+            &journal,
+            &seal_hex(&stale),
+            SCRIPTED,
+            |line| shown.push(line.to_owned()),
+            never_asked,
+        )
+        .unwrap_or_else(|err| {
+            panic!(
+                "`antseal abandon` must exit window 1; got exit {} ({:?}): {err}",
+                err.exit_code(),
+                err.class()
+            )
+        })
+    };
+    assert!(!report.already);
+    assert_eq!(report.seal_id, stale);
+    assert_eq!(report.previous_state, None, "window 1 carried no fine tag");
+    assert!(
+        report.json()["previous_state"].is_null(),
+        "{}",
+        report.json()
+    );
+    assert_eq!(shown.len(), 6, "{shown:?}");
+    assert_eq!(
+        shown[4], "  progress: staging was interrupted before it finished; not paid",
+        "{shown:?}"
+    );
+    assert_eq!(
+        recorded_state(&store, &stale).expect("tag read"),
+        Some(SealState::Abandoned)
+    );
+    assert_eq!(
+        store.load_meta(&stale).expect("meta").state,
+        WorkState::Abandoned
+    );
+}
+
+/// **S45 (D197 R5).** `--dry-run` writes nothing (D49), so over a work whose
+/// staging never finished it rehearses the FRESH seal — a real quote over
+/// the real blob set — and leaves the interrupted work exactly as it is.
+/// Before D197 it returned the resume plan, whose "encrypted units and
+/// manifest are staged in the vault" was false for a work with no plan, and
+/// the real run then failed.
+#[test]
+fn a_dry_run_over_an_unfinished_staging_rehearses_a_fresh_seal_and_writes_nothing() {
+    use antseal_cli::pipeline::SealState;
+    use antseal_cli::pipeline::journal::recorded_state;
+
+    let work = Work::new("s45-dryrun");
+    work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let vault = IsolatedVault::create("s45-dryrun");
+    let stale = {
+        let session = SealSession::open(Arc::new(vault.unlock()));
+        plant_interrupted_seal(&session, &plan, 0xD6, StagingWindow::MidStaging)
+    };
+    let before = vault.fingerprint();
+    assert!(before.len() > 3, "the fingerprint sees the vault's files");
+
+    let session = SealSession::open(Arc::new(vault.unlock()));
+    let rehearsal = work
+        .plan(&["a.txt", "--no-anchor", "--dry-run"])
+        .expect("plan validates");
+    let backend = MockBackend::new().with_balances(funded());
+    let result = block_on(run_seal(
+        &backend,
+        &session,
+        &rehearsal,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x4D; 32]),
+        &mut ChaCha20Rng::from_seed([0x4E; 32]),
+    ))
+    .unwrap_or_else(|err| {
+        panic!(
+            "the rehearsal succeeds; got exit {} ({:?}): {err}",
+            err.exit_code(),
+            err.class()
+        )
+    });
+    let SealCommandResult::DryRun(report) = &result else {
+        panic!(
+            "a dry run over a work whose staging never finished rehearses the fresh seal \
+             (D197 R5), got {result:?}"
+        );
+    };
+    assert!(
+        report.quote.total_ant_atto > 0,
+        "a real quote over the real blob set"
+    );
+    assert_eq!(backend.calls(Method::QuoteBatch), 1);
+    assert_eq!(backend.calls(Method::Pay), 0);
+    assert_eq!(backend.calls(Method::FinalizeBatch), 0);
+    let json = result.json();
+    assert_eq!(json["dry_run"], true);
+    assert!(json.get("resume_plan").is_none(), "{json}");
+    {
+        let store = WorkStore::new(session.vault());
+        assert_eq!(
+            store.list_works().expect("list"),
+            vec![stale],
+            "nothing was begun"
+        );
+        assert_eq!(
+            store.load_meta(&stale).expect("meta").state,
+            WorkState::IncompletePrePay
+        );
+        assert_eq!(
+            recorded_state(&store, &stale).expect("tag read"),
+            Some(SealState::Staged)
+        );
+    }
+    drop(session);
+    assert_eq!(
+        before,
+        vault.fingerprint(),
+        "a dry run writes nothing (D49) — not even the abandon a real run makes"
+    );
+}
+
+/// **S45 (D197 R3): the order of the two writes.** The abandon precedes the
+/// fresh seal's `begin`, so a fresh seal that then stops at consent (machine
+/// mode without `--yes`, class 10) leaves the interrupted work abandoned and
+/// the fresh, staged work as the ONE exact candidate the next re-run
+/// resumes. The other order could leave two exact candidates, which D45
+/// reports as the internal class on every later run.
+#[test]
+fn a_restart_stopped_at_consent_leaves_one_resumable_work_not_two() {
+    let work = Work::new("s45-consent");
+    work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let vault = IsolatedVault::create("s45-consent");
+    let session = SealSession::open(Arc::new(vault.unlock()));
+    let stale = plant_interrupted_seal(&session, &plan, 0xD7, StagingWindow::MidStaging);
+    let store = WorkStore::new(session.vault());
+
+    let unconsented = work
+        .plan(&["a.txt", "--no-anchor"])
+        .expect("plan validates");
+    let backend = MockBackend::new().with_balances(funded());
+    let err = block_on(run_seal(
+        &backend,
+        &session,
+        &unconsented,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x4F; 32]),
+        &mut ChaCha20Rng::from_seed([0x50; 32]),
+    ))
+    .expect_err("machine mode without --yes stops at the consent gate");
+    assert_eq!(err.class(), ErrorClass::ConsentNotObtained, "{err}");
+    assert_eq!(err.exit_code(), 10);
+    assert_eq!(backend.calls(Method::Pay), 0);
+    assert_eq!(
+        store.load_meta(&stale).expect("meta").state,
+        WorkState::Abandoned,
+        "the abandon came before the fresh seal's first write"
+    );
+
+    let works = store.list_works().expect("list");
+    assert_eq!(works.len(), 2, "{works:?}");
+    let fresh = works
+        .into_iter()
+        .find(|id| *id != stale)
+        .expect("the fresh work");
+    match detect(
+        &store,
+        unconsented.network,
+        &unconsented.absolute_paths(),
+        &unconsented.shaping,
+    ) {
+        Ok(ResumeDecision::Resume(candidate)) => assert_eq!(candidate.seal_id, fresh),
+        other => panic!(
+            "the next re-run resumes the fresh work — one exact candidate, not two; got \
+             {other:?}"
+        ),
+    }
+}
+
+/// **S45 (D197 R1): the money guard.** A work with a journaled receipt is
+/// never restarted, plan or no plan: the receipt says money moved, and only
+/// the receipt answers that (U17 rule 2). The pipeline cannot write this
+/// shape (the receipt comes after the plan), so it is planted, giving the
+/// predicate's receipt clause a witness of its own beside the engine's
+/// re-check in `abandon_pre_pay`.
+///
+/// `Pay == 0` alone would not be that witness: a restart under a dropped
+/// receipt clause is refused by `abandon_pre_pay`'s own re-check, and pays
+/// nothing either (D197 §3). So the run's own outcome is asserted too — the
+/// decision, since `run_seal` prints the restart notice for a `Restart` and
+/// for nothing else (no test can read the process's own streams, D146
+/// §1.6), and the exact error the run returned.
+#[test]
+fn an_unplanned_work_with_a_receipt_is_never_restarted_and_never_paid_again() {
+    let work = Work::new("s45-receipt");
+    work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let vault = IsolatedVault::create("s45-receipt");
+    let stale = {
+        let session = SealSession::open(Arc::new(vault.unlock()));
+        let stale = plant_interrupted_seal(&session, &plan, 0xD8, StagingWindow::MidStaging);
+        let mut rng = ChaCha20Rng::from_seed([0x51; 32]);
+        let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut rng);
+        journal
+            .put_receipt(&stale, &fixture_receipt())
+            .expect("journal a receipt");
+        stale
+    };
+    let before = vault.fingerprint();
+
+    let session = SealSession::open(Arc::new(vault.unlock()));
+    // The decision, read before the run and asserted after it, so that a red
+    // names the run's own outcome first.
+    let decision = {
+        let store = WorkStore::new(session.vault());
+        assert!(
+            store.get_receipt(&stale).expect("read").is_some(),
+            "positive control: the receipt is journaled"
+        );
+        detect(&store, plan.network, &plan.absolute_paths(), &plan.shaping)
+    };
+
+    let backend = MockBackend::new().with_balances(funded());
+    let err = block_on(run_seal(
+        &backend,
+        &session,
+        &plan,
+        &mut NeverAsked,
+        &ctx(true),
+        &mut ChaCha20Rng::from_seed([0x52; 32]),
+        &mut ChaCha20Rng::from_seed([0x53; 32]),
+    ))
+    .expect_err("there is no plan to resume from");
+    assert_eq!(backend.calls(Method::Pay), 0, "nothing is paid again");
+    // The resume's own refusal — not the engine's "already been paid for",
+    // which only a (wrongly) restarted run would reach.
+    assert_eq!(
+        err.to_string(),
+        "usage error: this work has no journaled seal plan; nothing was staged to resume from"
+    );
+    assert_eq!(err.class(), ErrorClass::Usage, "{err}");
+    assert_eq!(err.exit_code(), 2);
+    match decision {
+        Ok(ResumeDecision::Resume(candidate)) => assert_eq!(candidate.seal_id, stale),
+        other => panic!(
+            "a work with a journaled receipt is never restarted (money moved); got {other:?}"
+        ),
+    }
+    drop(session);
+    assert_eq!(
+        vault.fingerprint(),
+        before,
+        "the paid work is left exactly as it was"
+    );
+}
+
+/// **S45 (D197 R1): "pre-staging" is measured, and each clause alone rules it
+/// out.** Each row plants one interrupted seal and changes ONE fact about
+/// it; only the two untouched windows measure as pre-staging. The receipt,
+/// consent, anchor and tag clauses cannot fail on a vault the pipeline wrote
+/// (each of those records is written after the plan), so each has its
+/// witness here, planted, rather than nowhere.
+#[test]
+fn pre_staging_is_measured_and_each_clause_alone_rules_it_out() {
+    use antseal_cli::pipeline::{OTS_SLOT, SealPlan as JournaledPlan, SealState};
+    use antseal_cli::seal_resume::staging_never_finished;
+    use antseal_cli::vault::store::{ConsentChannel, ConsentRecord};
+
+    #[derive(Debug, Clone, Copy)]
+    enum Change {
+        Nothing,
+        Plan,
+        Receipt,
+        Consent,
+        AnchorSlot,
+        AnchoredTag,
+        PostPayMirror,
+    }
+
+    let work = Work::new("s45-clauses");
+    work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+    let plan = work
+        .plan(&["a.txt", "--no-anchor", "--yes"])
+        .expect("plan validates");
+    let vault = IsolatedVault::create("s45-clauses");
+    let session = SealSession::open(Arc::new(vault.unlock()));
+    let store = WorkStore::new(session.vault());
+
+    let rows = [
+        (StagingWindow::MidStaging, Change::Nothing, true),
+        (StagingWindow::MidBegin, Change::Nothing, true),
+        (StagingWindow::MidStaging, Change::Plan, false),
+        (StagingWindow::MidStaging, Change::Receipt, false),
+        (StagingWindow::MidBegin, Change::Receipt, false),
+        (StagingWindow::MidStaging, Change::Consent, false),
+        (StagingWindow::MidStaging, Change::AnchorSlot, false),
+        (StagingWindow::MidStaging, Change::AnchoredTag, false),
+        (StagingWindow::MidStaging, Change::PostPayMirror, false),
+    ];
+    assert_eq!(
+        rows.len(),
+        9,
+        "both windows, one row per clause, and window 1 with a receipt"
+    );
+    let mut wrong = Vec::new();
+    for (index, (window, change, expected)) in rows.into_iter().enumerate() {
+        let tag = 0xE0 + u8::try_from(index).expect("a handful of rows");
+        let seal_id = plant_interrupted_seal(&session, &plan, tag, window);
+        // Seeds distinct from the plant's, so no record nonce repeats.
+        let mut rng = ChaCha20Rng::from_seed([tag ^ 0x80; 32]);
+        let mut store_rng = ChaCha20Rng::from_seed([tag ^ 0xFF; 32]);
+        let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut rng);
+        match change {
+            Change::Nothing => {}
+            Change::Plan => journal
+                .put_plan(
+                    &seal_id,
+                    &JournaledPlan {
+                        unit_count: 1,
+                        manifest_bytes: None,
+                    },
+                )
+                .expect("plan"),
+            Change::Receipt => journal
+                .put_receipt(&seal_id, &fixture_receipt())
+                .expect("receipt"),
+            Change::Consent => journal
+                .put_consent(
+                    &seal_id,
+                    ConsentRecord {
+                        total_ant_atto: 1,
+                        gas_estimate_wei: 1,
+                        consent_time_unix_secs: 1_800_000_000,
+                        channel: ConsentChannel::YesFlag,
+                    },
+                )
+                .expect("consent"),
+            Change::AnchorSlot => store
+                .put_anchor(
+                    &seal_id,
+                    OTS_SLOT,
+                    b"NON-SECRET fixture anchor bytes",
+                    &mut store_rng,
+                )
+                .expect("anchor slot"),
+            Change::AnchoredTag => journal
+                .set_state(&seal_id, SealState::Anchored)
+                .expect("Staged -> Anchored"),
+            Change::PostPayMirror => {
+                let mut record = store.load_meta(&seal_id).expect("meta");
+                record.state = WorkState::IncompletePostPay;
+                store
+                    .store_meta(&record, &mut store_rng)
+                    .expect("rewrite the mirror");
+            }
+        }
+        let measured = staging_never_finished(&store, &seal_id);
+        if measured != expected {
+            wrong.push(format!(
+                "{window:?} + {change:?}: measured {measured}, expected {expected}"
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "pre-staging mis-measured:\n{}",
+        wrong.join("\n")
     );
 }

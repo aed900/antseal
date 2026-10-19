@@ -67,7 +67,7 @@ the quote comes from the network itself rather than an offline estimate, and
 it is still not a locked-in price. The report labels the figure
 **indicative**, and that is the honest word: a real seal draws fresh nonces,
 so it encrypts to different addresses and re-quotes at a later moment
-(`crates/antseal-cli/src/seal_run.rs:284-289`;
+(`crates/antseal-cli/src/seal_run.rs:288-293`;
 `docs/decisions/D49-dry-run-network-semantics.md:110-116`). Treat it as the
 right order of magnitude.
 
@@ -102,13 +102,13 @@ Unpacked:
 
 - **The key is made inside the vault, and antseal has no command that shows
   it.** `--wallet` defaults to `generate`
-  (`crates/antseal-cli/src/cli.rs:242`), and a generated key goes straight into
+  (`crates/antseal-cli/src/cli.rs:250`), and a generated key goes straight into
   the vault's wallet record: `init` keeps the checksummed address and drops the
-  key (`crates/antseal-cli/src/init.rs:539-541`). None of the ten subcommands
+  key (`crates/antseal-cli/src/init.rs:561-563`). None of the ten subcommands
   prints, exports or rotates it.
 - **You can keep spending it; you cannot move it.** A vault backup carries the
   key, and `vault import` reinstalls it
-  (`crates/antseal-cli/src/vault/export.rs:1104-1106`), so a restored vault pays
+  (`crates/antseal-cli/src/vault/export.rs:1109-1111`), so a restored vault pays
   exactly as the original did. What no antseal command will ever do is hand you
   the key to sweep the balance into a wallet you hold elsewhere.
 - **If you imported your own key, none of this binds you.** You still hold it
@@ -179,7 +179,7 @@ What *has* been measured, so you know the shape of the bill:
   transaction, 300 000 per payment transaction plus 220 000 per transfer, all
   deliberately 3–9x above what was measured, so the estimate stays above the
   real bill when the basefee moves
-  (`crates/antseal-net/src/ant_backend.rs:108-129`).
+  (`crates/antseal-net/src/ant_backend.rs:140-161`).
 
 Two rules of thumb that follow from how the payment is built:
 
@@ -190,7 +190,7 @@ Two rules of thumb that follow from how the payment is built:
   `--dry-run` prints both the blob count and the total.
 - **Gas grows with blobs too, but in one transaction, not many.** The estimate
   has a per-transfer term, and up to 256 transfers ride a single payment
-  transaction (`crates/antseal-net/src/ant_backend.rs:293-296`), so you pay one
+  transaction (`crates/antseal-net/src/ant_backend.rs:306-309`), so you pay one
   transaction's fixed overhead rather than one per blob.
 
 ## The two funding failures, told apart
@@ -225,7 +225,7 @@ Three things to know about them:
   (`crates/antseal-net/src/backend.rs:61-63`, `:89-100`).
 - **Nothing was spent.** The check runs before any transaction is signed, and
   runs again inside the payment path before money moves
-  (`crates/antseal-net/src/ant_backend.rs:652-655`). Re-running after you fund
+  (`crates/antseal-net/src/ant_backend.rs:613-616`). Re-running after you fund
   the wallet is safe and costs nothing extra.
 
 If you built antseal yourself, note that a default build has no storage
@@ -264,7 +264,7 @@ payment not recorded: <N> sub-batch transaction(s) landed but the vault could no
 (`crates/antseal-cli/src/error.rs:770-792`, `:794-810` and `:812-847`; the
 exact rendering is frozen in
 `crates/antseal-cli/tests/snapshots/cli-errors.display.txt:87-88`, `:89-90` and
-`:97-98`.)
+`:95-96`.)
 
 What each one asks of you:
 

@@ -37,12 +37,12 @@
 //!
 //! | transition | written | why |
 //! | --- | --- | --- |
-//! | → `Staged` | after every staged blob is durable | the pre-anchor barrier |
+//! | → `Staged` | by `begin`, before any blob is staged; the plan record — staging's last journal entry — says staging finished (S45, D197 R6) | staging ends at the pre-anchor barrier, `PostStagingJournal` |
 //! | → `Anchored` | after the anchor gate returns | pre-anchor kills re-run the gate |
 //! | → `Paid` | the instant a receipt is durable, per sub-batch (D37) | before any finalize call |
 //! | → `Finalizing` | before the first `finalize_batch` | marks the crash window |
 //! | → `Complete` | after `finalize_batch` succeeds | the **D43 reclassification** |
-//! | → `Abandoned` | staged bytes unavailable (S11) | payment forfeited, deliberately |
+//! | → `Abandoned` | staged bytes unavailable (S11); `antseal abandon` (U17, D185); the exact re-run of a work whose staging never finished (D197) | any payment forfeited, deliberately — only S11 can abandon a paid work |
 //!
 //! [`SealState::Complete`] is D43's journal → cache reclassification: a
 //! state-tag write, the same bytes, no move and no copy. From that tag on,
@@ -161,8 +161,9 @@ pub const NONCE_LEN: usize = 24;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u64)]
 pub enum SealState {
-    /// Every staged blob (units + encrypted manifest) and the plaintext
-    /// manifest are durable. Nothing anchored, nothing paid.
+    /// `begin` writes this tag, before any blob is staged; the plan record —
+    /// staging's last write — is what says staging finished (S45, D197 R6).
+    /// Nothing anchored, nothing paid.
     Staged = 1,
     /// The anchor gate returned; anchors (if any) are recorded. Nothing
     /// paid — a kill here resumes by re-quoting and re-consenting (D36).
@@ -175,8 +176,8 @@ pub enum SealState {
     /// `finalize_batch` succeeded. **D43**: the staged bytes are cache
     /// from this tag onward.
     Complete = 5,
-    /// Staged bytes were unavailable and the seal was abandoned (S11).
-    /// Any payment is forfeited — safety over cost, spec line 145.
+    /// Abandoned: by S11 when staged bytes were unavailable (any payment is forfeited, spec
+    /// line 145), by `antseal abandon` before payment (D185), or by an exact re-run (D197).
     Abandoned = 6,
 }
 
@@ -461,15 +462,15 @@ impl StagedBlob {
 /// what *is* present, so a deleted entry would silently shrink the set it
 /// was checked against — precisely the disk-loss case S11's abandon guard
 /// exists for. The expected set is therefore recorded, not derived: the
-/// plan is written as soon as staging finishes and rewritten with the
-/// manifest once it is built.
+/// plan is written once, as staging's last journal entry — after the
+/// encrypted manifest is staged, so it carries the built manifest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SealPlan {
     /// Number of unit blobs staged for this work: slots
     /// `Unit { unit_id: 0..unit_count }`.
     pub unit_count: u64,
-    /// The built plaintext manifest (envelope bytes); `None` until the
-    /// manifest is built. Its presence is also what says the
+    /// The built plaintext manifest (envelope bytes). The pipeline's one `put_plan` writes it
+    /// `Some`, after the encrypted manifest is staged (S45); its presence is also what says the
     /// [`BlobSlot::EncryptedManifest`] blob is expected.
     pub manifest_bytes: Option<Vec<u8>>,
 }
@@ -718,15 +719,15 @@ impl From<JournalError> for CliError {
 /// Every method takes `&self` (the impl carries its CSPRNG behind interior
 /// mutability) for two reasons: it mirrors
 /// [`WorkStore`](crate::vault::store::WorkStore)'s own `&self` API, and
-/// D37's per-sub-batch capture hook — a `Fn(&PaymentReceipt)` installed on
+/// D37's per-sub-batch capture hook — a `Fn(&PaymentReceipt) -> CaptureOutcome` (D198) installed on
 /// the backend at construction — could never be built from a `&mut`
 /// borrow the pipeline is simultaneously holding.
 ///
 /// # Ordering contract the pipeline owes (S12 asserts it)
 ///
 /// 1. [`begin`](SealJournal::begin) before any other call for that work.
-/// 2. Every [`put_staged`](SealJournal::put_staged) and
-///    [`put_manifest`](SealJournal::put_manifest) before the state reaches
+/// 2. Every [`put_staged`](SealJournal::put_staged) and the one
+///    [`put_plan`](SealJournal::put_plan) before the state reaches
 ///    [`SealState::Anchored`] — and therefore before the anchor gate, the
 ///    quote, and `pay()`.
 /// 3. [`put_receipt`](SealJournal::put_receipt) before **any**
@@ -796,9 +797,18 @@ pub trait SealJournal {
     /// Advance the state machine, writing both the fine tag and U9's
     /// coarse [`WorkState`] mirror.
     ///
+    /// A work with NO fine tag — killed between `begin`'s two writes (D106
+    /// R4) — takes exactly one transition: to [`SealState::Abandoned`], when
+    /// its coarse mirror is pre-pay (D197 R4, S45). Every non-terminal state
+    /// may abandon, and that mirror proves the work non-terminal and unpaid;
+    /// every other transition from an absent tag is refused, because a state
+    /// machine that cannot read its current state must not advance.
+    ///
     /// # Errors
     ///
-    /// [`JournalError::IllegalTransition`] — refused before any write.
+    /// [`JournalError::IllegalTransition`] — refused before any write;
+    /// [`JournalError::Corrupt`] for an unreadable tag, and for an absent one
+    /// outside the transition above; [`JournalError::WorkNotFound`].
     fn set_state(&self, seal_id: &SealId, state: SealState) -> Result<(), JournalError>;
 
     /// The current fine state.

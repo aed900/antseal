@@ -431,3 +431,31 @@ It adds an error class, an exit code and a predicate inside the wave's own
 commits. Nothing in it authorises a push, a workflow dispatch, a deploy or any
 other outward act; each of those needs the maintainer's express consent naming
 the action, the destination and the account.
+
+## Addendum — 2026-10-19 (D198 §2 R5): the loop no longer produces a mid-payment heal; the predicate stands, and test 2 tests the pipeline's predicate input
+
+D198 (`S46`) makes the payment loop stop before the next sub-batch when a capture does not
+become durable (D198 §2 R2). Four passages of this record change status; none is rewritten.
+
+- **§1.4's heal is no longer produced by the loop.** *"An earlier failed capture is therefore
+  **healed** by any later durable one"* assumed that the loop goes on after a failed capture. It
+  now stops at the first non-durable capture that has a successor, so no later capture exists
+  to heal it. The only heal left is the pipeline's own post-`pay` `put_receipt` after a failed
+  **last** capture (§1.5).
+- **§1.8's *"A healed run stays 28: yes"* cell is vacuous under the fix.** D198 is option (iii),
+  and the healed run that cell scores no longer occurs under (iii)'s own mechanism.
+- **§2 R1's predicate is unchanged and still right.** It reads the most recent capture's
+  durability, which is exactly the state the stop leaves behind: the failed capture sets
+  `unrecorded`, and the loop's `StrandedPayment` reaches 37 through §2 R3's first point with no
+  pipeline edit.
+- **Test 2 is kept, as a test of the pipeline's predicate input.**
+  `a_failed_capture_healed_by_a_later_capture_stays_payment_stranded` runs through the double
+  `CapturesEachSubBatch`, which never stops, and it still reddens if the pipeline reads `fault()`
+  (P-i) or never clears `unrecorded` (P-iv). Its input sequence — a failed capture, then a
+  durable one, within one `pay` — is no longer one the loop produces, and the double's rustdoc
+  says so (D198 §5).
+
+Two further items are answered. §4's `S46` bullet is discharged by D198; its locator
+(`crates/antseal-cli/src/backend.rs:1161`, also in §0) is stale — at `07a170c` the `ReceiptSink`
+trait is at `:1192`. And §6's note that the rustdoc at `crates/antseal-net/src/error.rs:80-85`
+is false in this record's case is answered by D198 §2 R4, which rewrites it and its field doc.

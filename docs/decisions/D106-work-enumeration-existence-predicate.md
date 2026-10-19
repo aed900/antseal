@@ -1026,3 +1026,25 @@ have produced the silent data loss D100 R3/R4 forbids. The four shared-vault
 scanning tests **stay where they are**, because after the fix they are the
 tree's only witness that a whole-store scan is total under real concurrency, and
 isolating them would trade a load-dependent red for a permanently green vacuum.
+
+## Addendum — 2026-10-19 (D197 §2 R4): `set_state` accepts one transition from an absent fine tag
+
+R4 kept `state()` hard: *"a state machine that cannot read the current state must not
+advance"* (R4, point 3; §1.8). D197 (`S45`) leaves `state()` exactly as it is and gives
+`VaultJournal::set_state` **one** transition from an absent fine tag: → `Abandoned`, and only
+when the coarse mirror is `IncompletePrePay`. The fine tag is written first and the mirror
+second, the order §5's W4 row records. Every other transition from an absent tag stays
+`Corrupt`.
+
+- **Why this does not contradict R4.** The transition does read a current state: the coarse
+  mirror that `begin` writes before the fine tag (§5's W2), which says the work is non-terminal
+  and pre-pay. `can_advance_to`'s own rule is *"Every non-terminal state may abandon"*, so no
+  value the missing tag could have held makes this transition illegal. Every transition whose
+  legality depends on the fine state still refuses.
+- **What it fixes.** W2's shape — a kill between `create_work` and the `Staged` tag — was
+  tolerated by the enumeration (R4) but exited by nothing: its exact re-run failed in `state()`
+  with exit 12's tamper sentence, and `antseal abandon` failed the same way after the user had
+  confirmed. Now `antseal abandon` exits it, and an exact re-run abandons it and seals fresh
+  (D197 §2 R2).
+
+R4 and §5 above stay as written; W2's *"Tolerated"* now has an exit.

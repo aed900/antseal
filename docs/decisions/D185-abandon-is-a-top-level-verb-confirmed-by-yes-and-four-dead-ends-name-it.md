@@ -492,3 +492,31 @@ It adds a command, a prompt and four sentences inside the wave's own commits.
 Nothing in it authorises a push, a workflow dispatch, a deploy or any other
 outward act; each of those needs the maintainer's express consent naming the
 action, the destination and the account.
+
+## Addendum — 2026-10-19 (D197 §2 R7): T3's mapping is retired, and §4's deeper fix is discharged
+
+- **§2 R6 item 3 (T3) is retired.** D197 (`S45`) rules that an exact re-run of a pre-staging
+  work — one killed before its staging finished, inside `begin` or between `begin` and
+  `put_plan` — abandons it and seals fresh, with a notice (D197 §2 R1, R2). `run_seal`'s Resume
+  arm therefore never meets the shape T3's guard matched on a vault the pipeline wrote, and the
+  mapping is removed: the branch in `seal_run.rs`, `interrupted_before_staging`, its exemplar in
+  `tests/exit_codes.rs`, and its two lines in `tests/snapshots/cli-errors.display.txt`.
+  Removing the frozen row is allowed before `U32`. No exit code moves: `usage` (2) keeps its
+  other producers.
+- **§3's test 2 and its plant go with it.** Test 2,
+  `a_seal_interrupted_before_its_staging_finished_names_abandon_and_then_seals`, is rewritten
+  as D197's G1 (a fresh seal with a notice), and the plant that removed the T3 mapping (P4 in
+  §6) has no mapping left to remove.
+- **§4's first bullet is discharged.** Of the two fixes it named, the first is ruled —
+  auto-abandon an exact-match candidate with no plan, no anchors and no receipt, and proceed
+  fresh with a notice (a D45 §2 amendment) — with the predicate also requiring no consent and
+  accepting an absent fine tag. The second, a pre-staging tag, is refused on cost (D197 §1.7).
+  So is the barrier §4 proposed for the test: it cannot reach the kill inside `begin`, and
+  existing seams reach both windows (D197 §2 R8).
+- **§6's second *"Found while building"* item is answered.** The kill inside `begin` that
+  `abandon` could not exit now has two exits: `antseal abandon`, through `set_state`'s one
+  transition from an absent fine tag (D197 §2 R4), and the exact re-run (D197 §2 R2).
+- **Unchanged:** §2 R6's items 1 and 2 — the way-forward sentences of 25, 26 and the
+  blocked-work copy — stand.
+
+The text above this addendum is not edited.

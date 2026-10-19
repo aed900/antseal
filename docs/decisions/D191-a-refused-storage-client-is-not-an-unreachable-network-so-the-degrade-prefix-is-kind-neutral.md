@@ -297,3 +297,29 @@ the shared lock.
 
 It changes code, tests and rustdoc in the tree. Nothing in it authorises a push, a dispatch, a
 deploy or any other outward act, and its tests open no socket beyond loopback.
+
+## Addendum — 2026-10-19 (S47; D199 §2 R4): §1.2's *"every kind arrives as `StorageError::Network`"* is made true, §6's deviation on it is discharged, and §4's `R98` bullet is answered
+
+- **`S47`**, ruled without a decision record in wave 39's rulings. `map_ant_error`
+  (`crates/antseal-net/src/ant_backend.rs`) replaces its `class: Option<bool>` with a
+  per-context match that has no `_` arm, so a fifth `ErrContext` must decide. `Connect` and
+  `Get` send `AntError::Payment` (its detail still redacted) and `AntError::AlreadyStored` to
+  `StorageError::Network`; `Quote` and `Finalize` are byte-unchanged. The register row's `Do`
+  and `Accept` are amended to cover `Get`, whose `fetch_chunk` documents a NotFound-or-Network
+  contract. With that, §1.2's *"every kind arrives as `StorageError::Network`"* is true, and §6's
+  deviation recording that it failed for two K4 paths is discharged. (The `S47` row calls that
+  entry §6's second deviation; it is the fourth bullet of §6's *Deviations*.) `degrade`'s
+  non-`Network` arm stays total and tested: its test row is relabelled *"a variant no production
+  connect produces (S47); the arm stays total"*, `kinds.len() == 5` is kept, and the code
+  comment saying that `map_ant_error` can hand a connect a `Quote` is corrected. Both holes were
+  unreachable on the pinned stack by inspection — P1 read ant-core 0.5.0's source: a connect
+  fails only through `Network::new`, and the GET functions produce no `Payment` or
+  `AlreadyStored` — so `S47` guards a future ant-core bump, not live traffic.
+- **§4's `R98` bullet** is answered by **D199**: `verify --live` reads the degraded backend by
+  type, fetches nothing, renders a closed `not-connected` section with no rows, and prints the
+  carried reason — this record's kind-neutral words, then the attempt's own — as an escaped
+  stderr note outside the verdict document. So `U96`'s *"reach `reveal`, `restore` and `verify
+  --live`"*, which the status bullet found true for two of the three commands, is ruled true for
+  the third.
+
+This record is not rewritten.

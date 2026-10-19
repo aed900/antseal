@@ -943,9 +943,11 @@ pub(crate) fn reveal(
 ///    connection is handed to `verify_host::run_verify_live` as a lazy
 ///    future, awaited only for a bundle that verified.
 /// 3. Only then does the wallet-less reader connect — bounded, and degraded
-///    rather than propagated (`backend::connect_read_only`) — and
-///    `collect_live` re-fetch every blob the bundle embeds, the encrypted
-///    manifest included (R81).
+///    rather than propagated (`backend::connect_read_only`). Over a
+///    connection that was made, `collect_live` re-fetches every blob the
+///    bundle embeds, the encrypted manifest included (R81); a connection that
+///    was not made is fetched from not at all — the section reports
+///    `not-connected` and a `note:` line on stderr says why (R98, D199).
 /// 4. The run renders its offline verdict in full with the live section
 ///    attached and exits with the **evidence** verdict's code. An unreachable
 ///    network makes the section *Inconclusive*; it never makes the run 23.
@@ -1050,6 +1052,12 @@ pub(crate) fn verify(
 
     for line in run.render() {
         ui.line(&line);
+    }
+    // R98 (D199 §2 R3): a `--live` run that made no connection says why on
+    // stderr, in both modes — a diagnostic, never part of the verdict
+    // document above or of the `--json` result below.
+    if let Some(note) = run.live_note() {
+        eprintln!("{note}");
     }
 
     // D69 §3 R1's third arm: the rung sets the process code and the success

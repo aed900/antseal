@@ -79,6 +79,9 @@
 //! # a "must agree" pair (A49, decision D90 §6.6). `tsa_urls` and
 //! # `ots_calendars` above are deliberately not subject to this: RFC 3161
 //! # tokens are signed and nonce-bound, and a calendar cannot forge a proof.
+//! # The esplora pair is exactly two endpoints at two origins, checked at
+//! # load like the Arbitrum pair below (U101, D196 R3); delete the key, never
+//! # empty it, to use the pinned pair.
 //! [verify]
 //! bitcoin_endpoints = ["https://a.example", "https://b.example"]
 //!
@@ -90,26 +93,39 @@
 //! rpc_endpoints = ["https://c.example", "https://d.example"]
 //! ```
 //!
-//! Unknown top-level keys and unknown sections are **warnings**
-//! (forward compatibility: a newer antseal's config must not crash an
-//! older one), rendered once on stderr and never fatal. Invalid values
-//! for *recognized* keys — an unknown network name, a non-string, a
-//! non-http(s) URL — are hard errors: a recognized key the loader cannot
-//! honor must be loud (never a silently-dropped override). One recognized
-//! key is a hard error in the wrong *place*: `bootstrap` anywhere but
-//! `[networks.arbitrum-one]` (D173 §2 R4) — the one key whose silent
-//! acceptance would be a stale peer layer waiting to be dialed. And one is
-//! a hard error in **every** place: `rpc_url` under any `[networks.<id>]`
-//! (U94, D180), a retired slot that no build ever read — accepting it would
-//! tell a user the payer dials their endpoint when it dials the pinned one.
-//! The refusal names the key, the table and the line and never repeats the
-//! value, which in its common real form carries an API key; it is raised on
-//! the key, before the value is parsed, so a malformed value cannot echo it
-//! through the subset's own errors either. The flat `[verify]
-//! arbitrum_endpoints` is refused the same way and for the same reason (U44,
-//! D188 R5): its pair moved to `[verify.<network>] rpc_endpoints`, whose own
-//! refusals name the entry's index, never its URL. And `[verify.devnet]` is
-//! refused whatever it holds: devnet has no RPC pair to override.
+//! Unknown keys and unknown sections are **warnings** (forward
+//! compatibility: a newer antseal's config must not crash an older one),
+//! rendered once on stderr and never fatal. Invalid values for *recognized*
+//! keys — an unknown network name, a non-string, a non-http(s) URL — are hard
+//! errors: a recognized key the loader cannot honor must be loud (never a
+//! silently-dropped override).
+//!
+//! **A recognized key is read only where it lives** (U100, D196 R1). Each of
+//! the seven keys above has exactly one home (`KEY_HOMES`), and written in any
+//! other table it is a malformed config naming the key, the table it was found
+//! in, the line and its home — a warned override would quietly use the very
+//! defaults it was written to replace (`rpc_endpoints` flat under `[verify]`
+//! probes the pinned pair; a `default_network` written after a `[table]`
+//! header, which TOML puts in that table, made the invocation arbitrum-one).
+//! A `[networks.<id>]` or `[verify.<id>]` table's network name is judged
+//! first, so an unknown network keeps its *not a known network* answer, and
+//! these keep their own words: `bootstrap` under `[networks.arbitrum-sepolia]`
+//! or `[networks.devnet]` (D173 §2 R4) names `ANTSEAL_DEVNET_ENV`, those
+//! networks' only peer source; `rpc_url` under any `[networks.<id>]` (U94,
+//! D180) is a retired slot that no build ever read — accepting it would tell a
+//! user the payer dials their endpoint when it dials the pinned one; the
+//! retired `arbitrum_endpoints` (U44, D188 R5) is refused in every table, its
+//! pair having moved to `[verify.<network>] rpc_endpoints`; and
+//! `[verify.devnet]` is refused whatever it holds: devnet has no RPC pair to
+//! override. Every one of these is raised on the KEY, before the value is
+//! parsed, so it never repeats the value and no shape of value can change the
+//! answer.
+//!
+//! No refusal of a URL-list key — `tsa_urls`, `ots_calendars`,
+//! `bitcoin_endpoints`, `rpc_endpoints` — repeats a value (U99, D195 R4): it
+//! names the key, the line and the entry's position, because a URL can carry
+//! a credential in its userinfo, its query or a path segment. The subset's
+//! own refusals repeat no value for any key.
 //!
 //! # The TOML subset, documented (and why it is hand-parsed)
 //!
@@ -194,7 +210,9 @@ pub struct Config {
     pub opportunistic_upgrades: Option<bool>,
     /// `[verify] bitcoin_endpoints` — the esplora pair `verify --online`
     /// (U30), `status --upgrade` and the opportunistic pass confirm block
-    /// headers against. Its count and origins are checked at use.
+    /// headers against. Checked at load: exactly two endpoints at two origins
+    /// ([`bitcoin_endpoint_pair`], the one validator its consumers call too —
+    /// U101, D196 R3).
     pub verify_bitcoin_endpoints: Option<Vec<String>>,
     /// `[verify.arbitrum-one] rpc_endpoints` (U44, D188 R4) — arbitrum-one's
     /// Arbitrum receipt pair for `verify --online`, replacing A17's pinned
@@ -417,8 +435,8 @@ pub fn parse(text: &str) -> Result<Config, ConfigParseError> {
             return Err(err(format!("key `{full_key}` already set on line {first}")));
         }
         // U94 (D180): refused on the KEY, before the value is parsed, so no
-        // shape of value — the subset's own errors echo a value they reject
-        // — can carry an RPC URL into the error (see `rpc_url_refusal`).
+        // shape of value can change the answer or reach the error (see
+        // `rpc_url_refusal`).
         if let [family, network_name] = section.as_slice()
             && family == "networks"
             && key == "rpc_url"
@@ -436,9 +454,9 @@ pub fn parse(text: &str) -> Result<Config, ConfigParseError> {
         }
 
         // The value goes to `apply` RAW: each recognised key parses it there,
-        // so a key whose value must never be repeated
-        // (`[verify.<network>] rpc_endpoints`, D188 R5) can refuse it without
-        // passing through the subset's own errors, which quote what they reject.
+        // so a key can refuse it in its own words (`[verify.<network>]
+        // rpc_endpoints`, D188 R5), and an unknown key's value is never parsed
+        // at all (D189 R3).
         apply(
             &mut config,
             &section,
@@ -563,10 +581,16 @@ fn parse_string(raw: &str) -> Result<String, String> {
             return Ok(inner.to_owned());
         }
     }
-    Err(format!(
-        "value `{raw}` is not a quoted string, a [\"…\"] array, or a bare true/false \
-         (integers, dates, and inline tables are outside the antseal config subset)"
-    ))
+    // U99 (D195 R4): the one subset message that met its input never repeats
+    // it, for every key — a URL-list entry written without quotes can carry a
+    // credential, and nothing here knows which key the value belongs to.
+    // `apply` names the key in front of it.
+    Err(
+        "the value is not a quoted string, a [\"…\"] array, or a bare true/false \
+         (integers, dates, and inline tables are outside the antseal config subset); \
+         it is not repeated here"
+            .to_owned(),
+    )
 }
 
 fn http_url_shape(value: &str) -> bool {
@@ -631,8 +655,9 @@ fn parse_bootstrap_override(items: &[String]) -> Result<Vec<SocketAddr>, String>
 /// The section name is validated **first** (R2), so `[networks.ropsten]`
 /// keeps its *not a known network* answer. The text names the key and the
 /// table — the line rides on [`ConfigParseError::line`] — and never the value;
-/// the caller raises it before the value is parsed, because the subset's own
-/// *not a quoted string* error repeats the raw value it rejects.
+/// the caller raises it before the value is parsed, so no shape of value can
+/// change the answer. (The subset's own *not a quoted string* error repeated
+/// the raw value it rejected until U99 made it value-free, D195 R4.)
 fn rpc_url_refusal(network_name: &str) -> String {
     match network_name.parse::<NetworkId>() {
         Err(_) => unknown_network("networks", network_name),
@@ -697,14 +722,104 @@ fn verify_table_network(network_name: &str) -> Result<NetworkId, String> {
     }
 }
 
+/// Where a key this build knows lives (U100, D196 R1).
+#[derive(Clone, Copy)]
+enum Home {
+    /// Before the first `[table]` header.
+    TopLevel,
+    /// `[networks.arbitrum-one]` (D173 §2 R4).
+    NetworksArbitrumOne,
+    /// `[anchors]`.
+    Anchors,
+    /// `[verify]`.
+    Verify,
+    /// `[verify.arbitrum-one]` or `[verify.arbitrum-sepolia]` (D188 R4).
+    VerifyNetwork,
+    /// Nowhere: the flat `arbitrum_endpoints`, retired into
+    /// `[verify.<network>] rpc_endpoints` and refused in every table (D188 R5).
+    RetiredIntoRpcEndpoints,
+}
+
+/// Every key this build reads, with its one home (U100, D196 R1) — the
+/// table `apply`'s three fall-through arms consult before they warn, so a
+/// KNOWN key written in a foreign table is refused by name instead of being
+/// warned on as if it were unknown. A key added to `apply` must be added
+/// here too, or a misplaced copy of it only warns.
+///
+/// Why refuse rather than warn (D188 R5's ground, extended to every key): a
+/// warned override quietly uses the very defaults it was written to replace —
+/// measured, all seven keys and the retired one misplaced silently, and a
+/// `default_network` written after an `[anchors]` header made the invocation
+/// arbitrum-one. Unknown keys still warn (D189 R3's forward-compatibility
+/// promise), and `rpc_url` keeps its own refusal in `[networks.*]` only (D180).
+const KEY_HOMES: &[(&str, Home)] = &[
+    ("default_network", Home::TopLevel),
+    ("bootstrap", Home::NetworksArbitrumOne),
+    ("tsa_urls", Home::Anchors),
+    ("ots_calendars", Home::Anchors),
+    ("opportunistic_upgrades", Home::Anchors),
+    ("bitcoin_endpoints", Home::Verify),
+    ("rpc_endpoints", Home::VerifyNetwork),
+    ("arbitrum_endpoints", Home::RetiredIntoRpcEndpoints),
+];
+
+/// The refusal for a key [`KEY_HOMES`] knows, found in `section`, which is not
+/// its home — or `None` for a key this build does not know, which warns
+/// (D189 R3). Raised on the KEY, before the value is parsed, so it names the
+/// key, the table it was found in and its home (the line rides on
+/// [`ConfigParseError::line`]) and never the value. The callers have already
+/// judged a `[networks.<id>]` or `[verify.<id>]` table's network name, so an
+/// unknown network keeps its own answer.
+fn misplaced_key_refusal(key: &str, section: &[String]) -> Option<String> {
+    let (_, home) = KEY_HOMES.iter().find(|(known, _)| *known == key)?;
+    let found = if section.is_empty() {
+        "at the top level".to_owned()
+    } else {
+        format!("under [{}]", section.join("."))
+    };
+    let belongs = match home {
+        Home::TopLevel => "at the top of the file, before the first [table] header",
+        Home::NetworksArbitrumOne => "under [networks.arbitrum-one]",
+        Home::Anchors => "under [anchors]",
+        Home::Verify => "under [verify]",
+        Home::VerifyNetwork => "under [verify.arbitrum-one] or [verify.arbitrum-sepolia]",
+        Home::RetiredIntoRpcEndpoints => {
+            // Under a per-network table the user is one key name away from
+            // the right line, so the text says so (D196 R2).
+            let instead = match section {
+                [family, _] if family == "verify" => "in this table",
+                _ => "under [verify.arbitrum-one] or [verify.arbitrum-sepolia]",
+            };
+            return Some(format!(
+                "`{key}` {found} is retired: the Arbitrum RPC pair is set per network — \
+                 write `rpc_endpoints` {instead} instead. Its value is not repeated here, \
+                 because an RPC URL often carries an API key"
+            ));
+        }
+    };
+    Some(format!(
+        "`{key}` is not read {found}: it belongs {belongs} — move the line there. Its value \
+         is not repeated here"
+    ))
+}
+
 /// What every `rpc_endpoints` refusal says in place of the value (D188 R5).
 const RPC_VALUE_NOT_REPEATED: &str =
     "the value is not repeated here, because an RPC URL often carries an API key";
 
+/// What every other URL-list refusal says in place of the value (U99, D195
+/// R4): `tsa_urls`, `ots_calendars` and `bitcoin_endpoints` name the key, the
+/// line and the entry's position, never the entry — userinfo, a query or a
+/// path segment can each carry a credential, and a refusal's text ends up in
+/// terminals, logs and `--json` output.
+const URL_VALUE_NOT_REPEATED: &str =
+    "the value is not repeated here, because a URL can carry a credential";
+
 /// The `rpc_endpoints` value as a list, parsed **without ever repeating it**
-/// (D188 R5): the subset's own refusals quote what they reject (*value `…` is
-/// not a quoted string*), so every failure here becomes one sentence naming
-/// the accepted shape instead.
+/// (D188 R5): every failure here is one sentence naming the table and the
+/// accepted shape. Written while the subset's own refusals still quoted what
+/// they rejected (U99 made them value-free, D195 R4), and kept because it
+/// says more than the subset's generic sentence.
 fn rpc_endpoints_value(raw: &str, network: NetworkId) -> Result<Vec<String>, String> {
     match parse_value(raw) {
         Ok(Value::Array(items)) => Ok(items),
@@ -742,11 +857,73 @@ pub(crate) fn rpc_endpoint_pair(
     items: &[String],
     network: NetworkId,
 ) -> Result<antseal_anchor::agree::EndpointPair, String> {
+    must_agree_pair(
+        items,
+        &format!("`rpc_endpoints` under [verify.{network}]"),
+        "that network's pinned pair",
+        RPC_VALUE_NOT_REPEATED,
+    )
+}
+
+/// `[verify] bitcoin_endpoints`' one validator (U101, D196 R3) — the
+/// load-time check AND the pair `verify --online`, `status --upgrade` and the
+/// opportunistic upgrade pass build, so load and use cannot disagree (A50's
+/// one-implementation rule, as for [`rpc_endpoint_pair`], whose three rules it
+/// shares). Before U101 the list was checked only at use, by two
+/// implementations with two texts, so a one- or three-entry list loaded and
+/// then silently disabled the opportunistic pass.
+///
+/// One rule more than the RPC pair (D196 R3, as widened): no entry may carry
+/// a query or a fragment, because esplora requests append `/{path}` to the
+/// whole configured URL (antseal-anchor `esplora.rs`'s `join`). A query would
+/// swallow every request's path — `https://h/api?key=K` asks for
+/// `…?key=K/block-height/H`, which the derived URL's re-parse still accepts —
+/// and a fragment would drop it, since the URI parser discards everything
+/// after `#`. Not applied to `rpc_endpoints`: an RPC URL is used as written,
+/// and a query there is legitimate.
+///
+/// Every refusal names the key, the table and the count or the entry's
+/// position, never a URL and never an origin (U99, D195 R4). An empty list is
+/// refused (`found 0`) rather than read as the built-in pair: deleting the key
+/// is how a user gets that back.
+///
+/// # Errors
+///
+/// The refusal text, for the caller to place: a [`ConfigParseError`] at load,
+/// a usage error at use — where only a [`Config`] the loader did not build can
+/// reach it.
+pub(crate) fn bitcoin_endpoint_pair(
+    items: &[String],
+) -> Result<antseal_anchor::agree::EndpointPair, String> {
+    const LABEL: &str = "`bitcoin_endpoints` under [verify]";
+    let pair = must_agree_pair(items, LABEL, "the pinned pair", URL_VALUE_NOT_REPEATED)?;
+    // Both entries parsed above, so `?` and `#` can only open a query or a
+    // fragment here — never a path byte, a host or userinfo.
+    if let Some(index) = items.iter().position(|url| url.contains(['?', '#'])) {
+        return Err(format!(
+            "{LABEL}: entry {index} carries a query or a fragment (`?` or `#`), and antseal \
+             appends request paths to it, so every request would lose its path; \
+             {URL_VALUE_NOT_REPEATED}"
+        ));
+    }
+    Ok(pair)
+}
+
+/// The rules both `[verify]` overrides obey: exactly two entries, each the
+/// substrate's own endpoint under `RequiredExceptLoopback`, at two origins.
+/// `label` names the key and its table, `pinned` the pair an override
+/// replaces, and `not_repeated` is said in place of the value — so no refusal
+/// here carries a URL or an origin.
+fn must_agree_pair(
+    items: &[String],
+    label: &str,
+    pinned: &str,
+    not_repeated: &str,
+) -> Result<antseal_anchor::agree::EndpointPair, String> {
     let [first, second] = items else {
         return Err(format!(
-            "`rpc_endpoints` under [verify.{network}] must list exactly two endpoints (found \
-             {}): an override replaces that network's pinned pair wholesale, and a must-agree \
-             pair needs two independent sources",
+            "{label} must list exactly two endpoints (found {}): an override replaces {pinned} \
+             wholesale, and a must-agree pair needs two independent sources",
             items.len()
         ));
     };
@@ -754,17 +931,15 @@ pub(crate) fn rpc_endpoint_pair(
         antseal_anchor::Endpoint::parse(url, antseal_anchor::TlsPolicy::RequiredExceptLoopback)
             .map_err(|refusal| {
                 format!(
-                    "`rpc_endpoints` under [verify.{network}]: entry {index} {}; \
-                     {RPC_VALUE_NOT_REPEATED}",
+                    "{label}: entry {index} {}; {not_repeated}",
                     endpoint_refusal_without_url(&refusal)
                 )
             })
     };
     antseal_anchor::agree::EndpointPair::new(parse(0, first)?, parse(1, second)?).map_err(|_| {
         format!(
-            "`rpc_endpoints` under [verify.{network}]: entries 0 and 1 are one origin, and a \
-             must-agree pair of one endpoint agrees with itself and proves nothing; \
-             {RPC_VALUE_NOT_REPEATED}"
+            "{label}: entries 0 and 1 are one origin, and a must-agree pair of one endpoint \
+             agrees with itself and proves nothing; {not_repeated}"
         )
     })
 }
@@ -788,8 +963,10 @@ fn endpoint_refusal_without_url(refusal: &antseal_anchor::EndpointError) -> Stri
 /// values are hard errors; unrecognized keys/sections warn.
 ///
 /// `raw` is the value's text, unparsed. Every recognised arm parses it
-/// itself — through [`parse_value`] for the ordinary keys, and value-free for
-/// `rpc_endpoints` (D188 R5).
+/// itself — through [`parse_value`] for the ordinary keys, and through
+/// `rpc_endpoints_value` for `rpc_endpoints` (D188 R5). No refusal of a
+/// URL-list key repeats its value (U99, D195 R4): each names the key, the line
+/// and, for an entry, its position.
 fn apply(
     config: &mut Config,
     section: &[String],
@@ -802,8 +979,10 @@ fn apply(
         line: line_no,
         detail,
     };
-    // The subset parse, for every key whose refusals may quote its value.
-    let value = || parse_value(raw).map_err(err);
+    // The subset parse, for every key that takes an ordinary value. Its
+    // refusals never repeat the value (U99, D195 R4), so the key they belong
+    // to is named in front of them.
+    let value = |what: &str| parse_value(raw).map_err(|reason| err(format!("`{what}`: {reason}")));
     let expect_str = |value: Value, what: &str| match value {
         Value::Str(s) => Ok(s),
         Value::Array(_) => Err(err(format!("`{what}` takes a string, not an array"))),
@@ -812,14 +991,16 @@ fn apply(
     let expect_url_array = |value: Value, what: &str| -> Result<Vec<String>, ConfigParseError> {
         match value {
             Value::Array(items) => {
-                for item in &items {
+                for (index, item) in items.iter().enumerate() {
                     if !http_url_shape(item) {
-                        // The entry is named, as the substrate's refusal below
-                        // names it: these keys' URLs are no credential (the
-                        // `rpc_endpoints` pair, whose URLs can be, never comes
-                        // through here — D188 R5).
+                        // U99 (D195 R4): the entry's POSITION, never the entry.
+                        // A URL refused for its shape can still carry a
+                        // credential (`user:pw@host/…`, `ftp://user:pw@…`),
+                        // and this check runs before the substrate's parser
+                        // below could say which part is which.
                         return Err(err(format!(
-                            "`{what}` entries must be http:// or https:// URLs (got `{item}`)"
+                            "`{what}` entry {index} is not an http:// or https:// URL; \
+                             {URL_VALUE_NOT_REPEATED}"
                         )));
                     }
                 }
@@ -838,7 +1019,9 @@ fn apply(
     //
     // The **policy is a parameter** because the two families genuinely differ
     // and neither answer may leak into the other: `[verify]`'s replies are
-    // unsigned (A49 ⇒ [`TlsPolicy::RequiredExceptLoopback`]), while a
+    // unsigned (A49 ⇒ [`TlsPolicy::RequiredExceptLoopback`], applied by the
+    // two pairs' own validators, `bitcoin_endpoint_pair` and
+    // `rpc_endpoint_pair`), while a
     // `[anchors] tsa_urls` entry carries an RFC 3161 token that is signed and
     // nonce-bound, and `timestamp.digicert.com` **refuses connections on 443**
     // (measured, D90 §6.6) — so requiring TLS there would make one of the
@@ -848,9 +1031,18 @@ fn apply(
                                  tls: antseal_anchor::TlsPolicy|
      -> Result<Vec<String>, ConfigParseError> {
         let items = expect_url_array(value, what)?;
-        for item in &items {
-            antseal_anchor::Endpoint::parse(item, tls)
-                .map_err(|reason| err(format!("`{what}`: {reason}")))?;
+        for (index, item) in items.iter().enumerate() {
+            // U99 (D195 R4): the substrate's refusal, said without the URL it
+            // carries — `EndpointError`'s own `Display` leads with the URL,
+            // userinfo included, and one URL that does not parse at all
+            // (`https://user:pw word@host/`) cannot have its credential
+            // located structurally, so no redaction of that text could hold.
+            antseal_anchor::Endpoint::parse(item, tls).map_err(|refusal| {
+                err(format!(
+                    "`{what}` entry {index} {}; {URL_VALUE_NOT_REPEATED}",
+                    endpoint_refusal_without_url(&refusal)
+                ))
+            })?;
         }
         Ok(items)
     };
@@ -858,7 +1050,7 @@ fn apply(
     let section_names: Vec<&str> = section.iter().map(String::as_str).collect();
     match (section_names.as_slice(), key) {
         ([], "default_network") => {
-            let name = expect_str(value()?, "default_network")?;
+            let name = expect_str(value("default_network")?, "default_network")?;
             let id: NetworkId = name.parse().map_err(|_| {
                 err(format!(
                     "`default_network` must be one of arbitrum-one, arbitrum-sepolia, \
@@ -891,7 +1083,7 @@ fn apply(
                      run of a devnet"
                 )));
             }
-            let items = match value()? {
+            let items = match value("bootstrap")? {
                 Value::Array(items) => items,
                 Value::Str(_) | Value::Bool(_) => {
                     return Err(err(
@@ -903,11 +1095,15 @@ fn apply(
         }
         (["networks", network_name], other) => {
             // The section family is recognized; validate its name even
-            // for unknown keys, then warn on the key (forward compat).
+            // for unknown keys, then refuse a key this build reads elsewhere
+            // (U100, D196 R1) and warn on any other (forward compat).
             // `rpc_url` never arrives here: `parse` refuses it on its key.
             let _: NetworkId = network_name
                 .parse()
                 .map_err(|_| err(unknown_network("networks", network_name)))?;
+            if let Some(refusal) = misplaced_key_refusal(other, section) {
+                return Err(err(refusal));
+            }
             config.warnings.push(format!(
                 "config.toml line {line_no}: unknown key `{other}` under \
                  [networks.{network_name}] — ignored (newer antseal?)"
@@ -922,7 +1118,7 @@ fn apply(
         // a seal.
         (["anchors"], "tsa_urls") => {
             config.tsa_urls = Some(expect_endpoint_array(
-                value()?,
+                value("tsa_urls")?,
                 "tsa_urls",
                 antseal_anchor::TlsPolicy::Optional,
             )?);
@@ -931,16 +1127,17 @@ fn apply(
         // targets and the upgrade allowlist's only widening, one list in two
         // roles (U52, U64). The `tsa_urls` conventions throughout: a non-empty
         // list replaces D54's four wholesale, an empty one is the defaults,
-        // and a bad entry is refused here, at load, naming the key, the entry
-        // and the line (a calendar URL carries no credential, so the entry is
-        // echoed as `tsa_urls`' are). The TLS policy is the SUBMIT path's own
+        // and a bad entry is refused here, at load, naming the key, the line
+        // and the entry's position, never the entry (U99, D195 R4: a URL can
+        // carry a credential, and D188 R1's echo of a calendar URL is
+        // retired). The TLS policy is the SUBMIT path's own
         // (`ots/submit.rs` parses each calendar under `TlsPolicy::Optional`:
         // a calendar cannot forge an OpenTimestamps proof, D54 §4), so load and
         // use apply one rule and cannot disagree (A50). Upgrades are fetched
         // over https only (A42) — a cost `docs/config.md` states.
         (["anchors"], "ots_calendars") => {
             config.ots_calendars = Some(expect_endpoint_array(
-                value()?,
+                value("ots_calendars")?,
                 "ots_calendars",
                 antseal_anchor::TlsPolicy::Optional,
             )?);
@@ -966,17 +1163,21 @@ fn apply(
         // independent endpoints agree. Over plain HTTP one on-path attacker
         // forges both halves and the must-agree primitive reports agreement
         // on a lie, which is why transport security is not optional here.
-        // Refused at **load**, naming the endpoint, so a bad override fails
-        // before any seal or verify work rather than midway through
-        // `verify --online`. The RFC 3161 slot above (`tsa_urls`) is
-        // deliberately NOT subject to this: TSA tokens are signed and
-        // nonce-bound, and `timestamp.digicert.com` has no port 443 at all.
+        // The RFC 3161 slot above (`tsa_urls`) is deliberately NOT subject to
+        // this: TSA tokens are signed and nonce-bound, and
+        // `timestamp.digicert.com` has no port 443 at all.
+        //
+        // U101 (D196 R3): the whole pair is checked HERE, at load, by its one
+        // validator — the function every use site calls too — so a list of
+        // one, three or none, or two URLs at one origin, is exit 17 on every
+        // command instead of a usage error from `verify --online`, a usage
+        // error from `status --upgrade` only when something is pending, and a
+        // silently skipped opportunistic pass. Every refusal names the entry's
+        // position or the count, never a URL (U99, D195 R4).
         (["verify"], "bitcoin_endpoints") => {
-            config.verify_bitcoin_endpoints = Some(expect_endpoint_array(
-                value()?,
-                "bitcoin_endpoints",
-                antseal_anchor::TlsPolicy::RequiredExceptLoopback,
-            )?);
+            let items = expect_url_array(value("bitcoin_endpoints")?, "bitcoin_endpoints")?;
+            bitcoin_endpoint_pair(&items).map_err(err)?;
+            config.verify_bitcoin_endpoints = Some(items);
         }
         // U44 (D188 R4, R5): A17's per-network Arbitrum receipt pair. The
         // table is judged first — an unknown network keeps the
@@ -996,8 +1197,12 @@ fn apply(
         }
         (["verify", network_name], other) => {
             // The table family is recognized: its network is judged even for
-            // a key this build does not know, then the key is warned on.
+            // a key this build does not know, then a key this build reads
+            // elsewhere is refused (U100, D196 R1) and any other is warned on.
             verify_table_network(network_name).map_err(err)?;
+            if let Some(refusal) = misplaced_key_refusal(other, section) {
+                return Err(err(refusal));
+            }
             config.warnings.push(format!(
                 "config.toml line {line_no}: unknown key `{other}` under \
                  [verify.{network_name}] — ignored (newer antseal?)"
@@ -1007,8 +1212,13 @@ fn apply(
         // by its key alone — after any table name above was judged — so a
         // value in grammar this build lacks (an integer, a date, a construct a
         // newer antseal added) cannot turn a newer config into a hard error
-        // here. Only a recognised key's value must be in the subset.
+        // here. Only a recognised key's value must be in the subset. A KNOWN
+        // key here is outside its home table (U100, D196 R1) and is refused by
+        // name, still without its value being parsed.
         _ => {
+            if let Some(refusal) = misplaced_key_refusal(key, section) {
+                return Err(err(refusal));
+            }
             config.warnings.push(format!(
                 "config.toml line {line_no}: unknown key `{full_key}` — ignored \
                  (newer antseal?)"

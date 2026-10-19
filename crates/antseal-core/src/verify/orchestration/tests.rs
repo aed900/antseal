@@ -1053,3 +1053,65 @@ fn a_rejected_bundle_returns_the_verify_arm_with_its_code() {
         "the rejection code is what rides in U30's message"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// R98 (D199 §2 R2) — a host that made no connection
+// ─────────────────────────────────────────────────────────────────────
+
+/// A host whose storage client made **no connection** supplies
+/// [`LiveInputs::not_connected`], and the section says so in its own closed
+/// state — no rows, every count zero, and one line that is neither a fetch
+/// failure nor the vacuum's silence — while the evidence layer and the exit
+/// rung stay exactly the offline run's (D69 §3 R6). Keyed on the inputs'
+/// state, never on the row count: [`LiveInputs::none`] also has no rows and
+/// still reports `NothingChecked`.
+#[test]
+fn a_host_that_made_no_connection_reports_not_connected_with_no_rows() {
+    assert_eq!(
+        LiveInputs::default(),
+        LiveInputs::none(),
+        "Default stays a connected host with no rows (D199 §2 R2)"
+    );
+
+    let bundle = unanchored_bundle();
+    let offline = verify_offline(&bundle, &options()).expect("verifies");
+    let outcome = run_live(&bundle, LiveInputs::not_connected());
+    let live = outcome.live().expect("--live produces a section");
+
+    assert_eq!(live.verdict, LiveLayerVerdict::NotConnected);
+    assert!(live.rows.is_empty(), "nothing was fetched: {:?}", live.rows);
+    assert_eq!(live.counts, LiveCounts::default(), "every count is zero");
+    assert_eq!(live.label, wording::LIVE_LAYER_LABEL);
+    let line = live
+        .verdict_line
+        .as_deref()
+        .expect("a connection not made has a line to state");
+    assert_eq!(line, wording::LIVE_NOT_CONNECTED_LINE);
+    for absent in ["transport failure", "fetch failed", "inconclusive"] {
+        assert!(
+            !line.contains(absent),
+            "a fetch that was never made is not reported as `{absent}`: {line}"
+        );
+    }
+
+    let json = String::from_utf8(live.to_canonical_json().expect("the section serializes"))
+        .expect("compact JSON is UTF-8");
+    for needle in [
+        r#""verdict":"not-connected""#,
+        r#""rows":[]"#,
+        r#""checked":0"#,
+    ] {
+        assert!(json.contains(needle), "`{needle}` is missing: {json}");
+    }
+
+    // The evidence layer never moves (D69 §3 R6), connected or not.
+    assert_eq!(text(outcome.report_bytes()), text(offline.report_bytes()));
+    assert_eq!(outcome.rendered(), offline.rendered());
+    assert_eq!(outcome.exit_rung(), offline.exit_rung());
+
+    // The control: the same zero rows from a CONNECTED host are the vacuum.
+    let vacuum = run_live(&bundle, LiveInputs::none());
+    let vacuum = vacuum.live().expect("--live produces a section");
+    assert_eq!(vacuum.verdict, LiveLayerVerdict::NothingChecked);
+    assert_eq!(vacuum.verdict_line, None);
+}

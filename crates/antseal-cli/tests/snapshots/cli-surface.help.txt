@@ -17,7 +17,7 @@ Commands:
 
 Options:
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
@@ -43,7 +43,7 @@ Usage: antseal init [OPTIONS]
 
 Options:
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
@@ -100,7 +100,7 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
@@ -147,7 +147,7 @@ Usage: antseal list [OPTIONS]
 
 Options:
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
@@ -174,7 +174,7 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
@@ -201,7 +201,7 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
@@ -231,7 +231,7 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
@@ -264,7 +264,7 @@ Options:
           Reveal every unit of the work
 
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
@@ -303,7 +303,7 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
@@ -336,7 +336,7 @@ Commands:
 
 Options:
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
@@ -363,7 +363,7 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
@@ -390,7 +390,7 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)
@@ -417,7 +417,7 @@ Arguments:
 
 Options:
       --network <NETWORK>
-          Target network for new work (default: arbitrum-one, or config.toml's default_network — flag > config > default). restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; status, show and list read no network. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
+          Target network for new work, and for verify --online and --live (default: arbitrum-one, or config.toml's default_network — flag > config > default); init writes it into config.toml as default_network. restore, and reveal when it must fetch, use the network the work was sealed on and refuse a --network naming another; no other command takes a network from this flag. "arbitrum-sepolia" is Arbitrum Sepolia, chain 421614, not Ethereum Sepolia
 
           Possible values:
           - arbitrum-one:     Arbitrum One mainnet (the release default; real, permanent spends)

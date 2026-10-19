@@ -77,7 +77,7 @@
 //!   — and iterating [`WorkStatus::anchors`] can never produce one.
 
 use antseal_anchor::agree::EndpointPair;
-use antseal_anchor::http::{Endpoint, HttpClient, HttpPolicy, TlsPolicy};
+use antseal_anchor::http::{HttpClient, HttpPolicy};
 use antseal_anchor::ots::{
     PendingWork, StoredOtsAnchor, StoredTsaAnchor, UpgradeBudget, UpgradeReport,
     effective_calendars, upgrade_pending,
@@ -796,30 +796,21 @@ impl UpgradeConfig {
         }
     }
 
-    /// Build the must-agree pair.
+    /// Build the must-agree pair, through `[verify] bitcoin_endpoints`' one
+    /// validator (U101, D196 R3) — the function the loader already ran on a
+    /// configured list — so a config [`crate::config::load`] produced cannot
+    /// fail here, and this and `verify --online` cannot read one list two ways.
     ///
     /// # Errors
     ///
-    /// [`CliError::Usage`] when the configured list is not exactly two
-    /// endpoints, when one does not parse, or when both name one origin — a
-    /// pair of one endpoint agrees with itself and proves nothing.
+    /// [`CliError::Usage`] when the list is not exactly two endpoints, when
+    /// one does not parse, or when both name one origin — a pair of one
+    /// endpoint agrees with itself and proves nothing. Reachable only from a
+    /// `Config` or an `UpgradeConfig` built in code; the text names the entry's
+    /// position or the count, never a URL (U99, D195 R4).
     pub fn pair(&self) -> Result<EndpointPair, CliError> {
-        let [first, second] = self.bitcoin_endpoints.as_slice() else {
-            return Err(CliError::Usage {
-                message: format!(
-                    "`[verify] bitcoin_endpoints` must name exactly two endpoints (found {})",
-                    self.bitcoin_endpoints.len()
-                ),
-            });
-        };
-        let parse = |url: &String| {
-            Endpoint::parse(url, TlsPolicy::RequiredExceptLoopback).map_err(|e| CliError::Usage {
-                message: e.to_string(),
-            })
-        };
-        EndpointPair::new(parse(first)?, parse(second)?).map_err(|e| CliError::Usage {
-            message: e.to_string(),
-        })
+        crate::config::bitcoin_endpoint_pair(&self.bitcoin_endpoints)
+            .map_err(|message| CliError::Usage { message })
     }
 }
 

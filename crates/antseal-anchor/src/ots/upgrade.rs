@@ -62,6 +62,8 @@
 //! group free-standing at the *parse* layer, which is a rule about what
 //! decodes; it does not oblige this stage to produce half a transition.
 
+use std::time::Instant;
+
 use antseal_core::anchor::ots::{OtsArtifact, OtsAttestation, OtsError, header_commits, parse_ots};
 use antseal_core::bundle::schema::OtsUpgrade;
 use antseal_core::codec::caps::MAX_OTS_BYTES;
@@ -70,7 +72,7 @@ use super::calendars::{OTS_ACCEPT_HEADER, OTS_UPGRADE_PATH_PREFIX, join};
 use super::container::{ContainerError, TAG_FORK, locate_pending, splice_sibling_before};
 use super::upgrade_uri::{UpgradeUriRefusal, classify_upgrade_uri};
 use crate::agree::{Agreement, EndpointPair};
-use crate::esplora::{BlockHeader, fetch_agreed_header};
+use crate::esplora::{BlockHeader, fetch_agreed_header_by};
 use crate::http::{
     AnchorHttpError, Endpoint, HttpClient, HttpMethod, HttpRequest, Idempotency, TlsPolicy,
 };
@@ -494,7 +496,8 @@ fn added_bitcoin(before: &OtsArtifact, after: &OtsArtifact) -> Vec<OtsAttestatio
 #[non_exhaustive]
 pub enum HeaderError {
     /// The two esplora endpoints disagreed, or one of them could not be
-    /// reached. Advisory: try again later.
+    /// reached, or the caller's deadline stopped one of their requests from
+    /// starting (D202 R2). Advisory: try again later.
     #[error("the block header for height {height} could not be agreed by two endpoints")]
     NotAgreed {
         /// The height that was asked about.
@@ -525,6 +528,10 @@ pub enum HeaderError {
 /// `fetch_date` is supplied by the caller (POSIX seconds UTC) rather than read
 /// from the clock here, so the whole path is testable without one.
 ///
+/// Every request may start: this is the no-deadline form. The upgrade engine,
+/// which has a time budget to honour, confirms through a deadline-taking
+/// sibling inside this crate (A141; D202 R2).
+///
 /// # Errors
 ///
 /// [`HeaderError`]. The caller must discard the merged artifact on every one
@@ -535,6 +542,26 @@ pub fn confirm_header(
     attestation: &OtsAttestation,
     fetch_date: u64,
 ) -> Result<OtsUpgrade, HeaderError> {
+    confirm_header_by(client, pair, attestation, fetch_date, None)
+}
+
+/// [`confirm_header`], starting none of the confirmation's requests once
+/// `deadline` has passed (A141; D202 R2). `None` is no deadline.
+///
+/// The deadline reaches each esplora endpoint's two GETs; a refused one makes
+/// the pair unavailable, which is [`HeaderError::NotAgreed`] — advisory, and
+/// the merge it would have confirmed is recomputed on a later pass.
+///
+/// # Errors
+///
+/// As [`confirm_header`].
+pub(crate) fn confirm_header_by(
+    client: &HttpClient,
+    pair: &EndpointPair,
+    attestation: &OtsAttestation,
+    fetch_date: u64,
+    deadline: Option<Instant>,
+) -> Result<OtsUpgrade, HeaderError> {
     let OtsAttestation::Bitcoin { height, .. } = attestation else {
         // Only a Bitcoin attestation has a height; `merge_upgrade` only ever
         // yields those. Treated as "not agreed" rather than panicking, because
@@ -543,7 +570,7 @@ pub fn confirm_header(
     };
     let height = *height;
 
-    let header: BlockHeader = match fetch_agreed_header(client, pair, height) {
+    let header: BlockHeader = match fetch_agreed_header_by(client, pair, height, deadline) {
         Agreement::Agreed(Some(header)) => header,
         Agreement::Agreed(None) => return Err(HeaderError::NoSuchBlock { height }),
         Agreement::Disagreed { .. } | Agreement::Unavailable { .. } => {

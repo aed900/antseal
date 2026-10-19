@@ -5,8 +5,11 @@ or `$ANTSEAL_DIR/config.toml`), beside the encrypted store — one of
 exactly three plaintext files there (decision D42: this file, the vault
 header, and the lockfile; everything else is encrypted at rest).
 
-It carries **operator preferences only** — never secrets, never per-work
-data. `antseal init` writes the initial file; edit it by hand afterwards.
+It carries **operator preferences only** — never per-work data, and never
+secrets, except that a `[verify]` endpoint URL may carry a provider's API
+key, which antseal never prints beyond its origin (see "Online-verification
+endpoints"). `antseal init` writes the initial file; edit it by hand
+afterwards.
 `vault export` embeds it in the backup and `vault import` restores it
 (D47).
 
@@ -19,15 +22,18 @@ data. `antseal init` writes the initial file; edit it by hand afterwards.
   otherwise ignored, so a config written by a newer antseal still loads:
   an unknown key's value is never read, so it cannot fail the file
   whatever it holds.
-  Invalid **values** for recognized keys are hard errors. One recognized
-  key is an error in the wrong table: `bootstrap` under
-  `[networks.arbitrum-sepolia]` or `[networks.devnet]` (see "Bootstrap
-  peers"); outside the `[networks.*]` tables it is an unknown key, warned
-  and ignored like any other. One retired key is an error in every
-  `[networks.*]` table: `rpc_url` (see "The payment RPC"). Another is an
-  error under `[verify]`: `arbitrum_endpoints`, whose pair now lives in a
-  per-network table — and `[verify.devnet]` is an error whatever it holds
-  (see "Online-verification endpoints").
+  Invalid **values** for recognized keys are hard errors. **A key of the
+  schema below is an error in any table where it does not live** —
+  `rpc_endpoints` flat under `[verify]`, `tsa_urls` under `[verify]`, or
+  `default_network` written after a `[table]` header (TOML puts it in that
+  table) — because a warned override would quietly use the very defaults it
+  was written to replace. The error names the key, the table, the line and
+  where the key belongs, and never its value. `bootstrap` is accepted under
+  `[networks.arbitrum-one]` only (see "Bootstrap peers"); the retired
+  `rpc_url` is an error in every `[networks.*]` table (see "The payment
+  RPC") and the retired `arbitrum_endpoints` in every table; and
+  `[verify.devnet]` is an error whatever it holds (see "Online-verification
+  endpoints").
 
 ## Precedence
 
@@ -84,7 +90,9 @@ bootstrap = ["192.0.2.10:10000", "198.51.100.20:10000"]
 # gate: FreeTSA, DigiCert, zeitstempel.dfn.de and Sectigo (Entrust is
 # Sectigo); SwissSign, GlobalSign and Certum return tokens that verify but
 # never count, and Apple is refused — see docs/user/timestamp-authorities.md
-# §1 and §3.
+# §1 and §3. antseal prints TSA and calendar URLs in full — in the seal
+# report, in a gate abort and in --json — so none of them may carry a
+# credential.
 [anchors]
 tsa_urls = ["https://freetsa.org/tsr", "http://timestamp.digicert.com"]
 
@@ -116,10 +124,15 @@ opportunistic_upgrades = false
 # esplora or RPC reply carries no signature of its own — it is believed only
 # because two independent endpoints agree — so the transport is its only
 # integrity control, and one plain-http endpoint would let a single on-path
-# attacker supply both halves of a "must agree" pair.
+# attacker supply both halves of a "must agree" pair. A provider's API key may
+# sit in one of these URLs: antseal prints each by its origin only (scheme,
+# host and a non-default port).
 # bitcoin_endpoints: the esplora pair. LIVE: `verify --online` confirms
 # Bitcoin block headers against it, and so do `status --upgrade` and the
-# opportunistic upgrade pass when they upgrade an attestation.
+# opportunistic upgrade pass when they upgrade an attestation. Exactly two
+# endpoints at different origins, neither with a query or a fragment,
+# checked when the file is read (exit 17); delete the key to use the
+# built-in pair.
 [verify]
 bitcoin_endpoints = ["https://a.example", "https://b.example"]
 
@@ -128,8 +141,9 @@ bitcoin_endpoints = ["https://a.example", "https://b.example"]
 # each REPLACING that network's built-in pair. LIVE: `verify --online` uses
 # the pair of the network it runs on. devnet has no pair (its chain lives for
 # one run) and [verify.devnet] is refused. The older single
-# `arbitrum_endpoints` key under [verify] is refused when the file is read
-# (exit 17): move its two URLs under the table for the network they serve.
+# `arbitrum_endpoints` key is refused in any table when the file is read
+# (exit 17): move its two URLs under the table for the network they serve,
+# as `rpc_endpoints`.
 [verify.arbitrum-one]
 rpc_endpoints = ["https://c.example", "https://d.example"]
 ```
@@ -160,10 +174,12 @@ URLs in `tsa_urls`, `ots_calendars`, `bitcoin_endpoints` and
 
 They are additionally parsed as real endpoints when the file is read, so a
 URL with no host (`http:///tsr`), an unusable scheme, or embedded
-credentials (`http://user:pw@host/`) is refused at load — naming the line
-and the entry — rather than surfacing as a failed anchor midway through a
-seal. An `rpc_endpoints` entry is named by its position (`entry 0`,
-`entry 1`), never by its URL (see "Online-verification endpoints").
+credentials (`http://user:pw@host/`) is refused at load rather than
+surfacing as a failed anchor midway through a seal. The error names the
+key, the line and the entry's position (`entry 0`, `entry 1`, …) — never
+the URL itself, which may carry a credential. A value outside the subset,
+such as a URL written without quotes, is refused without being repeated
+either.
 
 `bitcoin_endpoints` and `rpc_endpoints` must additionally be **`https://`**,
 and the file is refused at load if one is not, before any network call. The
@@ -273,10 +289,12 @@ sources each, and reports agreement only when both give the same answer:
 - **`[verify] bitcoin_endpoints`** — the esplora pair Bitcoin block headers
   are confirmed against. `status --upgrade` and the opportunistic upgrade
   pass confirm headers against the same pair. It must name exactly two
-  endpoints at different origins, which is checked when the pair is used: a
-  list of another size is a usage error (exit code 2) from `verify --online`,
-  and from `status --upgrade` when it has an attestation to upgrade, and it
-  makes the opportunistic pass skip silently.
+  endpoints at different origins, which is checked when the file is read:
+  anything else — one, three, an empty list, or two URLs at one origin — is
+  a malformed config (exit code 17) on every command. Delete the key to use
+  the built-in pair. An entry may not carry a query or a fragment (`?…` or
+  `#…`) either, because antseal appends each request's path to the URL: an
+  esplora provider that wants a key must take it in the path.
 - **`[verify.arbitrum-one] rpc_endpoints` and
   `[verify.arbitrum-sepolia] rpc_endpoints`** — the Arbitrum RPC pair a
   payment receipt is confirmed against, one pair per network. A pair you set
@@ -286,19 +304,20 @@ sources each, and reports agreement only when both give the same answer:
   is a malformed config (exit code 17). devnet has no pair — its chain is a
   fresh local chain for each run, so `verify --online` confirms no receipt
   there — and `[verify.devnet]` is a malformed config.
-- **These refusals never repeat an RPC URL.** An Arbitrum endpoint that
-  serves old receipts usually needs an API key, and providers put the key in
-  the URL. A refusal names the key, the table, the line and the entry's
-  position instead. `verify --online` itself does print every endpoint it
-  consulted, by full URL, on its `endpoints:` line and in `--json` output,
-  so a key in one of these URLs appears there: treat that output as you
+- **No output repeats these URLs.** An Arbitrum endpoint that serves old
+  receipts usually needs an API key, and providers put the key in the URL.
+  So a refusal names the key, the table, the line and the entry's position,
+  and `verify --online` discloses each endpoint it consulted by its origin
+  only — scheme, host and a non-default port — on its `endpoints:` line, in
+  its failure lines and in `--json` output. The file itself is plaintext
+  beside the vault (and encrypted inside `vault export`): protect it as you
   would the key.
 - **The older `arbitrum_endpoints` key is refused.** Earlier builds read one
   `arbitrum_endpoints` list under `[verify]` and applied it to whichever
-  network a command ran on. It is now a malformed config (exit code 17),
-  raised before any command runs, naming the key and the two tables that
-  replace it but never its value. Move its two URLs under the table of the
-  network they serve.
+  network a command ran on. It is now a malformed config (exit code 17) in
+  any table, raised before any command runs, naming the key and where its
+  pair now lives but never its value. Move its two URLs under the table of
+  the network they serve, as `rpc_endpoints`.
 
 ## Files outside the vault
 

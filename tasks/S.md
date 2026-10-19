@@ -667,6 +667,7 @@
 - Accept:
   - A test that calls `journal.begin` directly and then `run_seal` with the same plan reaches the ruled outcome (a fresh seal with a notice, or the D185 message) — red baseline recorded first.
 - Notes: **[2026-10-18, wave 38 — a second window, the same fix.]** Lane L-ERR1 traced a narrower one inside `begin` itself: between `create_work` (the meta record, coarse `IncompletePrePay`) and the `Staged` tag write (`pipeline/vault_journal.rs:132-140`). A kill there leaves a work that `detect` lists, whose exact re-run fails in `journal.state()` (*"work has no journal state record"*, `vault_journal.rs:259`), and which `antseal abandon` cannot exit either: `set_state` reads `state()` first (`:221`) and fails the same way, after the preview and the confirmation. Code-traced, not executed. A pre-staging tag would close both windows; this row's ruling must cover both, and its test must reach both.
+- Notes: **[2026-10-19, wave 39 — TICKED (D197, lane L-RESUME).]** Captures on the `TODO.md` row; D197 §6 records what was built and every deviation.
 
 ### S46 — A failed receipt capture does not stop the next sub-batch payment, so a vault that cannot write loses the record of every remaining sub-batch
 - Milestone: M4
@@ -679,6 +680,7 @@
 - Accept:
   - A devnet case with a failing sink: exactly one sub-batch's payment is unrecorded, and the on-chain delta equals the receipt plus one sub-batch.
 - Notes: **[2026-10-18, wave 38 — a false rustdoc for this row's fix to correct.]** `crates/antseal-net/src/error.rs:80-85` (`StorageError::StrandedPayment`) says *"the partial quote→tx map is journaled before this error surfaces, so the evidence of money spent is never only in the error"*. That is false when a capture fails, which is S37's case and this row's subject. It was false before wave 38 too: S37 surfaced the case as class 37 without changing the doc. Lane L-ERR2 left it, because the optional edit there (D186 §2 R6) was the Display, which D147 R11 freezes; the rustdoc is not frozen.
+- Notes: **[2026-10-19, wave 39 — TICKED (D198, lane L-NET2).]** Captures on the `TODO.md` row; D198 §6 records what was built and every deviation.
 
 ### S47 — A connect-time `Payment` or `AlreadyStored` error is classed as a quote failure
 - Milestone: M4
@@ -690,3 +692,38 @@
 - Do: give `ErrContext::Connect` its own arm in `map_ant_error` that classes every connect error as `Network`.
 - Accept:
   - A connect-context `Payment` and `AlreadyStored` each map to `StorageError::Network`, asserted in-crate; the `degrade` unit test's non-`Network` row is then re-read against the contract.
+- Notes: **[2026-10-19, wave 39 — the row is WIDENED to `ErrContext::Get`, ruled without a record before implementation.]** Planning lane P1 measured that `ErrContext::Get` shares the `None` class with `Connect` (`crates/antseal-net/src/ant_backend.rs:1738`, the `Connect | Get => None` arm), against `fetch_chunk`'s documented NotFound-or-Network contract (`:1332-1336`), so a get-time `Payment` or `AlreadyStored` is also `StorageError::Quote`. The Do therefore becomes: replace the `class: Option<bool>` wildcard in `map_ant_error` with a per-context match that has no `_` arm, sending `Connect`'s and `Get`'s `Payment` (detail still redacted) and `AlreadyStored` to `Network`, `Quote` and `Finalize` byte-unchanged. The Accept adds the two `Get` combinations, and `degrade`'s non-`Network` row is relabelled as a variant no production connect produces, keeping `kinds.len() == 5`. D191 takes a dated addendum: its §1.2 premise (every kind reaching `degrade` arrives as `Network`) becomes true.
+- Notes: **[2026-10-19, wave 39 — TICKED (ruled without a record, lane L-NET2).]** Captures on the `TODO.md` row; the lane report's deviations are summarised on the row.
+
+### S48 — A kill between an abandon's two writes leaves a work that `list` offers to resume, `seal` refuses, and `antseal abandon` cannot repair
+- Milestone: M4
+- Size: S
+- Deps: after S45 (D197's restart is a third producer of the window)
+- Spec: D45 §2 (resume detection reads the coarse mirror); D106 (the fine tag is authoritative for enumeration); S10's state machine
+- Discovered by: wave-39 lane L-RESUME, 2026-10-19, while landing D197 (code-traced, not executed). Id assigned centrally.
+- Problem: `VaultJournal::write_state` (`crates/antseal-cli/src/pipeline/vault_journal.rs`, formerly inline in `set_state`) writes the fine tag `Abandoned` and then the coarse meta mirror, and its comment calls the lag between them one *"which no safety rule reads"*. D45's candidate scan (`gather_candidates`) filters on exactly that mirror. A kill between the two writes therefore leaves a work whose exact re-run matches, goes to `pipeline.resume` and is refused `NotResumable { state: "abandoned" }` (usage 2, `pipeline/resume.rs:147-151`); `list` keys its state and resume hint on the mirror (`listing.rs:612-631`) and offers the exact command; and `antseal abandon` calls `set_state(Abandoned)`, whose idempotent early return (`current == state → Ok(())`) never rewrites the mirror, yet reports *"Abandoned the interrupted seal"* with `already: false` while writing nothing. Producers of the window: S11's best-effort abandon, U17/D185's `antseal abandon`, and D197's restart.
+- Do: rule between re-syncing a stale mirror in the idempotent branch (one `update_meta`) and letting the candidate scan and `list` prefer the fine tag, as `incomplete_works` already does (D106); correct the comment; make `antseal abandon`'s report true for a repaired work.
+- Accept:
+  - A test reconstructs the window (fine tag `Abandoned`, mirror `IncompletePrePay`) and shows the ruled outcome: the exact re-run seals fresh (or is told the truth), `list` does not offer a resume, and `antseal abandon` either repairs the mirror or says nothing needed doing — red baseline recorded first.
+
+### S49 — After a sub-batch lands, a proof-construction failure is reported as a payment that moved no money, and that sub-batch's capture is skipped
+- Milestone: M4
+- Size: S
+- Deps: after S46 (the capture verdict and the loop's stop are D198's)
+- Spec: D37 Decisions 2 and 7 (journal each landed sub-batch before the next); D147 (the stranded-payment class)
+- Discovered by: wave-39 lane L-NET2, 2026-10-19, while landing D198 (code-traced, not executed). Id assigned centrally.
+- Problem: after a sub-batch's receipt is awaited, the loop's tail calls `finalize_ready_blobs(…)?` before `emit_capture` (`crates/antseal-net/src/ant_backend.rs`). `finalize_ready_blobs` maps `finalize_batch_payment`'s error, and its "no paid chunk" invariant breach, to `StorageError::Payment` (*"failed before any transaction landed"*). So a failure there returns the class that says no money moved, AFTER a transaction landed, and the landed sub-batch's quote→tx map never reaches the capture hook. Unreachable at the pinned ant-core: no gap can exist right after the batch's hashes are inserted, and upstream's other failure there is proof serialization. Like S47, it guards a future ant-core bump.
+- Do: capture first, then return `StrandedPayment` with the confirmed count (the `stranded_or_payment` helper's rule), so the class and the journal agree that money moved.
+- Accept:
+  - An in-crate test under `ant-backend` that injects a proof-construction failure after a landed sub-batch shows the capture delivered and `StrandedPayment { landed_tx_count: n }` returned; a plant restoring the old order reddens it by message.
+
+### S50 — A revert of the first sub-batch is reported as `StrandedPayment { landed_tx_count: 0 }`, whose words say money moved
+- Milestone: M4
+- Size: XS
+- Deps: after S46
+- Spec: D147 (the stranded-payment class: "money already moved"); D37 Decision 2
+- Discovered by: wave-39 lane L-NET2, 2026-10-19, while landing D198. Id assigned centrally.
+- Problem: the pay loop's revert branch (`crates/antseal-net/src/ant_backend.rs`) returns `StrandedPayment` with the confirmed count, which is 0 when the FIRST sub-batch reverts. The variant's doc (*"one or more sub-batch txs landed"*) and its Display (*"0 sub-batch transaction(s) landed … resume will not re-pay mapped quotes"*) do not fit a reverted, zero-ANT first transaction. The behaviour is right — nothing is mapped, so a resume pays everything — but the class (28, *"money already moved"*) and the text are not.
+- Do: rule whether a zero-count revert is `StorageError::Payment` (nothing moved but gas) or keeps the stranded class with true words; implement and test it.
+- Accept:
+  - A first-sub-batch revert yields the ruled class and a message true of a zero-ANT revert, asserted by message under `ant-backend` (devnet or an in-crate double).

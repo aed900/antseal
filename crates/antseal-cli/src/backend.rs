@@ -527,9 +527,12 @@ pub fn block_on_vault_local<F: core::future::Future>(future: F) -> Result<F::Out
 /// outage — the one case the fallback exists for. Handing the engine this
 /// backend instead lets each fetch fail individually, so the engine's own
 /// fallback decides, unit by unit, exactly as it would for a network that
-/// connected and then lost every chunk. `verify --live` gets the same shape
-/// for the same reason: its offline verdict renders in full and each live row
-/// is a fetch failure, which R11 reports as *Inconclusive*.
+/// connected and then lost every chunk. `verify --live` receives the same
+/// type, so its offline verdict still renders in full; but it has no fallback
+/// to run per fetch, so it reads the degrade by type
+/// ([`ReadOnlyBackend::degraded`]) and fetches nothing: its live section
+/// reports `not-connected` with no rows, and [`Self::reason()`] becomes a
+/// stderr note (R98, D199).
 ///
 /// # Not [`VaultLocalBackend`]
 ///
@@ -571,6 +574,16 @@ impl UnreachableBackend {
     #[must_use]
     pub fn calls(&self) -> usize {
         self.calls.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Why no connection was made — [`degrade`]'s kind-neutral words, then the
+    /// attempt's own reason (D191). Read without a seam call, so it counts
+    /// nothing. `verify --live` prints it as a stderr note (R98, D199 §2 R3);
+    /// it never enters verdict wording, because it is not antseal-authored
+    /// throughout (R79).
+    #[must_use]
+    pub fn reason(&self) -> &str {
+        &self.reason
     }
 
     /// Count the call and produce its failure.
@@ -719,11 +732,12 @@ impl<R: antseal_net::StorageBackend> antseal_net::StorageBackend for ReadOnlyBac
 /// **D170 §2 R2's degrade**.
 ///
 /// `Ok` wraps the connected reader. `Err` becomes an [`UnreachableBackend`]
-/// carrying the failure's reason, so every fetch fails individually and the
-/// engine's own per-fetch policy runs: `restore` serves each unit from a
-/// verified cache copy where one exists (D43 §5) and reports `fetch-failed`
-/// where none does; `verify --live` renders its offline verdict with an
-/// *Inconclusive* live section. Nothing here returns an error, which is the
+/// carrying the failure's reason. For `restore`, every fetch then fails
+/// individually and the engine's own per-fetch policy runs: it serves each
+/// unit from a verified cache copy where one exists (D43 §5) and reports
+/// `fetch-failed` where none does. `verify --live` renders its offline
+/// verdict and fetches nothing: it reads the degrade by type and reports its
+/// live section `not-connected` (R98, D199). Nothing here returns an error, which is the
 /// point: in a build that has a backend compiled in, a read-only command never
 /// ends at the connection (D170 §2 R2 — and for `--live`, D69 §3 R6's
 /// sanction for a seam refusal belongs to the build with no backend only).
@@ -766,9 +780,9 @@ pub fn degrade<R>(
         Err(error) => {
             // The network class's own text, without its `network error:`
             // prefix, so the per-fetch failure does not read it twice. Any
-            // other variant is rendered whole — `map_ant_error` can hand a
-            // connect a `Quote` for an upstream payment-class or
-            // already-stored error — and the words before it hold for it too.
+            // other variant is rendered whole. No production connect returns
+            // one since S47 (every connect error is `Network`), but the type
+            // allows it, and the words before it hold for it too.
             let detail = match error {
                 antseal_net::StorageError::Network { reason } => reason,
                 other => other.to_string(),
@@ -1169,8 +1183,8 @@ mod ant {
     use antseal_net::wallet::WalletKey;
     use antseal_net::{
         Address, AntCoreBackend, AntCoreReader, AntCoreReceiptReader, BalanceReport, Blob,
-        CaptureHook, CostQuote, NetworkConfig, NetworkId, PaymentReceipt, StorageBackend,
-        StorageError,
+        CaptureHook, CaptureOutcome, CostQuote, NetworkConfig, NetworkId, PaymentReceipt,
+        StorageBackend, StorageError,
     };
 
     use crate::error::CliError;
@@ -1178,20 +1192,21 @@ mod ant {
 
     /// Where D37's per-sub-batch receipts go.
     ///
-    /// The hook upstream accepts is `Arc<dyn Fn(&PaymentReceipt) + Send +
-    /// Sync>` — `'static`, `Send` and `Sync` — which the pipeline's own
-    /// journal handle is none of (`VaultJournal` borrows the unlocked
-    /// vault and holds a `RefCell` around the RNG). So the seam is this
-    /// trait rather than `&VaultJournal` directly: the *write* is still
-    /// the pipeline's (S10/S12), and this is only the timing seam D37
-    /// specifies — invoked with the cumulative receipt-so-far after each
-    /// sub-batch tx lands, strictly before the next is submitted.
+    /// antseal-net's hook type — `Arc<dyn Fn(&PaymentReceipt) -> CaptureOutcome +
+    /// Send + Sync>` — is `'static`, `Send` and `Sync`, which the pipeline's
+    /// own journal handle is none of (`VaultJournal` borrows the unlocked
+    /// vault and holds a `RefCell` around the RNG). So the seam is this trait
+    /// rather than `&VaultJournal` directly: the *write* is still the
+    /// pipeline's (S10/S12), and this is the timing seam D37 specifies —
+    /// invoked with the cumulative receipt-so-far after each sub-batch tx
+    /// lands, strictly before the next is submitted; after a not-durable
+    /// answer, `pay()` submits no further sub-batch (S46).
     ///
     /// Implementations must not panic: they run inside `pay()`, between
     /// two transactions, on the far side of money having moved.
     pub trait ReceiptSink: Send + Sync + 'static {
-        /// Durably record the receipt-so-far.
-        fn capture(&self, receipt: &PaymentReceipt);
+        /// Durably record the receipt-so-far, and say whether it became so.
+        fn capture(&self, receipt: &PaymentReceipt) -> CaptureOutcome;
     }
 
     /// **The production sink** (D37 Decision 7 / S31): each sub-batch
@@ -1207,8 +1222,8 @@ mod ant {
     /// S22's tier-2 sweep, which is exactly the gap S30 is open on and
     /// D89 overturned for the wallet primitives.
     impl ReceiptSink for crate::pipeline::VaultReceiptSink {
-        fn capture(&self, receipt: &PaymentReceipt) {
-            Self::capture(self, receipt);
+        fn capture(&self, receipt: &PaymentReceipt) -> CaptureOutcome {
+            Self::capture(self, receipt)
         }
     }
 
@@ -1224,7 +1239,9 @@ mod ant {
     /// again, it can only fire if that path grows a payment without growing a
     /// journal — which is a bug, and is logged as one rather than silently
     /// dropped. "This path does not pay" is then a statement in the code, not
-    /// an omission.
+    /// an omission. It records nothing, so it answers
+    /// [`CaptureOutcome::NotDurable`], and such a payment submits no sub-batch
+    /// after its first (S46).
     ///
     /// **`restore` and `verify --live` never held one** (D170 §2 R1).
     /// They used to be described here as going through this door; they never
@@ -1236,11 +1253,12 @@ mod ant {
     pub struct ReadOnly;
 
     impl ReceiptSink for ReadOnly {
-        fn capture(&self, _receipt: &PaymentReceipt) {
+        fn capture(&self, _receipt: &PaymentReceipt) -> CaptureOutcome {
             tracing::error!(
                 "a read-only command produced a payment receipt — it has not been journaled \
                  (D37: this path must construct the backend with a journal-backed sink)"
             );
+            CaptureOutcome::NotDurable
         }
     }
 
@@ -1827,7 +1845,7 @@ mod ant {
             }
         }
 
-        /// Adapt a sink to upstream's `Fn(&PaymentReceipt)` hook type.
+        /// Adapt a sink to antseal-net's hook type, forwarding its verdict (S46).
         fn hook(receipts: Arc<dyn ReceiptSink>) -> CaptureHook {
             Arc::new(move |receipt: &PaymentReceipt| receipts.capture(receipt))
         }
@@ -2291,8 +2309,8 @@ mod tests {
     /// words the feature build's `client_config` wraps it in. K5 is the bound's
     /// sentence (`connect_within`, driven for real by the feature-build test
     /// below). K4 — upstream's own client-start error — has no producer
-    /// without a live client; it meets the same arm, and so does a variant
-    /// other than `Network`, the last row.
+    /// without a live client; it meets the same arm. The last row, a variant no
+    /// production connect produces since S47, keeps the `other` arm tested.
     #[test]
     fn every_kind_that_reaches_the_degrade_is_told_no_connection_was_made() {
         use antseal_net::network::{peer_locality, storage_gate, upstream_state};
@@ -2350,7 +2368,7 @@ mod tests {
                 "the connection attempt did not finish within 60s",
             ),
             (
-                "a variant other than Network",
+                "a variant no production connect produces (S47); the arm stays total",
                 StorageError::Quote {
                     reason: "upstream payment-class error during quoting".to_owned(),
                 },
@@ -2591,27 +2609,32 @@ mod tests {
     }
 
     /// The behavioral half: the hook `connect` installs really does reach
-    /// the sink it was constructed with. Needs no network — the hook is
-    /// upstream's `Fn(&PaymentReceipt)` and is fired directly.
+    /// the sink it was constructed with, and returns that sink's verdict —
+    /// the answer `pay`'s loop stops on (S46). Needs no network — the hook is
+    /// antseal-net's `Fn(&PaymentReceipt) -> CaptureOutcome` and is fired
+    /// directly.
     #[cfg(feature = "ant-backend")]
     #[test]
     fn the_installed_hook_delivers_receipts_to_its_sink() {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        use antseal_net::{GasSummary, PaymentReceipt};
+        use antseal_net::{CaptureOutcome, GasSummary, PaymentReceipt};
 
         use super::{ReceiptSink, SealBackend};
 
-        struct Counting(AtomicUsize);
+        /// Counts what reaches it and answers a fixed verdict: an in-memory
+        /// double, so the verdict is the test's to choose.
+        struct Counting(AtomicUsize, CaptureOutcome);
         impl ReceiptSink for Counting {
-            fn capture(&self, receipt: &PaymentReceipt) {
+            fn capture(&self, receipt: &PaymentReceipt) -> CaptureOutcome {
                 assert_eq!(receipt.storage_cost_atto, 7, "the receipt arrives intact");
                 self.0.fetch_add(1, Ordering::SeqCst);
+                self.1
             }
         }
 
-        let sink = Arc::new(Counting(AtomicUsize::new(0)));
+        let sink = Arc::new(Counting(AtomicUsize::new(0), CaptureOutcome::Durable));
         let hook = SealBackend::hook_for(sink.clone());
         let receipt = PaymentReceipt {
             blobs: Vec::new(),
@@ -2622,17 +2645,44 @@ mod tests {
         };
 
         assert_eq!(sink.0.load(Ordering::SeqCst), 0);
-        hook(&receipt);
-        hook(&receipt);
+        assert_eq!(
+            hook(&receipt),
+            CaptureOutcome::Durable,
+            "the sink's verdict"
+        );
+        assert_eq!(
+            hook(&receipt),
+            CaptureOutcome::Durable,
+            "the sink's verdict"
+        );
         assert_eq!(
             sink.0.load(Ordering::SeqCst),
             2,
             "every sub-batch capture must reach the journal, not just the first (D37)"
         );
 
-        // The read-only sink satisfies the same obligation without a
-        // journal, so `restore`/`verify --live` go through one door too.
-        super::ReadOnly.capture(&receipt);
+        // S46: a sink that could not record says so through the hook — the
+        // answer that keeps `pay` from submitting the next sub-batch.
+        let failing = Arc::new(Counting(AtomicUsize::new(0), CaptureOutcome::NotDurable));
+        assert_eq!(
+            SealBackend::hook_for(failing.clone())(&receipt),
+            CaptureOutcome::NotDurable,
+            "the hook forwards a not-durable verdict instead of replacing it"
+        );
+        assert_eq!(failing.0.load(Ordering::SeqCst), 1, "it reached the sink");
+
+        // The read-only sink records nothing, so it answers not durable —
+        // directly and through the hook.
+        assert_eq!(
+            super::ReadOnly.capture(&receipt),
+            CaptureOutcome::NotDurable,
+            "the read-only sink journals nothing"
+        );
+        assert_eq!(
+            SealBackend::hook_for(Arc::new(super::ReadOnly))(&receipt),
+            CaptureOutcome::NotDurable,
+            "the read-only sink journals nothing, through the hook too"
+        );
     }
 
     /// The vault→payment-key bridge accepts what U10's record stores, and

@@ -176,7 +176,9 @@
 //!   `tests/verify_live_manifest.rs`, and `antseal_net::records_from_manifest`
 //!   by its own R11 tests. Like the rest of tier C it is reviewed, not
 //!   promised, until U32; before D190 the CLI emitted the bundle's reveal
-//!   order instead.
+//!   order instead. When `verdict` is `not-connected`, `rows` is empty and
+//!   every count is zero: no connection was made, so nothing was fetched
+//!   (R98, D199 §2 R2).
 //! - **`seal --json`'s `anchors` member** (D65 §9.2, U50): every
 //!   `endpoints[]` row's `failure_class` is **always present, `null`
 //!   exactly when that row is `ok`, and a kebab-case string otherwise**

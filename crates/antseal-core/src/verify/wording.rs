@@ -729,6 +729,15 @@ pub fn live_inconclusive_line(failed_count: u64) -> String {
     )
 }
 
+/// `--live` verdict: no connection to the Autonomi network was made, so
+/// nothing was fetched and the section has no rows (R98, D199 §2 R2). Every
+/// clause is antseal's own: the reason the connection was not made is not
+/// verdict wording (R79) — the CLI prints it on stderr, outside this
+/// document.
+pub const LIVE_NOT_CONNECTED_LINE: &str = "live check: not performed — no connection to the \
+                                           Autonomi network was made, so nothing was fetched \
+                                           and nothing is established either way";
+
 /// One `--live` row: the record is still served, byte-identical.
 #[must_use]
 pub fn live_blob_identical_line(subject: &str) -> String {

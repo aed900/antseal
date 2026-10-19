@@ -4,8 +4,8 @@
 //! **unsigned** — an esplora header and a JSON-RPC receipt carry no signature
 //! antseal can check — so the only integrity control available is that two
 //! parties who should not be able to coordinate said the same thing. This
-//! module is where "they said the same thing" is decided, and where the three
-//! ways it can fail are kept apart.
+//! module is where "they said the same thing" is decided, and where the ways
+//! it can fail are kept apart.
 //!
 //! # Agreement is over an **extracted value**, never over response bytes
 //!
@@ -59,12 +59,15 @@
 
 use crate::http::{AnchorHttpError, Endpoint, HttpClient};
 
-/// A reply that could not be turned into a comparable value.
+/// A reply that could not be turned into a comparable value — or, when the
+/// caller set a deadline, a request that was never made.
 ///
-/// Two arms, because they fail at different layers and a caller that
-/// collapsed them would lose the distinction between "the endpoint did not
-/// answer" and "the endpoint answered something that is not what this API
-/// returns" — the second being a far stronger signal about the endpoint.
+/// [`Self::Http`] and [`Self::Payload`] are two arms because they fail at
+/// different layers, and a caller that collapsed them would lose the
+/// distinction between "the endpoint did not answer" and "the endpoint
+/// answered something that is not what this API returns" — the second being a
+/// far stronger signal about the endpoint. [`Self::WrongChain`] and
+/// [`Self::NotStarted`] give their own reasons for being separate.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum EndpointFailure {
@@ -104,6 +107,22 @@ pub enum EndpointFailure {
         /// The chain id the endpoint reported.
         reported: u64,
     },
+    /// No request was made: the caller gave a deadline for **starting**
+    /// requests, and it had passed (D202 R2). The opportunistic upgrade
+    /// pass carries its time budget into its block-header confirmation this
+    /// way, so that no request of the pass starts after the budget is spent.
+    ///
+    /// A fourth class because it is not a statement about the endpoint at
+    /// all — not "no answer", not "an unusable answer", not "the wrong
+    /// chain", only "this process stopped asking" — and reading it as any of
+    /// those would blame an endpoint for the caller's clock. It carries the
+    /// configured URL and nothing the endpoint sent. `verify --online` sets no
+    /// deadline and never produces it.
+    #[error("{endpoint}: the request was not started, because the caller's deadline had passed")]
+    NotStarted {
+        /// The endpoint URL.
+        endpoint: String,
+    },
 }
 
 impl EndpointFailure {
@@ -111,7 +130,9 @@ impl EndpointFailure {
     #[must_use]
     pub fn endpoint(&self) -> &str {
         match self {
-            Self::Payload { endpoint, .. } | Self::WrongChain { endpoint, .. } => endpoint,
+            Self::Payload { endpoint, .. }
+            | Self::WrongChain { endpoint, .. }
+            | Self::NotStarted { endpoint } => endpoint,
             Self::Http(error) => http_endpoint(error),
         }
     }
@@ -122,6 +143,15 @@ impl EndpointFailure {
         Self::Payload {
             endpoint: endpoint.url().to_owned(),
             reason,
+        }
+    }
+
+    /// A request to `endpoint` that was not started because the caller's
+    /// deadline had passed (D202 R2).
+    #[must_use]
+    pub fn not_started(endpoint: &Endpoint) -> Self {
+        Self::NotStarted {
+            endpoint: endpoint.url().to_owned(),
         }
     }
 }
@@ -155,7 +185,8 @@ fn http_endpoint(error: &AnchorHttpError) -> &str {
 /// The outcome of asking two endpoints one question.
 ///
 /// Three arms, and the two failures are **not** interchangeable:
-/// [`Self::Unavailable`] is advisory and retryable (an endpoint was down),
+/// [`Self::Unavailable`] is advisory and retryable (an endpoint was down, or
+/// the caller's deadline stopped a request from starting),
 /// while [`Self::Disagreed`] is alarming — it means one of two endpoints that
 /// should not be able to coordinate is wrong or lying, and R's M3
 /// endpoint-disagreement rendering exists for exactly that.
@@ -454,6 +485,26 @@ mod tests {
         assert_eq!(
             EndpointFailure::payload(&endpoint("http://b.example"), "not 80 bytes").endpoint(),
             "http://b.example"
+        );
+    }
+
+    /// D202 R2: the not-started arm names its endpoint like every other arm,
+    /// and its words say the caller stopped asking — so a degradation line
+    /// built from it can never read as a down or misbehaving endpoint.
+    #[test]
+    fn a_request_not_started_names_its_endpoint_and_blames_no_endpoint() {
+        let failure = EndpointFailure::not_started(&endpoint("http://c.example/api"));
+        assert_eq!(failure.endpoint(), "http://c.example/api");
+        assert_eq!(
+            failure,
+            EndpointFailure::NotStarted {
+                endpoint: "http://c.example/api".to_owned()
+            }
+        );
+        assert_eq!(
+            failure.to_string(),
+            "http://c.example/api: the request was not started, because the caller's deadline \
+             had passed"
         );
     }
 }

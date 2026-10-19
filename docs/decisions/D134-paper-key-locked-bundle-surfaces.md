@@ -653,3 +653,7 @@ build page key entry.
    U68's amendment (ii) has landed — reveal's `-o` line names its default at
    `cli-surface.help.txt:280` — and the frozen snapshot measures 407 lines here
    against the round's 408.
+
+## Addendum — 2026-10-19 (D201 §2 R3): row 1's definition text is widened before `U32`, and no code moves
+
+§2 R3 (1) reserves the exit-code table as append-only — *"no assigned code is renumbered, reused or repurposed"* — a promise that `U32` freezes. **D201** (`U103`, `U104`) widens the definition text of row 1 (`internal`) before that freeze, to *"unexpected failure (bug class), or an unavailable OS random source (D201) — a fault of the machine that no other class covers"*. No code is renumbered or reused and no class is added: `PINNED_CLASS_COUNT` stays 36 and `crates/antseal-cli/tests/exit_codes.rs`'s `TABLE` keeps its 36 rows. Six of the seven OS-CSPRNG failure sites already exit 1 at `07a170c`, so the widened text describes what the table already did for them; the seventh, the anchor gate's `Entropy` refusal, moves from 22 to 1 — a failure changing class before `U32`, which is the window §2 R3 (1) leaves open. Row 1 keeps its code and its name; only its definition text and its members' `message` (D65: human copy at every tier) move. After `U32`, a widening like this would need its own argument against §2 R3 (1)'s *"repurposed"*. This record is not rewritten.

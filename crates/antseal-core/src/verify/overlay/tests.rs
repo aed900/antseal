@@ -258,7 +258,14 @@ fn a_promotion_later_than_the_offline_headline_leaves_it_standing() {
     // The promotion still happened and still renders — as a row, not as a
     // headline.
     assert_eq!(overlay.anchor_outcomes.len(), 1);
-    assert_eq!(overlay.anchor_outcomes[0].class.token(), "promoted");
+    assert!(
+        matches!(
+            overlay.anchor_outcomes[0].class,
+            OverlayOutcomeClass::Promoted { .. }
+        ),
+        "{:?}",
+        overlay.anchor_outcomes[0].class
+    );
     assert_eq!(
         overlay.aggregate_deltas,
         Vec::new(),
@@ -346,7 +353,14 @@ fn endpoint_disagreement_suppresses_promotion_for_that_anchor_alone() {
 
     assert_eq!(overlay.anchor_outcomes.len(), 2);
     assert_eq!(overlay.anchor_outcomes[0].slot, "ots-1");
-    assert_eq!(overlay.anchor_outcomes[0].class.token(), "promoted");
+    assert!(
+        matches!(
+            overlay.anchor_outcomes[0].class,
+            OverlayOutcomeClass::Promoted { .. }
+        ),
+        "{:?}",
+        overlay.anchor_outcomes[0].class
+    );
     assert_eq!(overlay.anchor_outcomes[1].slot, "ots-2");
     assert_eq!(
         overlay.anchor_outcomes[1].class,
@@ -848,12 +862,30 @@ fn report_bytes_are_byte_identical_whether_or_not_the_overlay_computation_runs()
 
 // ── the closed class sets stay closed and rendered (L2's mechanism) ─────
 
+/// One closed-class value's wire token: its serde tag, read by the verifier
+/// page's own rule (`verifier-web/index.template.html`: an externally tagged
+/// serde enum — a unit variant is its name, a struct variant is a one-key
+/// object). Serde is the single source of these spellings (D200, R99): no
+/// hand-written token method mirrors them, so the lists below pin the wire
+/// itself rather than a second spelling path.
+fn serde_tag<T: Serialize>(value: &T) -> String {
+    match serde_json::to_value(value).expect("a closed class serializes") {
+        serde_json::Value::String(tag) => tag,
+        serde_json::Value::Object(map) if map.len() == 1 => map
+            .keys()
+            .next()
+            .expect("a one-key object has its key")
+            .clone(),
+        other => panic!("not an externally tagged enum value: {other}"),
+    }
+}
+
 /// Every outcome class, reason, impact class, echo outcome and delta has a
-/// spelled token and a distinct, non-empty display line. The token lists are
-/// hand-written on purpose (the Q127 shape): a lane that grows a class set
-/// fails this row until the new class's token and line are written down —
-/// which is the smallest mechanism under D64's L2 until R18's snapshot rows
-/// take over.
+/// spelled token and a distinct, non-empty display line. The token is the
+/// value's serde tag ([`serde_tag`]). The token lists are hand-written on
+/// purpose (the Q127 shape): a lane that grows a class set fails this row
+/// until the new class's token and line are written down — which is the
+/// smallest mechanism under D64's L2 until R18's snapshot rows take over.
 #[test]
 fn every_overlay_class_has_a_spelled_token_and_a_distinct_rendered_line() {
     let failure = EndpointProbeFailure {
@@ -886,10 +918,7 @@ fn every_overlay_class_has_a_spelled_token_and_a_distinct_rendered_line() {
             },
         },
     ];
-    let tokens: Vec<&str> = class_exemplars
-        .iter()
-        .map(OverlayOutcomeClass::token)
-        .collect();
+    let tokens: Vec<String> = class_exemplars.iter().map(serde_tag).collect();
     assert_eq!(
         tokens,
         [
@@ -901,6 +930,25 @@ fn every_overlay_class_has_a_spelled_token_and_a_distinct_rendered_line() {
             "not-promoted"
         ],
         "D64 §6.2's closed class tokens moved; write the new one down here \
+         and give it a line"
+    );
+    // The reasons those four `not-promoted` rows carry, by the same rule.
+    let reason_tokens: Vec<String> = class_exemplars
+        .iter()
+        .filter_map(|class| match class {
+            OverlayOutcomeClass::NotPromoted { reason } => Some(serde_tag(reason)),
+            OverlayOutcomeClass::Promoted { .. } | OverlayOutcomeClass::Refuted { .. } => None,
+        })
+        .collect();
+    assert_eq!(
+        reason_tokens,
+        [
+            "disagreed",
+            "endpoint-failures",
+            "no-evidence",
+            "refutation-suppressed"
+        ],
+        "the not-promoted reason tokens moved; write the new one down here \
          and give it a line"
     );
     let lines: Vec<String> = class_exemplars
@@ -927,8 +975,13 @@ fn every_overlay_class_has_a_spelled_token_and_a_distinct_rendered_line() {
         HeadlineImpact::Stands,
         HeadlineImpact::StillUnanchored,
     ];
-    let impact_tokens: Vec<&str> = impact_exemplars.iter().map(HeadlineImpact::token).collect();
-    assert_eq!(impact_tokens, ["supplies", "stands", "still-unanchored"]);
+    let impact_tokens: Vec<String> = impact_exemplars.iter().map(serde_tag).collect();
+    assert_eq!(
+        impact_tokens,
+        ["supplies", "stands", "still-unanchored"],
+        "D64 §3.1's closed impact tokens moved; write the new one down here \
+         and give it a line"
+    );
     let impact_lines: Vec<String> = impact_exemplars.iter().map(headline_impact_line).collect();
     for (i, a) in impact_lines.iter().enumerate() {
         assert!(!a.is_empty());
@@ -948,14 +1001,21 @@ fn every_overlay_class_has_a_spelled_token_and_a_distinct_rendered_line() {
         ReceiptProbe::Disagreed,
         ReceiptProbe::Failed(vec![failure]),
     ];
-    let echo_lines: Vec<String> = echo_probes
+    let echoes: Vec<ReceiptEcho> = echo_probes
         .iter()
-        .map(|probe| {
-            receipt_echo(probe, ARBITRUM_ONE)
-                .expect("every probed outcome renders")
-                .line
-        })
+        .map(|probe| receipt_echo(probe, ARBITRUM_ONE).expect("every probed outcome renders"))
         .collect();
+    // D137 recorded these tokens as "un-greppable and un-asserted"; they are
+    // asserted here, as serde tags (D200 answers D137's proposed token
+    // method in the opposite direction).
+    let echo_tokens: Vec<String> = echoes.iter().map(|echo| serde_tag(&echo.outcome)).collect();
+    assert_eq!(
+        echo_tokens,
+        ["confirmed", "not-on-chain", "disagreed", "failed"],
+        "the receipt echo's outcome tokens moved; write the new one down here \
+         and give it a line"
+    );
+    let echo_lines: Vec<String> = echoes.into_iter().map(|echo| echo.line).collect();
     for (i, a) in echo_lines.iter().enumerate() {
         assert!(!a.is_empty());
         for b in &echo_lines[i + 1..] {
@@ -967,15 +1027,22 @@ fn every_overlay_class_has_a_spelled_token_and_a_distinct_rendered_line() {
         None
     );
 
-    // The delta set (one member today, held closed).
+    // The delta set (one member today, held closed). The deleted `token()`
+    // was this enum's only exhaustive match, so this irrefutable pattern is
+    // the compile-time stop that replaces it: a second delta makes the
+    // pattern refutable (E0005) until it is written into this sweep with its
+    // line.
     let delta = AggregateDelta::DivergenceNewlyFlagged {
         earliest_unix: 0,
         latest_unix: 200_000,
     };
-    assert_eq!(delta.token(), "divergence-newly-flagged");
+    let AggregateDelta::DivergenceNewlyFlagged { .. } = &delta;
+    assert_eq!(serde_tag(&delta), "divergence-newly-flagged");
 
-    // And the serialized tokens match the in-memory ones — kebab-case,
-    // externally tagged (the sibling document's own spelling discipline).
+    // And the two shapes [`serde_tag`] reads are the ones serde emits —
+    // kebab-case, externally tagged (the sibling document's own spelling
+    // discipline): a unit variant is a bare string, a struct variant a
+    // one-key object.
     let json = serde_json::to_string(&impact_exemplars[1]).expect("impact serializes");
     assert_eq!(json, "\"stands\"");
     let json = serde_json::to_string(&class_exemplars[1]).expect("class serializes");

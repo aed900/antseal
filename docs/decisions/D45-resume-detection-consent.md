@@ -186,3 +186,33 @@ D185 also measured the trap census as four, not one: besides 25 and 26, the
 D152 blocked work (27) and a seal killed between `begin` and `put_plan`, whose
 exact re-run fails with `usage` forever (its deeper fix is `S45`). The bullet
 above stays as written; the risk it records is discharged by D185.
+
+## Addendum — 2026-10-19 (D197 §2 R2, R5): an exact match of a pre-staging candidate is abandoned, and the run seals fresh
+
+§2's matching table gains a row, ruled by D197 (`S45`):
+
+| Relation to a candidate | Behavior |
+|---|---|
+| exact ordered path-list match ∧ shaping flags equal ∧ the candidate is **pre-staging** | **abandon it and seal fresh**, with a one-line stderr notice |
+
+- **Pre-staging is measured, never tagged** (D197 §2 R1): the coarse state is
+  `IncompletePrePay`; there is no plan record, no receipt, no consent and no anchor slot; and
+  the fine tag is absent or `Staged`. Such a work was killed while staging — inside `begin`, or
+  between `begin` and the plan write — and nothing was quoted, consented to, anchored or paid
+  for it.
+- **Why §2's first row did not fit it.** That row auto-resumes, and a work with no plan cannot
+  be resumed: its exact re-run failed on every run, with `usage` (2), or with exit 12's tamper
+  sentence when the fine tag was absent. MVP-SPEC line 145 already prescribes abandonment and a
+  fresh seal (a new `seal_id`, fresh nonces) when staged bytes are unavailable.
+- **The abandon precedes the fresh seal, under the vault lock** (D197 §2 R3), so §2's
+  uniqueness argument — *"at most one can ever exist per key"* — still holds.
+- **No destructive confirmation** (D197 §2 R2): nothing usable is lost, `S11` already abandons
+  without asking on the same spec rule, and the fresh seal asks for consent before it pays.
+- **§2's other rows are unchanged.** The flag-mismatch and overlap refusals keep D185's *"or
+  abandon it"* way forward.
+
+§5's dry-run detail is narrowed (D197 §2 R5). On an exact match of a **pre-staging**
+candidate, `--dry-run` runs the fresh dry-run (encrypt and quote, journaling disabled) with a
+conditional notice — a real run discards the old work and seals afresh — and abandons nothing.
+The resume plan is printed only for a candidate that can be resumed. §2 and §5 above stay as
+written.

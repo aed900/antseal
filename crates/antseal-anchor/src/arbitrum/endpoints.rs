@@ -58,7 +58,7 @@ pub const fn verify_rpcs(network: NetworkId) -> Option<&'static [&'static str; 2
 ///
 /// The values are **consumed by name** from `antseal_net::network`, never
 /// re-typed: the payment path already carries this guard
-/// (`ant_backend.rs:217`) and two independently written chain ids that agree
+/// (`ant_backend.rs:243`) and two independently written chain ids that agree
 /// today is how they stop agreeing later.
 ///
 /// # D137 §8, site 2 — this value reaches the rendered sentence

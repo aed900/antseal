@@ -13,7 +13,7 @@
 //! | code | class | source |
 //! |-----:|-------|--------|
 //! | 0    | success | |
-//! | 1    | `internal` | unexpected failure (bug class) |
+//! | 1    | `internal` | unexpected failure (bug class), or an unavailable OS random source (D201) — a fault of the machine that no other class covers |
 //! | 2    | `usage` | argv/parse/cross-validation errors (clap's own convention, kept) |
 //! | 3    | `not-implemented` | U1 frozen-surface stubs; message names the arriving milestone. (U13's M1 anchor-stage gate also mapped here until U22 wired the real stage and deleted it) |
 //! | 4    | `io-error` | ordinary filesystem I/O failure (D46 row 4's "ordinary I/O class") |
@@ -605,7 +605,7 @@ pub enum CliError {
     ///
     /// The remedy names **no command**: this message is produced from
     /// `refuse_existing_target`'s `header.exists()` gate
-    /// (`vault/export.rs:1208-1213`) with the header never decoded, so it
+    /// (`vault/export.rs:1213-1218`) with the header never decoded, so it
     /// cannot know whether `antseal vault export` would run for this vault
     /// — and moving the directory is the one instruction true for every
     /// wrap mode (D155 §2 R3).
@@ -1070,6 +1070,33 @@ pub enum CliError {
         /// The typed error's own sentence.
         detail: String,
     },
+
+    /// **D201 (`U103`, `U104`)**: the operating system's random source is
+    /// unavailable — a fault of this machine, not of antseal. It shares class
+    /// `internal` (1) with [`Self::Internal`] because no other class covers it
+    /// (the table's row 1), and it is a variant of its own because
+    /// `Internal`'s text calls every failure a bug in antseal, which is false
+    /// here.
+    ///
+    /// `what` names the value that could not be generated, and `consequence`
+    /// says what is true because of it. Each is written at the one site that
+    /// draws the value and is true there by measurement (D201 §2 R2). Both are
+    /// `&'static str`: antseal-authored text only, so nothing a user typed,
+    /// and no secret, can reach the message.
+    ///
+    /// No site offers a timestamp authority, `--force-degraded` or
+    /// `antseal abandon`: none of them can supply randomness (D201 §1.2).
+    #[error(
+        "the operating system's random source is unavailable, so {what} could not be \
+         generated: {consequence}. This is a fault of this machine, not a bug in antseal, and \
+         antseal has no other source of randomness to fall back on"
+    )]
+    RandomSourceUnavailable {
+        /// What could not be generated, e.g. "a vault record's nonce".
+        what: &'static str,
+        /// What is true because of it, at the site that draws it.
+        consequence: &'static str,
+    },
 }
 
 impl CliError {
@@ -1077,7 +1104,10 @@ impl CliError {
     #[must_use]
     pub fn class(&self) -> ErrorClass {
         match self {
-            CliError::Internal { .. } => ErrorClass::Internal,
+            // D201: a fault of the machine shares row 1 with the bug class.
+            CliError::Internal { .. } | CliError::RandomSourceUnavailable { .. } => {
+                ErrorClass::Internal
+            }
             CliError::Usage { .. } => ErrorClass::Usage,
             CliError::NotImplemented { .. } => ErrorClass::NotImplemented,
             CliError::Io { .. } => ErrorClass::IoError,

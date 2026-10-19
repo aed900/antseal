@@ -506,7 +506,7 @@ fn a_work_without_its_fine_state_record_still_lists() {
 /// permanently unlistable.
 ///
 /// The state is **constructed on disk**, not raced for: `list` is
-/// deliberately lock-free (`commands.rs:316-323`), so this is exactly the
+/// deliberately lock-free (`commands.rs:459-466`), so this is exactly the
 /// shape a concurrent `begin` presents, and constructing it is the only way
 /// to assert on it deterministically.
 #[test]

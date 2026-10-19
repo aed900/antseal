@@ -146,15 +146,43 @@ which prints those constants.
    bootstrap's own three attesting blocks are captured
    (`testdata/anchors/A25-upgrade-headers/`), each verified offline by
    `double-SHA256(header) == claimed block hash`, so this step's *evidence*
-   is now reproducible with no network at all. Its CLI half is still
-   missing, and this step is that fact's home now that the old §0 status
-   section is deleted: **`antseal verify --online` is an M3 stub** — the
-   flag is declared (`crates/antseal-cli/src/cli.rs:192-206`), but
-   `crates/antseal-cli/src/run.rs:50` maps `Command::Verify` to
-   `Milestone::M3` and `run.rs:60` returns `CliError::NotImplemented`, so
-   the promotion to `proven` has no command to run from the shipped CLI.
-   That is blocked by a milestone, not by a network, and it is not this
-   protocol's to unblock.
+   is reproducible with no network at all. Its CLI half is
+   **`antseal verify --online <bundle>`** (U30), in every build:
+   `crates/antseal-cli/src/run.rs:92-96` hands `Command::Verify` to
+   `commands::verify` (`crates/antseal-cli/src/commands.rs:968`), whose
+   `--online` arm (`crates/antseal-cli/src/commands.rs:1012-1024`) takes the
+   esplora pair from `[verify] bitcoin_endpoints`, or from
+   `DEFAULT_ESPLORA_ENDPOINTS` when the config sets none
+   (`crates/antseal-cli/src/verify_host.rs:332-342`), and asks both endpoints
+   for the header at every height in the bundle's probe plan
+   (`crates/antseal-cli/src/verify_host.rs:172-183`). Only agreement crosses
+   into the evidence (`crates/antseal-anchor/src/esplora.rs:142-156`): an
+   `attested` OTS anchor whose embedded header both endpoints return byte for
+   byte becomes `proven`, timed by the **agreed** header's `nTime` (D56 rule
+   O3, `crates/antseal-core/src/anchor/verdicts.rs:782-825`), and a pair that
+   disagrees or does not answer promotes nothing.
+
+   It reads a `.sealproof` bundle, not a raw `.ots`. The bundle to run it on
+   is `attested-ots-960767.sealproof`, which carries the bootstrap's own
+   upgraded artifact and block 960767's header. It is assembled from frozen
+   vectors and is not committed: run from the repository root,
+   `ANTSEAL_EMIT_PAGE_FIXTURES=<absolute dir> cargo test -p antseal-core --locked --test page_fixtures`
+   writes it into that directory
+   (`crates/antseal-core/tests/page_fixtures.rs:587-620`, D133), and
+   `scripts/verifier-page-browser.sh` materialises it the same way at
+   `target/verifier-web-fixtures/attested-ots-960767.sealproof`
+   (`scripts/verifier-page-browser.sh:72`, `:108-109`). Offline,
+   `antseal verify` on it exits 43 with `ots-1: attested`. With both
+   endpoints agreeing, `--online` prints, in its online section,
+   `ots-1: Bitcoin block 960767 agreed by both endpoints — time 1785701746 (bitcoin-block-960767 — online-confirmed)`
+   (1785701746 is block 960767's `nTime`, 2026-08-02T20:15:46Z — step 2's
+   figure), `--json` classes the anchor `promoted`, and the run exits 0; with
+   the second endpoint answering block 960768's header instead, that line reads
+   `ots-1: the two endpoints disagreed about block 960767 — no promotion; the offline state stands`
+   and the run exits 43. Both outcomes were measured on 2026-10-19 against
+   two loopback servers replaying the committed captures, not against the
+   endpoints. A real run contacts both endpoints, so §1's consent and §6's
+   rule on `ANTSEAL_NO_REAL_ANCHOR_NETWORK` apply to it.
 
 Three calendar behaviours the bootstrap measured, all of which the capture
 must preserve because A14's classifier is graded on them:
@@ -193,15 +221,14 @@ alternates table. Endpoint rot is the expected outcome of this run, not an
 anomaly — the bootstrap found one of four default calendars dead on its first
 attempt.
 
-**"Hand to Q26" is not yet a place.** Q26 is an M4 task and its document does
-not exist; `docs/anchors/` holds only this runbook and
-[`root-store-update.md`](root-store-update.md). Until it does, findings live
-in the campaign logs and are cited from there — see A25's Notes in
-`../../tasks/A.md` for the standing list of what Q26 will owe a row.
-The hand-off itself executed 2026-08-11 (D126 §3.2): findings (a)–(e) now sit
-verbatim-by-citation in Q26's own `Do` (`tasks/Q.md`), with A25 in its `Deps`,
-so the M4 lane meets them in its entry rather than through this pointer; the
-calendar-rot half stays with D54/A14/A44 as above.
+**Q26's alternates table is §3 of
+[`timestamp-authorities.md`](../user/timestamp-authorities.md).** Q26
+delivered that page on 2026-08-17, and it carries all five TSA findings this
+protocol handed over on 2026-08-11 (D126 §3.2): the Sectigo/Entrust identity,
+DigiCert's refused port 443, the four live endpoints outside the list, token
+`genTime` running ahead of the capture host's clock, and the
+published-versus-measured labels. Findings still live in the campaign logs and
+are cited from there; the calendar-rot half stays with D54/A14/A44, as above.
 
 ## 4. Recording the run
 

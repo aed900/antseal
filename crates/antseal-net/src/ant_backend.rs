@@ -132,7 +132,7 @@ use crate::quote::{
 };
 use crate::receipt::{BlobPaymentRecord, GasSummary, PaymentReceipt, TxRecord, TxStatus};
 use crate::wallet::WalletKey;
-use crate::{Address, Blob, MAX_CHUNK_SIZE, StorageBackend, StorageError};
+use crate::{Address, Blob, CaptureOutcome, MAX_CHUNK_SIZE, StorageBackend, StorageError};
 
 /// Upstream wallet type, via the sanctioned re-export chain.
 use ant_protocol::evm::Wallet;
@@ -167,11 +167,11 @@ const PER_TRANSFER_GAS: u64 = 220_000;
 /// Per-sub-batch journal capture hook (D37 Decision 2 / S7 timing
 /// contract): invoked with the **cumulative** receipt-so-far after each
 /// sub-batch tx lands — strictly before the next sub-batch is submitted —
-/// and once more with the final receipt (which is identical to the last
-/// in-flight payload; the S7 capture-consistency test asserts it). The
-/// journal WRITE the hook performs is the pipeline's (S10/S12); this type
-/// is only the timing seam.
-pub type CaptureHook = Arc<dyn Fn(&PaymentReceipt) + Send + Sync>;
+/// so when `pay` returns a receipt, the last payload equals it (the S7
+/// capture-consistency test asserts it). The journal WRITE is the pipeline's
+/// (S10/S12); the hook answers whether it became durable ([`CaptureOutcome`]),
+/// and after a not-durable answer `pay` submits no further sub-batch (S46).
+pub type CaptureHook = Arc<dyn Fn(&PaymentReceipt) -> CaptureOutcome + Send + Sync>;
 
 /// What `pay()` stages for `finalize_batch`'s same-process fast path:
 /// the ordered PUT targets and the store-ready proof for one paid blob.
@@ -804,13 +804,32 @@ impl StorageBackend for AntCoreBackend {
                 &mut records,
                 &mut lock_staged(&self.staged).paid,
             )?;
-            emit_capture(
+            let captured = emit_capture(
                 self.capture_hook.as_ref(),
                 &records,
                 &tx_map,
                 &txs,
                 gas_cost_wei,
             );
+            // S46: a capture the hook reports not durable ends the payment
+            // here while sub-batches remain, so at most this one sub-batch is
+            // paid without a durable record (D37 Decision 2's bound). After
+            // the last sub-batch it stops nothing: the caller's post-`pay`
+            // write is the second chance (D186 R3). No hook is no verdict.
+            if captured == Some(CaptureOutcome::NotDurable) && batch_index + 1 < sub_batches.len() {
+                return Err(StorageError::StrandedPayment {
+                    landed_tx_count: txs
+                        .iter()
+                        .filter(|t| t.status == TxStatus::Confirmed)
+                        .count(),
+                    reason: format!(
+                        "the receipt-so-far could not be journaled after sub-batch {} of {} \
+                         landed, so no further sub-batch was submitted (D37 Decision 2)",
+                        batch_index + 1,
+                        sub_batches.len()
+                    ),
+                });
+            }
         }
 
         let blobs: Vec<BlobPaymentRecord> = records.into_iter().flatten().collect();
@@ -1611,16 +1630,17 @@ struct PricedBlobSlot {
     commitment_sidecars: Vec<Vec<u8>>,
 }
 
-/// Deliver the cumulative receipt-so-far to the capture hook (no-op
-/// without a hook). Order of fields mirrors the final receipt exactly.
+/// Deliver the cumulative receipt-so-far to the capture hook and return its
+/// verdict — `None` without a hook, which is no verdict (S46). Order of
+/// fields mirrors the final receipt exactly.
 fn emit_capture(
     hook: Option<&CaptureHook>,
     records: &[Option<BlobPaymentRecord>],
     tx_map: &BTreeMap<QuoteHash, TxHash>,
     txs: &[TxRecord],
     gas_cost_wei: u128,
-) {
-    let Some(hook) = hook else { return };
+) -> Option<CaptureOutcome> {
+    let hook = hook?;
     let blobs: Vec<BlobPaymentRecord> = records.iter().flatten().cloned().collect();
     let storage_cost_atto = blobs
         .iter()
@@ -1635,7 +1655,7 @@ fn emit_capture(
         storage_cost_atto,
         gas: GasSummary { gas_cost_wei },
     };
-    hook(&receipt);
+    Some(hook(&receipt))
 }
 
 /// `Payment` before any landing, `StrandedPayment` after (the split the
@@ -1733,12 +1753,12 @@ enum ErrContext {
 /// class messages are redacted (module docs: upstream embeds quote-hash
 /// hex in some payment errors); transport/storage-class messages pass
 /// through (chunk addresses are public identifiers).
+///
+/// A connect or a fetch is [`StorageError::Network`] whatever upstream
+/// reported (S47): `AntCoreReader::connect`'s and `fetch_chunk`'s contracts
+/// name no quote or finalize class. The per-context matches have no `_` arm,
+/// so a fifth context must decide its own class.
 fn map_ant_error(context: ErrContext, error: &AntError) -> StorageError {
-    let class = match context {
-        ErrContext::Connect | ErrContext::Get => None,
-        ErrContext::Quote => Some(false),
-        ErrContext::Finalize => Some(true),
-    };
     match error {
         // `chunk_get` signals absence via `Ok(None)` (mapped by the
         // caller); an `Error::NotFound` from any operation is therefore a
@@ -1746,24 +1766,40 @@ fn map_ant_error(context: ErrContext, error: &AntError) -> StorageError {
         AntError::NotFound(detail) => StorageError::Network {
             reason: format!("not found: {detail}"),
         },
-        AntError::Payment(_) => match class {
-            Some(true) => StorageError::Finalize {
-                reason: "upstream payment-class error during finalize (detail redacted: \
-                         upstream payment errors can embed receipt material)"
+        AntError::Payment(_) => match context {
+            ErrContext::Connect => StorageError::Network {
+                reason: "upstream reported a payment-class error while connecting (detail \
+                         redacted: upstream payment errors can embed receipt material)"
                     .into(),
             },
-            _ => StorageError::Quote {
+            ErrContext::Get => StorageError::Network {
+                reason: "upstream reported a payment-class error while fetching (detail \
+                         redacted: upstream payment errors can embed receipt material)"
+                    .into(),
+            },
+            ErrContext::Quote => StorageError::Quote {
                 reason: "upstream payment-class error during quoting (detail redacted: \
                          upstream payment errors can embed receipt material)"
                     .into(),
             },
-        },
-        AntError::AlreadyStored => match class {
-            Some(true) => StorageError::Finalize {
-                reason: "upstream reported already-stored where a fresh store was expected".into(),
+            ErrContext::Finalize => StorageError::Finalize {
+                reason: "upstream payment-class error during finalize (detail redacted: \
+                         upstream payment errors can embed receipt material)"
+                    .into(),
             },
-            _ => StorageError::Quote {
+        },
+        AntError::AlreadyStored => match context {
+            ErrContext::Connect => StorageError::Network {
+                reason: "upstream reported already-stored while connecting".into(),
+            },
+            ErrContext::Get => StorageError::Network {
+                reason: "upstream reported already-stored while fetching".into(),
+            },
+            ErrContext::Quote => StorageError::Quote {
                 reason: "upstream reported already-stored outside the quote path".into(),
+            },
+            ErrContext::Finalize => StorageError::Finalize {
+                reason: "upstream reported already-stored where a fresh store was expected".into(),
             },
         },
         other => StorageError::Network {
@@ -2842,6 +2878,125 @@ mod tests {
                 block_number: Some(BLOCK),
             };
             assert_eq!(paying_block_time(&provider, paying).await, None);
+        }
+    }
+
+    // ── S47: a connect or a fetch is the network class ─────────────────────
+
+    /// The payment-class error S47's tests feed `map_ant_error`: upstream
+    /// embeds quote-hash hex in some payment errors (`batch.rs:300-305`), so
+    /// its detail must never reach the mapped text.
+    fn s47_leaky_payment_error() -> AntError {
+        AntError::Payment("Missing tx hash for quote deadbeefcafebabe".into())
+    }
+
+    /// **S47: a connect or a fetch is [`StorageError::Network`] whatever
+    /// upstream reported.** `AntCoreReader::connect`'s and `fetch_chunk`'s
+    /// contracts name only the network class (and, for a fetch, the typed
+    /// absence), so a payment-class or already-stored error from either is a
+    /// network failure — never a quote failure, which `degrade` would render
+    /// after *"no connection to the Autonomi network was made"* and
+    /// `verify --live` would file as a backend refusal. The payment detail
+    /// stays redacted. All four combinations are mapped before the verdict,
+    /// so a red names every one that is wrong.
+    #[test]
+    fn s47_a_connect_or_fetch_time_payment_or_already_stored_error_is_a_network_failure() {
+        let cases = [
+            (
+                "Connect + Payment",
+                map_ant_error(ErrContext::Connect, &s47_leaky_payment_error()),
+                "upstream reported a payment-class error while connecting (detail redacted: \
+                 upstream payment errors can embed receipt material)",
+            ),
+            (
+                "Connect + AlreadyStored",
+                map_ant_error(ErrContext::Connect, &AntError::AlreadyStored),
+                "upstream reported already-stored while connecting",
+            ),
+            (
+                "Get + Payment",
+                map_ant_error(ErrContext::Get, &s47_leaky_payment_error()),
+                "upstream reported a payment-class error while fetching (detail redacted: \
+                 upstream payment errors can embed receipt material)",
+            ),
+            (
+                "Get + AlreadyStored",
+                map_ant_error(ErrContext::Get, &AntError::AlreadyStored),
+                "upstream reported already-stored while fetching",
+            ),
+        ];
+        assert_eq!(cases.len(), 4, "two contexts, two upstream variants");
+        let mut wrong = Vec::new();
+        for (case, mapped, reason) in &cases {
+            let rendered = mapped.to_string();
+            assert!(
+                !rendered.contains("deadbeef"),
+                "{case}: payment detail leaked: {rendered}"
+            );
+            match mapped {
+                StorageError::Network { reason: got } if got == reason => {}
+                StorageError::Network { reason: got } => {
+                    wrong.push(format!("{case}: Network, but the reason is {got:?}"));
+                }
+                other => wrong.push(format!("{case}: expected Network, got {other:?}")),
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} of {} connect/fetch-time errors are not the network class with S47's words:\n{}",
+            wrong.len(),
+            cases.len(),
+            wrong.join("\n")
+        );
+    }
+
+    /// **S47's unchanged half:** a quote and a finalize keep their own
+    /// classes for a payment-class or already-stored error, and their texts
+    /// byte for byte.
+    #[test]
+    fn s47_a_quote_or_finalize_time_payment_or_already_stored_error_keeps_its_class() {
+        let cases = [
+            (
+                "Quote + Payment",
+                map_ant_error(ErrContext::Quote, &s47_leaky_payment_error()),
+                StorageError::Quote {
+                    reason: "upstream payment-class error during quoting (detail redacted: \
+                             upstream payment errors can embed receipt material)"
+                        .into(),
+                },
+            ),
+            (
+                "Quote + AlreadyStored",
+                map_ant_error(ErrContext::Quote, &AntError::AlreadyStored),
+                StorageError::Quote {
+                    reason: "upstream reported already-stored outside the quote path".into(),
+                },
+            ),
+            (
+                "Finalize + Payment",
+                map_ant_error(ErrContext::Finalize, &s47_leaky_payment_error()),
+                StorageError::Finalize {
+                    reason: "upstream payment-class error during finalize (detail redacted: \
+                             upstream payment errors can embed receipt material)"
+                        .into(),
+                },
+            ),
+            (
+                "Finalize + AlreadyStored",
+                map_ant_error(ErrContext::Finalize, &AntError::AlreadyStored),
+                StorageError::Finalize {
+                    reason: "upstream reported already-stored where a fresh store was expected"
+                        .into(),
+                },
+            ),
+        ];
+        assert_eq!(cases.len(), 4, "two contexts, two upstream variants");
+        for (case, mapped, expected) in cases {
+            assert!(
+                !mapped.to_string().contains("deadbeef"),
+                "{case}: payment detail leaked: {mapped}"
+            );
+            assert_eq!(mapped, expected, "{case}: byte-unchanged by S47");
         }
     }
 }

@@ -1676,3 +1676,15 @@
 - Do: check the remaining budget before `confirm_header` and drop the merge when it is spent (the transition is already atomic and the route is re-polled next pass), or restate the bound everywhere it is printed.
 - Accept:
   - An engine test with a late-answering upgraded stub and slow esplora stubs shows the chosen bound (wall-clock asserted loosely, the shape exactly).
+- Notes: **[2026-10-19, wave 39 — TICKED (D202, lane L-ANCHOR2).]** Captures on the `TODO.md` row; D202 §6 records what was built and every deviation.
+
+### A142 — `ots::confirm_header` is public and has no production caller after A141
+- Milestone: M4
+- Size: XS
+- Deps: after A141 (D202 moved the engine to a deadline-taking sibling)
+- Spec: D190 §2 R2 (a public method either has a production caller or does not exist), D200 (its application to the verify core); D202
+- Discovered by: wave-39 lane L-ANCHOR2, 2026-10-19, while landing D202. Id assigned centrally.
+- Problem: D202 §2 R2 kept `confirm_header`'s signature on the premise that `verify --online` calls it; it does not (it calls `fetch_agreed_header`). The engine was its only production caller and now calls the `pub(crate)` sibling `confirm_header_by`, so the `pub` function, re-exported at `crates/antseal-anchor/src/ots/mod.rs:47`, is called only by `ots/upgrade/tests.rs` (5 sites) and `ots/engine/tests.rs` (1).
+- Do: fold the deadline into `confirm_header`'s own signature (updating the six test call sites) or demote it to `pub(crate)`; keep `ots/mod.rs`'s re-export list true.
+- Accept:
+  - `confirm_header` either has a production caller or is not public, measured by a grep with its positive control; the anchor crate's suite and clippy stay green.

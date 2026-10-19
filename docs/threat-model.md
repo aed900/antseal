@@ -490,7 +490,7 @@ Argon2id creation values (D40 §1; also the decode floors)."*
 | --- | --- | --- |
 | Argon2id `m` | 262 144 KiB (256 MiB) | `kdf.rs:112` `ARGON2ID_M_COST_KIB` |
 | Argon2id `t` | 3 | `kdf.rs:114` `ARGON2ID_T_COST` |
-| Argon2id `p` | 1 (exact match, not a floor) | `kdf.rs:116`, checked at `:300` |
+| Argon2id `p` | 1 (exact match, not a floor) | `kdf.rs:116`, checked at `:304` |
 | scrypt `log2 N` | 20 (N = 2²⁰) | `kdf.rs:119` `SCRYPT_LOG2_N` |
 | KDF salt | 16 random bytes | `kdf.rs:104` `KDF_SALT_LEN` |
 
@@ -503,7 +503,7 @@ says a parameter downgrade *"must be an authentication failure, not a silent
 weakening"*. It is neither silent nor an authentication failure: a header
 whose parameters fall below the floor is rejected **before authentication
 and before any allocation**, by `KdfParams::check_ranges`
-(`kdf.rs:280`, floor test at `:288`) called from `decode` at `:438`, which
+(`kdf.rs:284`, floor test at `:292`) called from `decode` at `:442`, which
 `crates/antseal-cli/src/vault/session.rs:423-427` runs one line ahead of the
 key derivation — *"D40 §3: caps inside this decode run before any KDF
 allocation."* It carries its own error class, `vault-kdf-params-out-of-range`
@@ -521,7 +521,7 @@ code (`:526-527`).
 reach.** The exact bytes of the vault header — algorithm id, parameters,
 salt, wrap mode — are the AEAD's associated data for every vault record:
 `RecordIdentity::aad` (`crates/antseal-cli/src/vault/cipher.rs:181`,
-consumed at `:254` and `:297`), over the bytes `VaultHeader::encode` returns
+consumed at `:257` and `:300`), over the bytes `VaultHeader::encode` returns
 (`crates/antseal-cli/src/vault/header.rs:260`, contract at `:46-49`). So a
 header edit that stays *inside* the caps — raising `t` from 3 to 4, or
 swapping the salt — changes the derived key or the AAD and fails
@@ -532,8 +532,8 @@ chose. Both directions are executed:
 asserts `VaultAuthFailure`/exit 12) and `flipped_salt_fails_authentication`
 (`:574-586`). The pure-AAD axis — KDF inputs held fixed, header bytes edited
 — is pinned at the cipher layer by `identity_and_header_axes_all_bind`
-(`cipher.rs:352`), which asserts the edited-header open fails at `:392` and
-that the untouched slot still opens at `:397`, so the assertion cannot pass
+(`cipher.rs:355`), which asserts the edited-header open fails at `:395` and
+that the untouched slot still opens at `:400`, so the assertion cannot pass
 over a vault that opens for nothing.
 
 **Header agility, and what a future format does *not* get to do.** The
@@ -572,7 +572,7 @@ to get wrong:
 
 - the wallet secret is **not derived from `W`** and is not derived from
   anything. It is a fresh 32-byte CSPRNG key, or a raw hex key the user
-  imported (`crates/antseal-cli/src/init.rs:513-529`);
+  imported (`crates/antseal-cli/src/init.rs:537-560`);
 - the sub-key is a sub-key of the **vault key**, so it protects the wallet
   record against a compromise of *another* record's key, not against the
   passphrase. A thief who breaks the passphrase derives the vault key and
@@ -587,7 +587,7 @@ rotation, TSA signing-key rotation as a *verifier's* concern, test-fixture
 bookkeeping, and prose asserting this absence. `re-encrypt|rekey|rewrap` and
 their spellings return test harnesses, verifier prose, and explicit refusals
 (`crates/antseal-core/src/crypto/unit_aead.rs:28`,
-`crates/antseal-cli/src/seal_resume.rs:109`). The frozen CLI surface has ten
+`crates/antseal-cli/src/seal_resume.rs:130`). The frozen CLI surface has ten
 commands and none of them is `rotate`, `passwd` or `change-passphrase`
 (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16`). The one
 re-encryption that exists is `vault import`, which builds a **new** vault
@@ -596,7 +596,7 @@ it does not touch `W`, and nothing can touch what is already uploaded.
 
 **What the product does about it.** It nags, loudly, on first seal, and the
 nag is the only mitigation available at this layer: `export_nag`
-(`crates/antseal-cli/src/seal_run.rs:110`, computed at `:540`, rendered at
+(`crates/antseal-cli/src/seal_run.rs:110`, computed at `:559`, rendered at
 `:146-148`), whose copy opens *"NO BACKUP YET — this vault has never been
 exported."* (`crates/antseal-cli/src/vault/bookkeeping.rs:285-291`) and
 carries both the loss and the theft warning (`:73`, `:79`).
@@ -645,9 +645,9 @@ counterparty, and it does not weaken a verdict anyone has already been shown.
 
 **The backup mechanism, precisely.** Two commands, no flags at all —
 `antseal vault export [FILE]` and `antseal vault import <FILE>`
-(`crates/antseal-cli/src/cli.rs:516`, `:524`; the frozen surface snapshot
+(`crates/antseal-cli/src/cli.rs:524`, `:532`; the frozen surface snapshot
 `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:358` and `:385`
-carries only the three global options). The design note at `cli.rs:511` is
+carries only the three global options). The design note at `cli.rs:519` is
 the whole product decision: *"single re-encrypted file, no flags (D47)"*.
 
 - **The export is encrypted, under its own fresh salt.** One AEAD over the
@@ -664,7 +664,7 @@ the whole product decision: *"single re-encrypted file, no flags (D47)"*.
   (`export.rs:104-118`, `export_vault` at `:838`) — an export that would not
   have imported is not left on disk looking like a backup.
 - **The import builds a new vault**, fresh salt, fresh vault key, every local
-  record re-encrypted (`export.rs:130-131`, `import_vault` at `:1015`).
+  record re-encrypted (`export.rs:130-131`, `import_vault` at `:1020`).
 - **A keyfile-wrapped vault is refused in both directions** (`export.rs:745`
   and `:520`, both `CliError::Usage`, message *"nothing was written"*), so a
   backup can never silently discard the second factor. Verified end to end by
@@ -676,7 +676,7 @@ the whole product decision: *"single re-encrypted file, no flags (D47)"*.
 (§2.1) carries `LOSS_WARNING` *and* `THEFT_WARNING`
 (`crates/antseal-cli/src/vault/bookkeeping.rs:68`, `:74`), and it is
 recorded as satisfied only after an export has been written *and*
-self-verified (`crates/antseal-cli/src/commands.rs:806-810`). The reason to
+self-verified (`crates/antseal-cli/src/commands.rs:1095-1099`). The reason to
 nag on both is that the two mitigations pull in opposite directions: the
 answer to loss is *make more copies*, and the answer to theft is *make
 fewer*. A user told only about theft keeps no backup and loses everything to
@@ -715,7 +715,7 @@ to a given user.
 A seal's entire public on-chain footprint is one ERC-20 `approve` followed by
 `1..n` `payForQuotes(DataPayment[])` calls — one tx in the common case, since
 the cap is 256 transfers per tx and one non-zero transfer per blob
-(`crates/antseal-net/src/ant_backend.rs:36-40`, `:709-725`).
+(`crates/antseal-net/src/ant_backend.rs:61-65`, `:637-653`).
 
 **Nothing in that calldata says "antseal".** The transfer struct is
 upstream's own three fields — `rewardsAddress`, `amount`, `quoteHash`. There
@@ -731,17 +731,17 @@ at every call site it has:
 | | antseal | upstream |
 | --- | --- | --- |
 | amount approved | the exact quoted total | `U256::MAX` (unlimited) |
-| where | the rule is the free function `allowance_to_approve` (`crates/antseal-net/src/backend.rs:133-141`); the adapter calls it and passes its output, deciding nothing itself (`ant_backend.rs:479`, `:484`, doc comment `:433-469`) | `evmlib-0.9.0/src/wallet.rs:188` and `:421`, `ant-core-0.5.0/src/data/client/payment.rs:141`, `ant-protocol-2.3.0/src/payment/single_node.rs:683` — four sites, one value; `payment.rs:130` documents *"Approves `U256::MAX` (unlimited) spending."* |
+| where | the rule is the free function `allowance_to_approve` (`crates/antseal-net/src/backend.rs:133-141`); the adapter calls it and passes its output, deciding nothing itself (`ant_backend.rs:469`, `:474`, doc comment `:423-459`) | `evmlib-0.9.0/src/wallet.rs:188` and `:421`, `ant-core-0.5.0/src/data/client/payment.rs:141`, `ant-protocol-2.3.0/src/payment/single_node.rs:683` — four sites, one value; `payment.rs:130` documents *"Approves `U256::MAX` (unlimited) spending."* |
 | how often | before essentially **every** seal | once per address, **ever** |
 
 The frequency difference is the mechanism, and it follows from the amount.
 The rule short-circuits when the standing allowance already covers the total
-(`backend.rs:137-140`, consumed at `ant_backend.rs:479-481`), but an *exact*
+(`backend.rs:137-140`, consumed at `ant_backend.rs:469-471`), but an *exact*
 allowance is consumed by the very payment it was raised for — `payForQuotes`
 moves exactly that total by `transferFrom`, which decrements the allowance to
 zero — so the short-circuit almost never fires. It is not an optimisation
 that works, and the code says so where a reader would meet it
-(`ant_backend.rs:451-463`).
+(`ant_backend.rs:441-453`).
 Both the calldata and the ERC-20 `Approval` event log are public and
 permanent. **An address that emits a fresh, non-round `approve` before
 essentially every payment is therefore separable from the general Autonomi
@@ -842,7 +842,7 @@ pinned the behaviour — stopped being true with the file named above.)*
 
 The receipt is **excluded from bundles by default**, and the default is
 `bool`'s `false` with no `default_value` anywhere — there is no line to get
-wrong (`crates/antseal-cli/src/cli.rs:437-439`; the shipped help snapshot
+wrong (`crates/antseal-cli/src/cli.rs:445-447`; the shipped help snapshot
 `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:286-287` carries the
 same warning to the user). The include branch is a single `if`
 (`crates/antseal-cli/src/pipeline/reveal.rs:653-657`), and at format level
@@ -860,7 +860,7 @@ tx hash resolves on any public explorer to the sending address, and from
 there to every other seal that address ever paid for. The code says so where
 a maintainer would otherwise log one — *"no field of this type may appear in
 logs or error messages — receipts are wallet-linkable on a public chain"*
-(`crates/antseal-net/src/receipt.rs:156-157`) — and the reveal consent screen
+(`crates/antseal-net/src/receipt.rs:160-161`) — and the reveal consent screen
 says so to the user before they opt in
 (`crates/antseal-cli/src/reveal_consent.rs:131-135`). Secondary linkage
 inside the payload: which storage nodes were paid (`rewards_address`), which
@@ -896,7 +896,7 @@ fields — the quote-based `proof_of_payment`, the ADR-0004
 `commitment_sidecars`, and **`tx_hashes`**, documented there as *"Transaction
 hashes from the on-chain payment"* — and `finalize_batch` hands the whole
 serialized proof to each storing peer, sequentially, until
-`CLOSE_GROUP_MAJORITY` of them accept (`ant_backend.rs:506-562`) — four of
+`CLOSE_GROUP_MAJORITY` of them accept (`ant_backend.rs:1838-1907`) — four of
 the seven quoting peers, since `CLOSE_GROUP_MAJORITY` is `(CLOSE_GROUP_SIZE
 / 2) + 1` over a close group of 7 (`ant-protocol-2.3.0/src/chunk.rs:35,40`).
 The proof rides *in* the PUT request rather than following an acceptance, so
@@ -1005,8 +1005,8 @@ singleton — `RecordIdentity::Wallet` carries no discriminant, where
 `Receipt { seal_id }` does (`crates/antseal-cli/src/vault/cipher.rs:100-118`)
 — so every seal in a vault is paid by the same address. The key itself is a
 fresh CSPRNG secret or an imported raw hex key
-(`crates/antseal-cli/src/init.rs:513-529`), never derived, and the address is
-its EIP-55 rendering (`init.rs:539`).
+(`crates/antseal-cli/src/init.rs:537-560`), never derived, and the address is
+its EIP-55 rendering (`init.rs:561`).
 
 `MVP-SPEC.md` line 185 makes three commitments against this risk. **Two are
 implemented and one is not**, and this document should not imply otherwise:
@@ -1014,7 +1014,7 @@ implemented and one is not**, and this document should not imply otherwise:
 | commitment | state |
 | --- | --- |
 | receipt excluded from bundles by default | **implemented**, proven above |
-| `--include-receipt` to opt in | **implemented** (`cli.rs:437-439`) |
+| `--include-receipt` to opt in | **implemented** (`cli.rs:445-447`) |
 | wallet-hygiene docs (fresh address per work/client) | **docs-only, and there is no CLI affordance behind it** |
 
 Measured: no `seal`-time wallet or address flag exists on the frozen CLI
@@ -1623,7 +1623,7 @@ never a downgrade of the original. Executed by
 
 **Claimed time is the sealer's, and it is subordinate by absence rather than
 by a filter.** The value is injected once, at the one place a clock is
-trusted (`crates/antseal-cli/src/seal_run.rs:681-683`), and lands in the
+trusted (`crates/antseal-cli/src/seal_run.rs:700-702`), and lands in the
 manifest body as informational only (`body.rs:1204-1209`). In the verifier it
 lives in a field named for its status —
 `claimed_time_informational_only` (`crates/antseal-core/src/verify/report.rs:278`)
@@ -1778,7 +1778,7 @@ asymmetry worth naming.**
    (`crates/antseal-net/src/blob.rs:38`).
 3. **Payment-transaction count is not blurred**, and it is public and
    permanent. Payment is one EVM transaction per sub-batch of at most 256
-   transfers (`crates/antseal-net/src/ant_backend.rs:38`, `:687`), so the
+   transfers (`crates/antseal-net/src/ant_backend.rs:63`, `:648`), so the
    on-chain transaction count is about `⌈(units + 1) / 256⌉` — a lower-bound
    signal on unit count that never expires. §2.3 covers the wallet those
    transactions name.
@@ -1786,7 +1786,7 @@ asymmetry worth naming.**
 **`--split` is what turns a size into a histogram.** The default is one
 whole-file unit (`crates/antseal-core/src/content/unit.rs:5-7`, asserted at
 `:635-641`), and the only splitting mode admitted in v1 is
-`--split blank-lines` (`crates/antseal-cli/src/cli.rs:347-349`, `:395-401`).
+`--split blank-lines` (`crates/antseal-cli/src/cli.rs:355-357`, `:403-409`).
 Under it the manifest publishes **the paragraph-length histogram of every
 split text file, in the clear** — `range` and `true_length` per unit, kept as
 two fields deliberately (`docs/format/registry-v1.md:631-632`). There is no
@@ -1856,7 +1856,7 @@ countermeasure exists in the codebase**, and none is claimed.
 **`--no-fine-tree` is the one structural choice that is permanent.** A file
 excluded from the fine tree becomes exactly one whole-file unit bound by
 `unit_commit`, and is whole-file-revealable only, forever
-(`crates/antseal-cli/src/cli.rs:355-358`; structurally at
+(`crates/antseal-cli/src/cli.rs:363-366`; structurally at
 `crates/antseal-core/src/manifest/body.rs:274-286` and
 `crates/antseal-core/src/content/unit.rs:664-674`). The CLI says so before
 the seal, in those terms: *"PERMANENTLY whole-file-reveal only … the opt-out
@@ -1917,9 +1917,9 @@ real chain: rule O3
 **agreed** header from two independent endpoints equals the embedded one, and
 the time it records is the *agreed* header's `nTime` — never the embedded
 one's. Two must-agree esplora endpoints, `blockstream.info` and
-`mempool.space`, are the default (`crates/antseal-anchor/src/esplora.rs:83-84`),
+`mempool.space`, are the default (`crates/antseal-anchor/src/esplora.rs:85-86`),
 and the whole path is behind `--online`
-(`crates/antseal-cli/src/verify_host.rs:151`).
+(`crates/antseal-cli/src/verify_host.rs:160`).
 
 `a_minted_single_branch_committed_ots_answers_all_three_online_cases`
 (`crates/antseal-core/tests/anchor_ots_writer.rs:48-88`) walks one minted
@@ -1956,7 +1956,7 @@ robustness the collapse case does not deliver.
 
 **The minimum-anchor policy, and the escape.** `evaluate_seal_gate`
 (`submit.rs:252-276`) aborts a seal that produced zero verified tokens unless
-`--force-degraded` is passed (`crates/antseal-cli/src/cli.rs:384-386`), and
+`--force-degraded` is passed (`crates/antseal-cli/src/cli.rs:392-394`), and
 the abort is loud about what did *not* happen: `antseal seal` exits 22 with
 *"no RFC 3161 timestamp token that counts toward the anchor gate was obtained,
 so the seal stopped before anything was paid or uploaded"*, names every
@@ -2014,7 +2014,7 @@ receipt arm carries **no time field and no state field, not a null one,
 none** (`crates/antseal-core/src/verify/report.rs:756-759`). Even a
 successful two-RPC online confirmation leaves it ineligible
 (`anchor/verdicts/tests.rs:2269`), and every online-confirmation string ends
-`— supporting evidence only` (`wording.rs:991-1021`). §2.3 covers what
+`— supporting evidence only` (`wording.rs:1000-1030`). §2.3 covers what
 including it costs.
 
 ### The claimed time never competes with an anchor
@@ -2031,13 +2031,13 @@ opportunistic upgrade hook runs at the end of **every** invocation
 (`crates/antseal-cli/src/upgrade_hook.rs:1-3`, single call site
 `crates/antseal-cli/src/lib.rs:198`), polling inside a deliberately small
 budget — 3 seconds and 4 polls (`upgrade_hook.rs:55-57`). A human never
-waits on it; a script waiting on the process does, by a few seconds and more
-when a calendar or block explorer is slow (the block-header confirmation
-after a successful poll is outside that budget, A141), and
+waits on it; a script waiting on the process does, by a few seconds: no request
+of the pass, the block-header confirmation's included, starts once that budget
+is spent, so the bound is the budget plus one call in flight (A141, D202), and
 `[anchors] opportunistic_upgrades = false` turns the pass off (U60, D189).
 `list` nags while any work is in that state, and only
 then: the classifier is wildcard-free and `OnlyPendingOts` is the single
-nagging state (`crates/antseal-anchor/src/ots/engine.rs:619-700`), rendering
+nagging state (`crates/antseal-anchor/src/ots/engine.rs:672-753`), rendering
 *"ANCHORS PENDING: {n} calendar attestation(s) not yet confirmed by Bitcoin,
 and nothing else here proves a time independently"* plus the exact command to
 run (`crates/antseal-cli/src/listing.rs:871-880`). A genuinely unanchored
@@ -2063,7 +2063,7 @@ never consults a host at all. And `verify_offline`, the entry point third
 parties call, is asserted equal to that same offline configuration (`:260`).
 The CLI half is proven at the binary: `verify` runs on a machine with no
 vault at all, with stdin closed, without prompting
-(`crates/antseal-cli/tests/verify_command.rs:773`).
+(`crates/antseal-cli/tests/verify_command.rs:1204`).
 
 **Structurally, an Autonomi-derived time has no route into a verdict.**
 `antseal-core` owns all verification and does not depend on `antseal-net` at
@@ -2142,7 +2142,7 @@ consent given at the gate.
 SwissSign's ~10/day), configuring a custom list, and what `--force-degraded`
 means for a user are `docs/user/timestamp-authorities.md`'s (Q26): its §2–§4
 and §6. Their operator-side sources are
-`docs/anchors/real-smoke-runbook.md:71-85` and `docs/config.md:77-89,175-183`.
+`docs/anchors/real-smoke-runbook.md:71-85` and `docs/config.md:83-97,191-199`.
 
 ## 2.10 WASM zeroization caveat
 

@@ -58,7 +58,7 @@ The nag around it is equally direct
 ```
 
 It stops as soon as one export has been written and self-verified, and never
-before that (`crates/antseal-cli/src/commands.rs:805-810`) — the flag that
+before that (`crates/antseal-cli/src/commands.rs:1094-1099`) — the flag that
 silences it means *a backup exists*, not *a backup was attempted*.
 
 ## What you lose, precisely
@@ -78,7 +78,7 @@ Three things, all of them permanently:
 
 And the money is gone with it, in the case this page opens with — vault **and**
 backup. From a surviving backup the address still pays: `vault import` reinstalls
-the wallet key (`crates/antseal-cli/src/vault/export.rs:1104-1106`). What no
+the wallet key (`crates/antseal-cli/src/vault/export.rs:1109-1111`). What no
 backup gives you is a way to move the balance to another wallet — see "What this
 address's key can and cannot do" in `funding-your-wallet.md`.
 
@@ -108,7 +108,7 @@ antseal vault import <FILE>
 That is the whole surface. Neither takes an option beyond the three global ones
 every command has (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:355-407`).
 The design note in the source is the product decision in one line:
-*"single re-encrypted file, no flags (D47)"* (`crates/antseal-cli/src/cli.rs:511`).
+*"single re-encrypted file, no flags (D47)"* (`crates/antseal-cli/src/cli.rs:519`).
 
 What `export` writes:
 
@@ -122,7 +122,7 @@ What `export` writes:
   rather than a partial restore (`crates/antseal-cli/src/vault/export.rs:20-22`).
 - **Named for the moment it was taken.** With no `FILE` argument the default is
   `antseal-vault-export-YYYYMMDD-HHMMSS.sealvault` in the current directory,
-  UTC (`crates/antseal-cli/src/commands.rs:889-896`). The timestamp is
+  UTC (`crates/antseal-cli/src/commands.rs:1234-1241`). The timestamp is
   deliberate: repeated exports never silently overwrite an earlier backup.
 - **Self-verified before it is named.** antseal writes a temp file, fsyncs it,
   re-reads it from disk, runs the *full* import-side validation, derives the
@@ -134,7 +134,7 @@ What `export` writes:
   (`crates/antseal-cli/src/error.rs:453`).
 
 It prints what it did, and then it says the thing this page is about
-(`crates/antseal-cli/src/commands.rs:819-822`):
+(`crates/antseal-cli/src/commands.rs:1108-1111`):
 
 ```
 Treat this file like the vault itself: whoever holds it and the passphrase holds the keys to every sealed work, forever.
@@ -236,7 +236,7 @@ backup.
    wallet and the config are the same; the bytes on disk are not.
 5. **Confirm with `antseal list`.** The work count should match. Import already
    ran its own post-install check — a fresh unlock plus a full walk of every
-   record (`crates/antseal-cli/src/vault/export.rs:1226-1250`) — but the
+   record (`crates/antseal-cli/src/vault/export.rs:1231-1255`) — but the
    command is yours to run and costs nothing.
 6. **Then try a `restore`.** `antseal restore <WORK-ID>` fetches the
    ciphertexts, decrypts them, verifies them against the manifest commitments
@@ -320,13 +320,13 @@ to make new ones.
 | --- | --- |
 | the loss warning, byte for byte | `crates/antseal-cli/src/vault/bookkeeping.rs:73-75` |
 | `init` and the first-seal nag share that one constant | `crates/antseal-cli/src/init.rs:369-375`; `crates/antseal-cli/src/vault/bookkeeping.rs:300` |
-| the nag stops only after a written and self-verified export | `crates/antseal-cli/src/commands.rs:805-810` |
-| two commands, no flags | `crates/antseal-cli/src/cli.rs:511-529`; `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:355-407` |
+| the nag stops only after a written and self-verified export | `crates/antseal-cli/src/commands.rs:1094-1099` |
+| two commands, no flags | `crates/antseal-cli/src/cli.rs:519-537`; `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:355-407` |
 | the export carries `W` for every work | `crates/antseal-cli/src/vault/export.rs:61-95`, stated at `:99-100` |
 | fresh salt, one AEAD over the whole file | `crates/antseal-cli/src/vault/export.rs:20-28` |
-| default timestamped filename | `crates/antseal-cli/src/commands.rs:889-896` |
+| default timestamped filename | `crates/antseal-cli/src/commands.rs:1234-1241` |
 | mandatory self-verify before the rename | `crates/antseal-cli/src/vault/export.rs:104-118`; exit **32** at `crates/antseal-cli/src/error.rs:453` |
-| import validates fully, installs atomically, verifies after | `crates/antseal-cli/src/vault/export.rs:120-133`, `:1226-1250` |
+| import validates fully, installs atomically, verifies after | `crates/antseal-cli/src/vault/export.rs:120-133`, `:1231-1255` |
 | import refuses an existing vault, with no bypass | `crates/antseal-cli/src/error.rs:612-620` |
 | a keyfile-wrapped vault is refused by export and import | `crates/antseal-cli/src/vault/export.rs:745-756`, `:520-535` |
 | 12-byte creation floor, and no floor at unlock | `crates/antseal-cli/src/passphrase.rs:87`, `:238` |

@@ -379,7 +379,8 @@ where
 
     let resume_plan = match &decision {
         ResumeDecision::Resume(candidate) => resume_plan_lines(candidate),
-        ResumeDecision::Fresh { .. } => Vec::new(),
+        // A restart (D197) seals afresh: there is no work it finishes.
+        ResumeDecision::Fresh { .. } | ResumeDecision::Restart(_) => Vec::new(),
     };
 
     // ── D45 §5, and it has to be here — before anything at all ──
@@ -390,7 +391,9 @@ where
     // whole purpose is to finish a seal). Falling through would make
     // `seal --dry-run` spend money, which is the single worst thing this
     // flag could do. Returning here also means the rehearsal makes no
-    // backend call whatsoever, not even the balance read.
+    // backend call whatsoever, not even the balance read. A `Restart` is
+    // not a resume and does not stop here: it rehearses the fresh seal
+    // below, which writes nothing — its abandon included (D197 R5).
     if plan.dry_run && matches!(decision, ResumeDecision::Resume(_)) {
         return Ok(SealCommandResult::ResumePlan(resume_plan));
     }
@@ -448,31 +451,27 @@ where
     }
     let pipeline = Pipeline::new(backend, &gate, &journal, &consent, &NoBarriers);
 
+    // D197: the work a `Restart` abandons, read before the `match` below
+    // consumes the decision.
+    let stale = match &decision {
+        ResumeDecision::Restart(candidate) => Some(candidate.seal_id),
+        ResumeDecision::Fresh { .. } | ResumeDecision::Resume(_) => None,
+    };
     let (result, resumed) = match decision {
         ResumeDecision::Resume(candidate) => {
             // S11: resume re-uploads the byte-identical staged
             // ciphertexts. No source file is opened, here or below.
-            let outcome = match pipeline.resume(&candidate.seal_id).await {
-                Ok(outcome) => outcome,
-                // D185 R6 (T3): a seal interrupted before its staging
-                // finished has no plan to resume, and its exact re-run used
-                // to end here on every run with a usage error naming no exit.
-                // Mapped only when the journal measures that shape — the
-                // error has other producers, whose works may be further
-                // along — so the sentence naming `antseal abandon` is a fact
-                // about the work it names.
-                Err(crate::pipeline::SealError::NothingStaged)
-                    if crate::seal_resume::staging_never_finished(&store, &candidate.seal_id) =>
-                {
-                    return Err(crate::seal_resume::interrupted_before_staging(
-                        &candidate.seal_id,
-                    ));
-                }
-                Err(other) => return Err(other.into()),
-            };
+            //
+            // A work whose staging never finished does not reach this arm:
+            // `detect` answers `Restart` for it (D197). So a missing plan
+            // here is a vault whose records disagree — the predicate ruled
+            // the work out on a record the pipeline only writes after the
+            // plan, or could not read one — and it surfaces as the usage
+            // error `NothingStaged` maps to.
+            let outcome = pipeline.resume(&candidate.seal_id).await?;
             (SealResult::Sealed(outcome), true)
         }
-        ResumeDecision::Fresh { .. } => {
+        ResumeDecision::Fresh { .. } | ResumeDecision::Restart(_) => {
             // Where the **work's** bytes enter the process — and, since
             // D149 §2 R2, no longer the only place source bytes are read
             // at all: `build_plan`'s `--split` × `--no-fine-tree` probe
@@ -514,6 +513,26 @@ where
                 sig_policy: SigPolicy::hybrid(),
                 shaping: plan.shaping.clone(),
             };
+            // ── D197 R3: a work whose staging never finished is abandoned
+            //    here, and only here ──
+            //
+            // Immediately before the fresh seal's `begin`, so the abandon
+            // strictly precedes the new work's first write: the other order
+            // could leave two exact candidates — D45's internal class, on
+            // every later run — if anything failed in between. After the
+            // balance read and the file read, so a run refused by either
+            // discards nothing. Under the vault lock the handler holds for
+            // the whole run, through the engine `antseal abandon` uses, which
+            // re-reads the receipt and the terminal state itself. Never under
+            // `--dry-run`, which writes nothing (D49; R5). The notice prints
+            // only once the abandon has succeeded, so it never claims a
+            // discard that did not happen.
+            if let Some(stale) = &stale {
+                if !plan.dry_run {
+                    crate::seal_resume::abandon_pre_pay(&store, &journal, stale)?;
+                }
+                ctx.emit(&crate::seal_resume::restart_notice(stale, plan.dry_run));
+            }
             (pipeline.seal(&request, seal_rng).await?, false)
         }
     };

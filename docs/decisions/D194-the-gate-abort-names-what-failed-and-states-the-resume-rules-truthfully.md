@@ -346,3 +346,7 @@ Every verdict below was read from an exit file.
 
 It changes code, tests, a frozen snapshot and documents in the tree. Nothing in it authorises a
 push, a dispatch, a deploy or any other outward act; its tests talk only to stubs on loopback.
+
+## Addendum — 2026-10-19 (D201 §2 R1, R3): §6's `U103` entry is discharged — the gate's `Entropy` refusal leaves class 22
+
+§6 recorded, under *"Found, minted as a row"*: *"`U103`: the gate's `Entropy` arm wears class 22 with a remedy that cannot apply. That mapping is not new."* **D201** discharges it. `AnchorGateError::Entropy` leaves `anchor-gate-abort` (22) for `internal` (1), through one `CliError` variant whose message names the machine, not antseal (`U104`). That message offers no timestamp authority, no `--force-degraded` and no `antseal abandon`: neither of the two routes §2 R2 states can apply to it, because no TSA is asked and every TSA nonce is drawn before the gate evaluates. The abort message §2 R1–R2 ruled is unchanged for every arm that stays in 22, and the exit-22 exemplar (`cli-errors.display.txt:53-54`) stays byte-identical. This record is not rewritten.

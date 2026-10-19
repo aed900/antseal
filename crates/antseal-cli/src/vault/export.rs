@@ -868,8 +868,13 @@ pub(crate) fn export_vault_impl<R: TryCryptoRng + ?Sized>(
 
     let kdf_block = params.encode().map_err(CliError::from)?;
     let mut nonce = [0u8; EXPORT_NONCE_LEN];
+    // D201 (`U104`): drawn before anything is written, so a failure leaves
+    // no export file, and no temp file, behind.
     rng.try_fill_bytes(&mut nonce)
-        .map_err(|_| internal("OS random source failed while drawing the export nonce"))?;
+        .map_err(|_| CliError::RandomSourceUnavailable {
+            what: "the export file's nonce",
+            consequence: "no export file was written",
+        })?;
 
     let header = encode_item(|e| {
         e.array(|a| {
@@ -1407,5 +1412,111 @@ mod tests {
             import_vault(&out, &target, || Ok(passphrase()), &mut rng).expect("clean re-run");
         assert_eq!(summary.works, 1);
         assert!(target.beside_path(BesideFile::Header).exists());
+    }
+
+    /// An OS random source that supplies `ok` draws and then has nothing to
+    /// give. The draws it supplies come from the seeded fixture generator
+    /// (project rule 6); every later one fails with `getrandom`'s own error,
+    /// as [`crate::rng::OsEntropy`]'s would. `draws` counts every attempt.
+    struct RandomSourceFailsAfter {
+        ok: usize,
+        draws: usize,
+        inner: ChaCha20Rng,
+    }
+
+    impl RandomSourceFailsAfter {
+        fn new(ok: usize) -> Self {
+            Self {
+                ok,
+                draws: 0,
+                inner: ChaCha20Rng::from_seed(TEST_RNG_SEED),
+            }
+        }
+
+        fn attempt(&mut self) -> Result<(), getrandom::Error> {
+            self.draws += 1;
+            if self.draws > self.ok {
+                Err(getrandom::Error::UNSUPPORTED)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    impl rand_core::TryRng for RandomSourceFailsAfter {
+        type Error = getrandom::Error;
+
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            self.attempt()?;
+            Ok(rand_core::Rng::next_u32(&mut self.inner))
+        }
+
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+            self.attempt()?;
+            Ok(rand_core::Rng::next_u64(&mut self.inner))
+        }
+
+        fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+            self.attempt()?;
+            rand_core::Rng::fill_bytes(&mut self.inner, dst);
+            Ok(())
+        }
+    }
+
+    impl rand_core::TryCryptoRng for RandomSourceFailsAfter {}
+
+    fn entries(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("list test dir")
+            .map(|entry| {
+                entry
+                    .expect("dir entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
+    /// **D201 R2 (`U104`)** through `export_vault` itself: the export's salt
+    /// is drawn (draw 1), then its nonce cannot be (draw 2). The nonce is
+    /// drawn before anything is written, so neither the export nor a temp
+    /// file exists afterwards (read back below), and the user is told it is
+    /// this machine's fault, not antseal's.
+    #[test]
+    fn an_unavailable_random_source_writes_no_export_and_blames_the_machine() {
+        let dir = TestDir::new("no-randomness");
+        let (_layout, vault) = make_vault(&dir.0);
+        let out = dir.0.join("backup.sealvault");
+        let before = entries(&dir.0);
+        assert_eq!(before, ["vault"], "anti-vacuity: only the vault is there");
+
+        let mut rng = RandomSourceFailsAfter::new(1);
+        let err = export_vault(&vault, &passphrase(), &out, &mut rng)
+            .expect_err("no export nonce can be drawn");
+        assert_eq!(
+            rng.draws, 2,
+            "the salt was drawn; the nonce was the draw that failed"
+        );
+        assert!(!out.exists(), "an export file was written");
+        assert_eq!(entries(&dir.0), before, "a temp file was left behind");
+
+        assert_eq!(err.class(), crate::error::ErrorClass::Internal);
+        assert_eq!(err.exit_code(), 1);
+        let message = err.to_string();
+        assert!(
+            message.contains(
+                "the operating system's random source is unavailable, so the export file's \
+                 nonce could not be generated: no export file was written."
+            ),
+            "{message}"
+        );
+        assert!(
+            message.contains("This is a fault of this machine, not a bug in antseal"),
+            "{message}"
+        );
+        assert!(!message.contains("this is a bug in antseal"), "{message}");
     }
 }

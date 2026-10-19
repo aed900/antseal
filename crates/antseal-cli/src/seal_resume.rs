@@ -22,7 +22,8 @@
 //!
 //! | relation to a candidate | outcome |
 //! | --- | --- |
-//! | exact ordered paths ∧ equal shaping | [`ResumeDecision::Resume`] |
+//! | exact ordered paths ∧ equal shaping ∧ staging finished | [`ResumeDecision::Resume`] |
+//! | exact ordered paths ∧ equal shaping ∧ staging never finished | [`ResumeDecision::Restart`] + a notice (D197) |
 //! | exact ordered paths ∧ different shaping | [`CliError::ResumeFlagMismatch`] |
 //! | same set, different order — or subset, superset, any overlap | [`CliError::ResumeOverlapNotExact`] |
 //! | disjoint from every candidate | [`ResumeDecision::Fresh`] + a notice |
@@ -35,16 +36,24 @@
 //! would mean either paying twice for bytes already staged or silently
 //! sealing a different work than the one asked for.
 //!
+//! The one exact match that is not resumed is a work whose staging never
+//! finished: it has no plan, so there is nothing to re-upload, and nothing
+//! was quoted, consented to, anchored or paid. Its exact re-run abandons it
+//! and seals the same files afresh (D197; MVP-SPEC line 145's rule for
+//! staged bytes that are unavailable). "Never finished" is measured from the
+//! work's records by [`staging_never_finished`], never read from a tag.
+//!
 //! The candidate set excludes `complete` and `abandoned` works, so a
 //! finished seal never blocks re-sealing the same files, and an abandoned
 //! one never resurrects.
 //!
 //! # Uniqueness
 //!
-//! An exact match is auto-resumed rather than duplicated, so at most one
-//! can exist per key. Two is not a user-facing situation — it is a
-//! corrupted or hand-edited store — and is reported as the internal class
-//! rather than as a question (D45 §2's closing note).
+//! An exact match is auto-resumed — or, when its staging never finished,
+//! abandoned before the fresh seal's first write (D197 R3) — rather than
+//! duplicated, so at most one can exist per key. Two is not a user-facing
+//! situation — it is a corrupted or hand-edited store — and is reported as
+//! the internal class rather than as a question (D45 §2's closing note).
 
 use antseal_core::crypto::secrets::SealId;
 use antseal_net::NetworkId;
@@ -90,10 +99,22 @@ pub enum ResumeDecision {
     },
     /// An exact match: this invocation finishes that work.
     Resume(Box<ResumeCandidate>),
+    /// An exact match on a work whose staging never finished
+    /// ([`staging_never_finished`], D197 R1): there is no plan to resume
+    /// from, and nothing was quoted, consented to, anchored or paid. This
+    /// invocation abandons that work and seals the same files afresh, with a
+    /// new seal id and freshly drawn nonces (D197 R2; MVP-SPEC line 145) —
+    /// and the abandon precedes the fresh seal's first write, so two exact
+    /// candidates never exist (R3).
+    Restart(Box<ResumeCandidate>),
 }
 
 impl ResumeDecision {
-    /// The stderr notice, if this decision has one.
+    /// The stderr notice this decision prints as soon as it is made, if any.
+    ///
+    /// A [`Restart`](ResumeDecision::Restart) has none here: its notice,
+    /// [`restart_notice`], is printed by `run_seal` at the abandon itself, so
+    /// a run that fails before discarding anything never claims it did.
     #[must_use]
     pub fn notice(&self) -> Option<String> {
         match self {
@@ -109,13 +130,49 @@ impl ResumeDecision {
                  resume works (D45); nothing is re-encrypted.",
                 hex_seal(&candidate.seal_id)
             )),
+            ResumeDecision::Restart(_) => None,
         }
     }
 }
 
+/// What `run_seal` prints when this invocation exact-matches a work whose
+/// staging never finished (D197 R2, R5), in place of the "Resuming the
+/// interrupted seal …" that shape used to get — false for it, since there
+/// is nothing to resume.
+///
+/// Every clause is a measured fact at the moment it prints:
+/// [`staging_never_finished`] measured no plan (staging's last write), no
+/// anchor slot, no receipt, no consent and a pre-pay mirror; a real run
+/// prints it only once the abandon has succeeded, immediately before the
+/// fresh seal starts — which draws a new seal id and fresh nonces. Under
+/// `--dry-run` nothing is written (D49), so that form says what a real run
+/// does instead.
+#[must_use]
+pub fn restart_notice(seal_id: &SealId, dry_run: bool) -> String {
+    let id = hex_seal(seal_id);
+    let outcome = if dry_run {
+        "; this dry run leaves it as it is, and a real run abandons it and starts a fresh seal \
+         of the same files"
+    } else {
+        ", so it has been abandoned and this run starts a fresh seal of the same files"
+    };
+    format!(
+        "note: seal {id} was interrupted before its staging finished and nothing was anchored \
+         or paid for it{outcome} (a new seal id and freshly drawn nonces; MVP-SPEC line 145)"
+    )
+}
+
 /// Scan the vault for incomplete works on this network and apply D45 §2.
 ///
-/// Reads meta records only — no staged bytes, no source files, no network.
+/// Reads records only — every work's meta record and fine state tag, and
+/// for an exact match the [`staging_never_finished`] reads (its plan, its
+/// receipt, its anchor-slot listing) — never a staged blob, a source file
+/// or the network.
+///
+/// [`match_candidates`] stays a pure function of the candidate set; the
+/// one row it cannot decide — an exact match whose staging never finished,
+/// which becomes a [`ResumeDecision::Restart`] (D197 R2) — needs the store,
+/// so it is decided here.
 ///
 /// # Errors
 ///
@@ -130,7 +187,13 @@ pub fn detect(
     shaping: &SealShapingFlags,
 ) -> Result<ResumeDecision, CliError> {
     let candidates = gather_candidates(store, network)?;
-    match_candidates(&candidates, absolute_paths, shaping)
+    let decision = match_candidates(&candidates, absolute_paths, shaping)?;
+    Ok(match decision {
+        ResumeDecision::Resume(exact) if staging_never_finished(store, &exact.seal_id) => {
+            ResumeDecision::Restart(exact)
+        }
+        other => other,
+    })
 }
 
 /// Build the candidate set: incomplete works on this network.
@@ -371,6 +434,11 @@ impl AbandonReport {
 /// the safety case, and the surface adds a confirmation in front of them,
 /// never a second copy of them.
 ///
+/// Its second caller is `run_seal` (D197 R3): an exact re-run of a seal
+/// whose staging never finished ([`staging_never_finished`]) abandons it
+/// here, unconfirmed, before sealing the same files afresh — nothing usable
+/// is lost, and these rules still decide.
+///
 /// # The three rules, in the order they are checked
 ///
 /// 1. **A finished work is never abandoned.** Its ciphertexts are on the
@@ -386,10 +454,11 @@ impl AbandonReport {
 ///    outcome when the staged bytes are gone and the alternative is
 ///    re-encrypting under a journaled nonce; forfeiting a payment because
 ///    someone typed a flag is a different thing entirely.
-/// 3. Anything else — staged or anchored, no receipt — is abandonable,
-///    and the transition is the S10 state machine's own
-///    [`SealJournal::set_state`], never a hand-written tag write, so the
-///    coarse [`WorkState`] mirror moves with it.
+/// 3. Anything else — staged or anchored, no receipt, or killed inside
+///    `begin` with no fine tag at all (D197 R4) — is abandonable, and the
+///    transition is the S10 state machine's own [`SealJournal::set_state`],
+///    never a hand-written tag write, so the coarse [`WorkState`] mirror
+///    moves with it.
 ///
 /// # Errors
 ///
@@ -612,7 +681,9 @@ impl AbandonPreview {
     #[must_use]
     pub fn render(&self) -> Vec<String> {
         let progress = match (self.tag, self.planned) {
-            (Some(SealState::Staged), false) => {
+            // No tag and no plan is a kill inside `begin` (two writes), so it
+            // reads as the same interrupted staging as a `Staged` tag (S45).
+            (Some(SealState::Staged) | None, false) => {
                 "staging was interrupted before it finished; not paid".to_owned()
             }
             (Some(SealState::Staged), true) => "staged; not paid".to_owned(),
@@ -620,7 +691,7 @@ impl AbandonPreview {
                 "staged and past its anchor step; not paid".to_owned()
             }
             (Some(other), _) => format!("the journal records `{}`", other.name()),
-            (None, _) => "the journal records no state for it".to_owned(),
+            (None, true) => "the journal records no state for it".to_owned(),
         };
         let anchors = match self.anchor_slots {
             0 => "none recorded".to_owned(),
@@ -727,47 +798,44 @@ where
     abandon_pre_pay(store, journal, &seal_id)
 }
 
-/// Whether `seal_id` is a seal interrupted before its staging finished
-/// (D185 R6's T3), **measured** rather than assumed: no seal plan was
-/// journaled (the plan is staging's last write), the state tag still reads
-/// `Staged`, and no receipt exists.
+/// Whether `seal_id` is a seal interrupted before its staging finished —
+/// "pre-staging", **measured** from the work's records and never read from
+/// a tag (D197 R1, S45). All six must hold:
 ///
-/// `run_seal` asks this only after a resume failed with
-/// `SealError::NothingStaged`, which has other producers whose works may be
-/// further along; only this shape gets [`interrupted_before_staging`]'s
-/// sentence, so each of its clauses is a fact about the work it names. A
-/// read that fails counts as "not measured", and the original error stands.
+/// 1. the coarse mirror is [`WorkState::IncompletePrePay`];
+/// 2. no consent is recorded;
+/// 3. the fine tag is absent (a kill inside `begin`, which is two writes) or
+///    `Staged` (a kill while units were being staged — `begin` writes that
+///    tag before the first blob);
+/// 4. no receipt is journaled — the money evidence (U17 rule 2);
+/// 5. no anchor slot is filled;
+/// 6. no seal plan is journaled — the plan is staging's last write, so this
+///    is the clause that says staging never finished.
+///
+/// On a vault the pipeline wrote, clause 6 decides alone: every record that
+/// could fail clauses 1–5 (a later tag, a consent, a receipt, an anchor, a
+/// post-pay mirror) is written after the plan. They are here so that the
+/// answer is a measurement rather than an inference: a work this answers
+/// `true` for holds nothing anyone paid for, consented to or anchored, so
+/// its exact re-run abandons it without asking (D197 R2) and nothing usable
+/// is lost — no plan even names its staged set. The cheap reads come first
+/// and the plan, the largest record, last. A read that fails counts as "not
+/// measured": the answer is `false`, the work stays a resume candidate, and
+/// the resume reports the failure in its own class.
 #[must_use]
 pub fn staging_never_finished(store: &WorkStore<'_>, seal_id: &SealId) -> bool {
-    matches!(recorded_plan(store, seal_id), Ok(None))
-        && matches!(recorded_state(store, seal_id), Ok(Some(SealState::Staged)))
+    let Ok(meta) = store.load_meta(seal_id) else {
+        return false;
+    };
+    meta.state == WorkState::IncompletePrePay
+        && meta.consent.is_none()
+        && matches!(
+            recorded_state(store, seal_id),
+            Ok(None | Some(SealState::Staged))
+        )
         && matches!(store.get_receipt(seal_id), Ok(None))
-}
-
-/// T3's way forward (D185 R6): what re-running the command of a seal
-/// interrupted before its staging finished meets, instead of a usage error
-/// that repeated on every run with no exit.
-///
-/// `sink.begin` writes the work record and the `Staged` tag before the first
-/// blob is staged, and the plan is written only once staging is done, so a
-/// kill in between (Ctrl-C during encryption: the CLI installs no signal
-/// handler) leaves an incomplete pre-pay work that resume cannot finish and
-/// that every re-run matches again. The sentence says **"before its staging
-/// finished"**, not "nothing was staged": unit blobs are journaled one by
-/// one, so some may be in the vault. Nothing was anchored or paid — the tag
-/// and the absent receipt say so ([`staging_never_finished`]) — and the
-/// re-run after `antseal abandon` is a fresh seal, because an abandoned work
-/// is never a resume candidate. The deeper fix is S45's.
-#[must_use]
-pub fn interrupted_before_staging(seal_id: &SealId) -> CliError {
-    let id = hex_seal(seal_id);
-    CliError::Usage {
-        message: format!(
-            "seal {id} was interrupted before its staging finished: nothing was anchored or paid \
-             for it and there is nothing to resume — discard it with `antseal abandon {id}` and \
-             re-run this command"
-        ),
-    }
+        && matches!(store.list_anchors(seal_id), Ok(slots) if slots.is_empty())
+        && matches!(recorded_plan(store, seal_id), Ok(None))
 }
 
 /// The resume plan U17's merged render shows beside the fresh quote: what
@@ -969,6 +1037,59 @@ mod tests {
             resume_plan_lines(&untagged)
                 .join("\n")
                 .contains("not recorded")
+        );
+    }
+
+    /// D197 R2/R5: the restart notice names the discarded seal and says what
+    /// happened to it in each mode — never "Resuming", which this shape used
+    /// to get and which was false for it.
+    #[test]
+    fn the_restart_notice_names_the_seal_and_never_claims_a_resume() {
+        let seal_id = SealId::from_bytes([0xC5; 16]);
+        let id = "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5";
+        let real = restart_notice(&seal_id, false);
+        let rehearsal = restart_notice(&seal_id, true);
+        for notice in [&real, &rehearsal] {
+            for needle in [
+                format!("note: seal {id} was interrupted before its staging finished"),
+                "nothing was anchored or paid for it".to_owned(),
+                "a fresh seal of the same files".to_owned(),
+                "(a new seal id and freshly drawn nonces; MVP-SPEC line 145)".to_owned(),
+            ] {
+                assert!(notice.contains(&needle), "missing `{needle}`: {notice}");
+            }
+            assert!(!notice.contains("Resuming"), "{notice}");
+            assert!(!notice.contains('\n'), "one line: {notice}");
+        }
+        assert!(
+            real.contains("so it has been abandoned and this run starts"),
+            "{real}"
+        );
+        // D49: the dry run writes nothing, so it claims no abandon of its own.
+        assert!(
+            rehearsal.contains("this dry run leaves it as it is, and a real run abandons it"),
+            "{rehearsal}"
+        );
+        assert!(!rehearsal.contains("has been abandoned"), "{rehearsal}");
+
+        // Printed at the abandon by `run_seal`, so the decision itself has no
+        // notice to print at detection time.
+        let restart = ResumeDecision::Restart(Box::new(candidate(0xC5, &["a.txt"], shaping(None))));
+        assert_eq!(restart.notice(), None);
+    }
+
+    /// `match_candidates` stays pure (D197 R2): it never answers `Restart`,
+    /// which needs the store's records — an untagged exact match is a
+    /// `Resume` here, and `detect` decides the rest.
+    #[test]
+    fn the_pure_table_never_restarts_on_its_own() {
+        let mut untagged = candidate(0xC6, &["a.txt"], shaping(None));
+        untagged.journal_state = None;
+        let decision = match_candidates(&[untagged], &abs(&["a.txt"]), &shaping(None))
+            .expect("an exact match");
+        assert!(
+            matches!(decision, ResumeDecision::Resume(_)),
+            "{decision:?}"
         );
     }
 }

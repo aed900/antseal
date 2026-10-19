@@ -551,7 +551,7 @@ sha256sum ~/bin/antseal; ~/bin/antseal --version; echo "REAL_EXIT=$?"
 
 *Expected:* a listing you record verbatim; `0` (no absolute or `..` entries);
 `antseal <TAG without its leading v>` — the flag prints the binary name and
-its crate version (`crates/antseal-cli/src/cli.rs:44-46`), and the release
+its crate version (`crates/antseal-cli/src/cli.rs:48-50`), and the release
 version is what `--version` reports (`docs/user/versioning.md:28`);
 `REAL_EXIT=0`. Compare the machine's glibc (step 1) with the floor the release
 notes declare.
@@ -570,11 +570,11 @@ cd ~/gate/bundle && ls -l && sha256sum -- *.sealproof
 *STOP if* the digest differs, or there is more than one bundle.
 
 **10. Verify with the CLI, offline, with the network provably off.** `verify`
-opens no vault and never prompts (`crates/antseal-cli/src/commands.rs:689-692`);
-without `--online` it collects no network inputs at all (`commands.rs:735-736`);
+opens no vault and never prompts (`crates/antseal-cli/src/commands.rs:922-925`);
+without `--online` it collects no network inputs at all (`commands.rs:996-997`);
 and because no vault is opened, the post-command anchor-upgrade pass returns
-before doing anything (`commands.rs:713`;
-`crates/antseal-cli/src/upgrade_hook.rs:305-309`). Detach the network adapter,
+before doing anything (`commands.rs:973`;
+`crates/antseal-cli/src/upgrade_hook.rs:323-327`). Detach the network adapter,
 then:
 
 ```sh
@@ -594,18 +594,18 @@ grep -o '"verdict":{[^}]*}' ~/gate/evidence/verify-offline.json
 
 - `CONTROL_EXIT` **non-zero**. Zero means the network is still up.
 - `REAL_EXIT=0` on both runs: no verdict rung holds
-  (`crates/antseal-cli/src/verify_out.rs:120-135`).
+  (`crates/antseal-cli/src/verify_out.rs:150-165`).
 - The first line is the headline, in the one template
   `existed no later than <unix seconds> (tsa, <source>)`
   (`crates/antseal-core/src/verify/wording.rs:165-170`; rendered first,
-  `verify_out.rs:145-147`). **The kind inside the parentheses must be `tsa`** —
+  `verify_out.rs:175-177`). **The kind inside the parentheses must be `tsa`** —
   the gate's "headline time from a TSA token". Offline, only `proven` and
   `valid-at-stamping-cert-since-expired` are headline-eligible
   (`crates/antseal-core/src/verify/aggregate.rs:48-57`), and an OTS anchor
   reaches `proven` only when confirmed online (`wording.rs:238-243`).
 - `"network":"arbitrum-one"`: with no flag and no config file the effective
   network is the built-in default (`crates/antseal-cli/src/lib.rs:151-152`;
-  `crates/antseal-cli/src/config.rs:138-143`, `:181`;
+  `crates/antseal-cli/src/config.rs:273-278`, `:316`;
   `crates/antseal-net/src/network.rs:214-219`). Record it as the clean
   machine's reading of the released binary's default, which `Q34` also asks
   for.
@@ -623,7 +623,7 @@ grep -o '"verdict":{[^}]*}' ~/gate/evidence/verify-offline.json
   seal made with the wrong build, not a sealer that lies.
 - A `verdict` member with `"rung":null`, `"unanchored":false`,
   `"headline_eligible":` at least `1`, and `"exit_code":0`
-  (`crates/antseal-core/src/verify/orchestration.rs:902-915`; its shape as
+  (`crates/antseal-core/src/verify/orchestration.rs:940-953`; its shape as
   committed, `crates/antseal-cli/tests/snapshots/json-envelopes.txt:46`).
 
 *STOP if* `CONTROL_EXIT=0`, either `REAL_EXIT` is not `0`, the headline kind is
@@ -643,14 +643,19 @@ about the bundle, and what it prints depends on the build:
   all while the adapter is detached. Whether any built-in peer answers is
   established by nothing in this repository (D173 §2 R16), so no outcome of
   a `--live` run here says anything about the network. With the adapter
-  detached each fetch fails on its own, so expect this bundle's offline exit
-  code, `0`, beside a
-  `live check: inconclusive — …` line (D170 §2 R2, §2 R6; the wording is
-  `crates/antseal-core/tests/snapshots/verdict-wording.txt`'s). It can take over
+  detached, expect this bundle's offline exit code, `0`, beside one of two
+  live lines (the wording is
+  `crates/antseal-core/tests/snapshots/verdict-wording.txt`'s): a
+  `live check: inconclusive — …` line when the client connects and each fetch
+  then fails on its own (D170 §2 R2, §2 R6), or a
+  `live check: not performed — no connection to the Autonomi network was made, …`
+  line when no connection is made at all, with a
+  `` note: `verify --live` checked nothing — … `` line on stderr saying why
+  (D199). It can take over
   a minute: the connection attempt alone may wait up to 60 seconds
   (`READ_ONLY_CONNECT_TIMEOUT`, `crates/antseal-cli/src/backend.rs`). The live
   check never sets the exit code. A live line saying anything other than
-  inconclusive is a finding to record, not a verdict. An exit `23` from this
+  those two is a finding to record, not a verdict. An exit `23` from this
   build means its async runtime could not start, and its message says so.
 
 **11. Verify with the CLI `--online`.** Re-attach the network adapter.
@@ -662,19 +667,19 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://antseal.org/
 
 What `--online` contacts, and nothing else: for each **upgraded** OTS anchor's
 block height, two Bitcoin esplora endpoints, `https://blockstream.info/api` and
-`https://mempool.space/api` (`crates/antseal-anchor/src/esplora.rs:83-84`); and
+`https://mempool.space/api` (`crates/antseal-anchor/src/esplora.rs:85-86`); and
 only if the bundle carries a receipt, the Arbitrum One pair
 `https://arb1.arbitrum.io/rpc` and `https://arbitrum.drpc.org`
 (`crates/antseal-anchor/src/arbitrum/endpoints.rs:22-23`, `:48-54`). The plan
 is derived from the bundle alone (`crates/antseal-core/src/verify/plan.rs:132-147`)
 and the pairs are the pinned defaults unless a config file overrides them,
-which this machine does not have (`crates/antseal-cli/src/verify_host.rs:277-305`).
+which this machine does not have (`crates/antseal-cli/src/verify_host.rs:328-364`).
 No Autonomi, no TSA, no OTS calendar and no credential is involved. A bundle
 whose OTS anchors are all still pending and which carries no receipt makes
 zero requests.
 
 *Expected:* `200`, then `REAL_EXIT=0`. The offline block is followed by the
-online advisory lines (`verify_out.rs:179-183`). An unreachable or disagreeing
+online advisory lines (`verify_out.rs:209-213`). An unreachable or disagreeing
 endpoint cannot change the exit code (`verify_out.rs:34-40`); record it.
 *STOP if* any anchor is reported refuted, or the exit code is `41` or `42`.
 
@@ -743,7 +748,7 @@ Drop the bundle onto the page, or pick it with the file chooser.
 the page's headline line is **identical, character for character**, to the
 CLI's first line from step 10 — both are the same rendered headline from the
 same verification library (`index.template.html:263-268`;
-`crates/antseal-core/src/verify/orchestration.rs:552-565`); the anchor list shows
+`crates/antseal-core/src/verify/orchestration.rs:570-583`); the anchor list shows
 the same slots and states as the CLI's; `bundle format version 1`
 (`index.template.html:289`). The footer's advice line reads
 `for high-stakes verification, run antseal verify and compare verdicts`
@@ -773,7 +778,7 @@ the witness has run (D172 §2 R6).
 
 ## Reading a red
 
-`verify`'s exit codes (`crates/antseal-cli/src/error.rs:391-442`): `0` clean;
+`verify`'s exit codes (`crates/antseal-cli/src/error.rs:420-476`): `0` clean;
 `2` usage; `4` the bundle file could not be read; `17` malformed config (a clean
 machine has none); `23` network failure (only from `--live`, which this
 procedure does not run — a build with no storage backend compiled in refuses
@@ -783,7 +788,7 @@ and §2 R6, returning `23` only if its async runtime cannot start, as its
 message then says); `40` bundle rejected; `41` an anchor refuted; `42` headline
 anchors disagree by more than 48 h; `43` unanchored. The `--json` document's
 `verdict.exit_code` equals the process's exit code by construction
-(`verify_out.rs:247-254`).
+(`verify_out.rs:277-284`).
 
 minisign exits `0` on success, `1` on a failed check and `2` on malformed
 input (`scripts/verify-release.sh:86-88`) — never write a check that expects

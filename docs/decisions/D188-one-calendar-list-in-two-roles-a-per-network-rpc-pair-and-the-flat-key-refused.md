@@ -533,3 +533,51 @@ inside the wave's own commits. Nothing in it authorises a push, a workflow
 dispatch, a deploy or any other outward act; each of those needs the
 maintainer's express consent naming the action, the destination and the
 account.
+
+## Addendum — 2026-10-19 (wave 39, D195 §2 R4; D196 §2 R1–R3): no config refusal repeats a URL, a known key outside its table is refused, and the Bitcoin pair is checked at load
+
+Four parts of this record change. D195 and D196 record each.
+
+1. **§2 R1's last sentence is amended (D195 §2 R4).** It reads *"An invalid entry is exit 17,
+   naming the key, the line and the entry. Calendar URLs carry no credentials, so the `tsa_urls`
+   echo convention stands"* (`:246-247`). The echo convention is retired: a refusal of any
+   URL-list key — `tsa_urls`, `ots_calendars`, `bitcoin_endpoints`, `rpc_endpoints` — names the
+   key, the line and the entry's position (`entry N`), never the value. The ground did not
+   survive measurement: whatever a calendar URL is meant to carry, the value a user typed can
+   carry userinfo, and 9 credential-bearing shapes driven through the binary were each refused
+   with the canary on stderr and in `--json`'s `error.message`, through three paths — the parse
+   check, the URL shape check that §6's second deviation introduced (*"The shared URL shape
+   refusal now names its entry"*), and the config subset's own value error (D195 §1.4). The test
+   written under this record that asserts the echo (`tests/config_file.rs:339-343`, *"names the
+   entry (a calendar URL is no credential)"*) flips to `entry 1`. What stays is `A20`'s verbatim
+   printing of the TSA and calendar URLs a seal contacted — in the seal report, a gate abort and
+   `--json` — now with a documented rule that none of them may carry a credential (D195 §2 R3).
+2. **§2 R5's ground is extended to every recognised key (D196 §2 R1, R2).** §2 R5 refused the
+   flat `arbitrum_endpoints` because *"a warned override probes the very endpoints the user
+   configured away from"* (`:295-297`). D196 measured the same harm beyond that one key: 10
+   misplacements of 6 of the 7 live keys and of the retired one all only warned (the seventh
+   reaches the same warning arms by code reading), and a `default_network` written after an
+   `[anchors]` header silently made the invocation `arbitrum-one` (D196 §1.1). A known key in
+   any table but its home is now exit 17, raised on the key before its value is parsed, naming
+   the key, the table it was found in, the line and its home. §2 R5's refusal of the flat key is
+   unchanged; `arbitrum_endpoints` under
+   `[verify.<network>]`, which a test written under this record pins as *"an ordinary unknown
+   key"* (`tests/config_file.rs:610-614`), is now refused too, with *"write `rpc_endpoints` in
+   this table instead"*. Unknown keys still warn on the key alone (D189 §2 R3).
+3. **§2 R4's last bullet and §4's `bitcoin_endpoints` bullet are overturned (D196 §2 R3).** §2
+   R4 reads *"`[verify] bitcoin_endpoints` stays flat and is checked at use, as today (§1.6 names
+   the test that depends on it loading)"* (`:283-284`), and §4 *"It stays at use; the
+   inconsistency with `rpc_endpoints` is recorded, not fixed (§1.6)"* (`:427-428`). Their only
+   ground was §1.6's test vehicle (`:179-180`). D196 found two vehicles, not one — a second test
+   also needs a one-entry list to load and goes vacuous once the count moves
+   (`tests/config_file.rs:271-276`) — and moves the hook's property in-process. The key stays
+   flat; its count and origins are checked at load by one validator that `verify --online`,
+   `status --upgrade` and the hook call too, and a bad list is exit 17 on every command, naming
+   the key, `[verify]`, the line, and `found {n}` or the entry's position. (This wave's rulings
+   call this bullet "§4's second"; it is the third, after `A94`'s and `U98`'s.)
+4. **§4's `U98` bullet (`:417-426`) is answered by D195.** `verify --online` discloses each
+   `[verify]` endpoint by its origin only — `scheme://host`, plus a port only when it is not the
+   scheme's default — on its `endpoints:` line, its failure lines and in `--json`, and every
+   `[verify]` refusal is value-free. Its deadline is `U32`, not `Q31`: the overlay is D65 tier C.
+
+The rest of this record stands. The text above stays as written.

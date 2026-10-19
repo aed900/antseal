@@ -1434,6 +1434,7 @@
 - Do: rule — disclose the origin only (`scheme://host[:port]`) and refuse without echo at load, or document "never put a credential in a `[verify]` URL" — and make every surface agree.
 - Accept:
   - A configured endpoint whose URL carries a query-string key is consulted and never printed with that key in human output, `--json` or a load-time refusal (canary asserted absent), or the ruled documentation sentence exists where the keys are configured.
+- Notes: **[2026-10-19, wave 39 — TICKED (D195, lane L-CFG2).]** Captures on the `TODO.md` row; D195 §6 records what was built and every deviation.
 
 ### U99 — A URL refused for carrying credentials is printed with them
 - Milestone: M4
@@ -1446,6 +1447,7 @@
 - Accept:
   - A config whose `tsa_urls`, `ots_calendars` or `bitcoin_endpoints` entry carries `user:<canary>@` is refused (exit 17), and the canary is absent from stdout, stderr and the `--json` envelope, asserted through the binary.
   - A plant restoring the echo reddens that test by message.
+- Notes: **[2026-10-19, wave 39 — TICKED (D195, lane L-CFG2).]** Captures on the `TODO.md` row; D195 §6 records what was built and every deviation.
 
 ### U100 — A misplaced `rpc_endpoints` only warns, so `verify --online` probes the pinned pair the user meant to replace
 - Milestone: M4
@@ -1457,6 +1459,7 @@
 - Do: decide whether a misplaced `rpc_endpoints` is refused by name at load (exit 17, naming the replacement tables and never repeating the value) or documented, and implement the answer.
 - Accept:
   - Either a misplaced `rpc_endpoints` under `[verify]` or `[networks.<id>]` is exit 17 naming the key, the table, the line and the replacement tables, with a canary value absent (asserted through the binary); or `docs/config.md` states the warning-only behaviour where the key is documented.
+- Notes: **[2026-10-19, wave 39 — TICKED (D196, lane L-CFG2).]** Captures on the `TODO.md` row; D196 §6 records what was built and every deviation.
 
 ### U101 — `[verify] bitcoin_endpoints` is checked when used, not when the file is read
 - Milestone: M4
@@ -1469,6 +1472,7 @@
 - Accept:
   - A one- or three-entry `bitcoin_endpoints` list is exit 17 at load naming the key, the line and the count; or `docs/config.md` states the reason for the difference.
   - The hook test's property is still asserted, through another vehicle.
+- Notes: **[2026-10-19, wave 39 — TICKED (D196, lane L-CFG2).]** Captures on the `TODO.md` row; D196 §6 records what was built and every deviation.
 
 ### U102 — The global `--network` help enumerates the commands that read no network, and `abandon` is not among them
 - Milestone: M4
@@ -1480,6 +1484,7 @@
 - Do: name `abandon`, or rephrase the sentence so that it does not enumerate commands.
 - Accept:
   - The rendered `--network` paragraph is true of every command that reads no network, read back from the re-blessed snapshot; if it still enumerates, a test asserts its list against the commands that ignore `--network`.
+- Notes: **[2026-10-19, wave 39 — TICKED (ruled without a record, lane L-VOCAB2).]** Captures on the `TODO.md` row; the lane report's deviations are summarised on the row.
 
 ### U103 — The gate's `Entropy` refusal wears the anchor-gate class with a remedy that cannot apply
 - Milestone: M4
@@ -1491,3 +1496,62 @@
 - Do: decide whether `Entropy` gets its own class (`internal`, 1, or `io-error`, 4) or keeps 22 with its own way-forward clause, and implement it at the seam, `pipeline/error.rs`'s `gate_refusal_lines` and the `From` arm.
 - Accept:
   - An `Entropy` refusal's message names no remedy that a timestamp authority could satisfy, asserted by message; if the class moves, `exit_codes.rs`'s table and the snapshot move with it.
+- Notes: **[2026-10-19, wave 39 — TICKED (D201, lane L-ERR3).]** Captures on the `TODO.md` row; D201 §6 records what was built and every deviation.
+
+### U104 — An unavailable OS random source is reported as an antseal bug
+- Milestone: M4
+- Size: S
+- Deps: with U103 (the gate's `Entropy` arm joins the same class and variant); before U32 (the error snapshot and the exit-code table's definitions freeze)
+- Spec: the exit-code table's row 1 (`crates/antseal-cli/src/error.rs`, *"unexpected failure (bug class)"*); D201
+- Discovered by: wave-39 planning lane P3, 2026-10-19, while planning U103 (the census of OS-CSPRNG failure sites). Id assigned centrally.
+- Problem: seven sites map a failed OS random source to `CliError::Internal`, whose Display ends *"(this is a bug in antseal — please report it)"* (`error.rs:556`): the vault record nonce (`vault/cipher.rs:227-229`), the export nonce (`vault/export.rs:871-872`), the KDF salt (`vault/kdf.rs:206-207`), the keyfile (`vault/keyfile.rs:163-166`), the wallet key at `init` (`init.rs:539-541`), the core's `CryptoError::RngFailure` through `SealError::Crypto` (`pipeline/error.rs:342-344`), and, once U103 moves it, the anchor gate's `Entropy`. An unavailable OS random source is a fault of the machine, not of antseal, and class 1's definition says *"bug class"*.
+- Do: D201 §2 R2–R5: one `CliError` variant in class `internal` (exit 1) whose message names the machine, not antseal, with a consequence clause true at each site; every OS-CSPRNG failure site routes through it (the census re-run at the act, including the `OsEntropy` adapter's uses); row 1's definition widened; one exemplar appended to the error snapshot through the real producer.
+- Accept:
+  - Each site's mapping is asserted BY MESSAGE through its own seam (a `From` arm, or the function with a failing `TryCryptoRng` injected): class `internal`, exit 1, no *"bug in antseal"*; the census (search, count, positive control) is recorded in the row.
+  - No exit code moves, no class is added (`PINNED_CLASS_COUNT` unchanged); the exit-22 exemplar stays byte-identical.
+  - A plant restoring one site's old `Internal { detail }` reddens that site's test by message.
+- Notes: **[2026-10-19, wave 39 — TICKED (D201, lane L-ERR3).]** Captures on the `TODO.md` row; D201 §6 records what was built and every deviation.
+
+### U105 — `antseal init` replaces an existing `config.toml` without a word when the directory holds no `vault.header`
+- Milestone: M4
+- Size: XS
+- Deps: after U2 (`init`); relates to U4 (the config file) and D47 (export carries `config.toml`)
+- Spec: `docs/config.md:9` (the documented order: `init` writes the file, the user edits it)
+- Discovered by: wave-39 lane L-VOCAB2, 2026-10-19, while measuring which commands read `--network` for U102 (code-traced, not executed). Id assigned centrally.
+- Problem: `init`'s existing-vault refusal keys on `vault.header` alone (`crates/antseal-cli/src/init.rs:412-419`; `vault/session.rs:224-228`); `create_dir_all` accepts an existing directory (`session.rs:237`); and `init` writes `initial_config_text(network)` over `config.toml` with `atomic_write` (`init.rs:578-582`) without reading what is there (`init_network`, `:612-613`, never reads it). A re-init after deleting only the vault files therefore discards a hand-written `[anchors]` or `[verify]` table silently.
+- Do: rule between refusing (an existing `config.toml` is a reason to stop and say so), keeping the file (and warning when it disagrees with the flags), or documenting the overwrite; implement and test it.
+- Accept:
+  - A test runs `init` over a directory holding only a hand-written `config.toml` and shows the ruled outcome (the file kept, or a refusal naming it), red baseline recorded first.
+
+### U106 — `WalletOpsError::KeyGenerationFailed` blames the machine's entropy source and calls itself an antseal bug in one message
+- Milestone: M4
+- Size: XS
+- Deps: after U104 (D201's random-source variant)
+- Spec: D201 (an unavailable OS random source is a fault of the machine); the exit-code table's row 1
+- Discovered by: wave-39 lane L-ERR3, 2026-10-19, while routing `init`'s entropy failure through D201's variant. Id assigned centrally.
+- Problem: `WalletOpsError::KeyGenerationFailed`'s text is *"wallet key generation failed repeatedly; the system entropy source appears to be returning invalid data"* (`crates/antseal-net/src/wallet.rs:396-399`). `init` maps every wallet-key error except the entropy variant to `CliError::Internal`, whose Display appends *"(this is a bug in antseal — please report it)"*, so this one message blames the machine and calls the failure an antseal bug. D201 §4 left it undecided; the variant's own doc calls the case statistically unreachable.
+- Do: rule whether `KeyGenerationFailed` is a random-source failure (route it through D201's variant) or a bug (word its text as one), and implement it at `init`'s mapping.
+- Accept:
+  - The rendered message for `KeyGenerationFailed` makes one claim about whose fault it is, asserted by message through `init`'s mapping.
+
+### U107 — A retired `rpc_url` written outside `[networks.*]` only warns
+- Milestone: M4
+- Size: XS
+- Deps: after U100 (D196's `KEY_HOMES`); before Q31 (the first release), as U100
+- Spec: D180 (the payment RPC's `rpc_url` is refused in `[networks.*]`); D196 §2 R1–R2 (a known key outside its home table is refused; D188 §2 R5's ground: a warned override probes the very endpoints the user configured away from)
+- Discovered by: wave-39 lane L-CFG2, 2026-10-19, while landing D196. Id assigned centrally.
+- Problem: `rpc_url` is refused only inside `[networks.*]` tables. Written as `[verify.arbitrum-one] rpc_url = "…"` (a plausible guess for the receipt RPC) or at the top level, it is an unknown key: one warning, then the pinned endpoints the user meant to replace. `arbitrum_endpoints`, the other retired endpoint key, is now refused in every table (D196 §6).
+- Do: refuse `rpc_url` in every table with the retired-key text (never repeating its value), or record why it differs from `arbitrum_endpoints`.
+- Accept:
+  - `rpc_url` under `[verify.arbitrum-one]` and at the top level is exit 17 naming the key, the table and the line, the value absent (canary), asserted in-process and once through the binary; or the reason is recorded where the key is documented.
+
+### U108 — An unquoted array entry's config refusal cannot name its position
+- Milestone: M4
+- Size: XS
+- Deps: after U99 (D195 §2 R4's value-free refusals)
+- Spec: D195 §2 R4 (every URL-list refusal names the key, the line and the entry's position, never the value)
+- Discovered by: wave-39 lane L-CFG2, 2026-10-19 (D195 §6, deviation 1). Id assigned centrally.
+- Problem: the config subset parser numbers no array entries (`crates/antseal-cli/src/config.rs`, `parse_value`'s array branch), so an unquoted entry such as `tsa_urls = [https://tsa.example/]` is refused by the subset message — value-free and naming the key since U99 — but without `entry N`. The shape and parse checks name the position; the subset path does not.
+- Do: number the entries in the array branch and carry the position into the subset refusal.
+- Accept:
+  - An unquoted second entry is refused naming the key, the line and `entry 1`, the value absent, asserted in-process; a plant dropping the number reddens it by message.

@@ -53,9 +53,9 @@
 //! # What it costs
 //!
 //! One pass's polling is bounded by [`UpgradeBudget::opportunistic`] — 3 s of
-//! wall clock and 4 polls — plus at most one in-flight call. That is not the
-//! whole of the *lateness of exit*: the block-header confirmation that follows
-//! a successful poll is not under the budget (A141). A human never sees it:
+//! wall clock and 4 polls — plus at most one in-flight call; so is the
+//! block-header confirmation that follows a successful poll, whose requests
+//! are under the same start gate as the polls (A141). A human never sees it:
 //! the answer is already printed and the shell prompt is the only thing
 //! waiting. A **script** sees all of it, because `$(antseal list --json)` waits
 //! for process exit; that residual is recorded in D99 §8, and its remedy is
@@ -213,9 +213,14 @@ impl<'a> HookContext<'a> {
     /// # Errors
     ///
     /// [`CliError::Usage`] when `[verify] bitcoin_endpoints` does not name
-    /// exactly two parseable, distinct-origin endpoints. The caller turns that
-    /// into a skip: a hook that cannot confirm a block header must not run,
-    /// and it must not fail the command that carried it either.
+    /// exactly two parseable, distinct-origin endpoints. A config the loader
+    /// read can no longer carry such a list — it is exit 17 when the file is
+    /// read, through the same validator (U101, D196 R3) — so only a [`Config`]
+    /// built in code reaches this, and this module's
+    /// `a_hook_whose_endpoints_are_unusable_declines_without_a_pass` is that
+    /// vehicle. The caller still turns it into a skip: a hook that cannot
+    /// confirm a block header must not run, and it must not fail the command
+    /// that carried it either.
     pub fn production(
         vault: &'a UnlockedVault,
         config: &Config,
@@ -581,5 +586,97 @@ mod tests {
         // Idempotent: a second take after the hook already ran is still empty,
         // so a future double call cannot run two passes over one handle.
         assert!(slot.take().is_none());
+    }
+
+    /// **U24 Accept row 2's "cannot start" arm, in-process (U101, D196 R4).**
+    /// A config the loader read can no longer carry an unusable esplora pair —
+    /// it is exit 17 when the file is read — so the vehicle is a struct-literal
+    /// `Config`, which bypasses the loader by construction. The hook still
+    /// arms (it holds a vault, D42), says why it declined, and performs no
+    /// pass; `HookContext::production` is the `Err` it declines on. The
+    /// exit-code and stdout half of the row stays spawned
+    /// (`the_hook_runs_on_a_real_invocation_without_touching_stdout`), and the
+    /// signature pin keeps that half structural: a `run_after_output` that
+    /// returned something a caller could propagate would not compile here.
+    #[test]
+    fn a_hook_whose_endpoints_are_unusable_declines_without_a_pass() {
+        let _: fn(&VaultSlot, &Config, &str) = run_after_output;
+
+        let dir = std::env::temp_dir().join(format!(
+            "antseal-u101-hook-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).expect("mk fixture dir");
+        let layout = crate::vault::layout::VaultLayout::at(dir.join("vault"));
+        let passphrase =
+            || antseal_core::crypto::secrets::SecretBuf::new(b"u101-hook-test-passphrase".to_vec());
+        crate::vault::session::create_vault(
+            &layout,
+            &passphrase(),
+            crate::vault::kdf::KdfSelection::Argon2id,
+            &mut OsEntropy,
+        )
+        .expect("create vault");
+        let vault =
+            Arc::new(crate::vault::session::unlock_vault(&layout, &passphrase()).expect("unlock"));
+
+        // One entry: a must-agree pair of one endpoint. Nothing dials it —
+        // `UpgradeConfig::pair` refuses before any client exists.
+        let config = Config {
+            verify_bitcoin_endpoints: Some(vec!["https://a.example".to_owned()]),
+            ..Config::default()
+        };
+        assert!(
+            HookContext::production(&vault, &config, 0).is_err(),
+            "a one-endpoint esplora pair must leave the hook nothing to start"
+        );
+
+        let slot = VaultSlot::default();
+        drop(slot.arm(vault));
+        let trace = traced(|| run_after_output(&slot, &config, "arbitrum-one"));
+        assert!(trace.contains(HOOK_ARMED), "the hook still armed: {trace}");
+        assert!(
+            trace.contains("no usable endpoint configuration"),
+            "and said why it declined: {trace}"
+        );
+        assert!(
+            !trace.contains("pass complete"),
+            "a hook that could not start performs no pass: {trace}"
+        );
+        assert!(slot.take().is_none(), "the hook took the handle");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// What `f` traces at `debug` and above, through a subscriber scoped to
+    /// this thread — the in-process reading of
+    /// `RUST_LOG=antseal_cli::upgrade_hook=debug`.
+    fn traced(f: impl FnOnce()) -> String {
+        #[derive(Clone, Default)]
+        struct Sink(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .map_err(|_| std::io::Error::other("trace sink poisoned"))?
+                    .extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let sink = Sink::default();
+        let writer = sink.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        let bytes = sink.0.lock().map(|bytes| bytes.clone()).unwrap_or_default();
+        String::from_utf8_lossy(&bytes).into_owned()
     }
 }

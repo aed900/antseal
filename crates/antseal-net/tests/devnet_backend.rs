@@ -29,13 +29,14 @@
 
 #![cfg(feature = "ant-backend")]
 
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use antseal_core::crypto::secrets::SecretBuf;
 use antseal_net::ant_backend::{AntCoreBackend, AntCoreReader, AntCoreReceiptReader};
 use antseal_net::wallet::WalletKey;
 use antseal_net::{
-    Blob, BlobCost, DevnetEnv, NetworkConfig, PaymentReceipt, StorageBackend, StorageError,
+    Blob, BlobCost, CaptureHook, CaptureOutcome, DevnetEnv, NetworkConfig, PaymentReceipt,
+    StorageBackend, StorageError,
 };
 
 /// Process-global serialization of devnet tests (module docs).
@@ -708,6 +709,9 @@ async fn devnet_s7_multi_sub_batch_sequential_txs_with_capture_hook() {
             sink.lock()
                 .expect("capture sink lock")
                 .push(receipt.clone());
+            // An in-memory record: durability is the vault sink's to report
+            // (S46), and this test's subject is the timing.
+            CaptureOutcome::Durable
         }));
 
     let batch = test_blobs(&env, "s7-multitx", &[64, 128, 256, 512, 1_024]);
@@ -1332,4 +1336,219 @@ async fn devnet_d170_an_unreachable_network_is_never_reported_as_absence() {
             unreachable_fetch(&who, AntCoreBackend::connect(&unreachable, &key), stored).await;
         assert_network_class_never_absence(&who, &outcome);
     }
+}
+
+// ===========================================================================
+// S46 — a capture that is not durable stops the next sub-batch (D198)
+// ===========================================================================
+
+/// A capture hook that records every receipt it is handed and answers the
+/// scripted verdict for each capture in turn — [`CaptureOutcome::Durable`]
+/// past the end of the script, so a loop that fails to stop runs on and the
+/// test sees what it did.
+fn scripted_hook(verdicts: Vec<CaptureOutcome>) -> (CaptureHook, Arc<Mutex<Vec<PaymentReceipt>>>) {
+    let captured: Arc<Mutex<Vec<PaymentReceipt>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&captured);
+    let hook: CaptureHook = Arc::new(move |receipt: &PaymentReceipt| {
+        let mut captures = sink.lock().expect("capture sink lock");
+        captures.push(receipt.clone());
+        verdicts
+            .get(captures.len() - 1)
+            .copied()
+            .unwrap_or(CaptureOutcome::Durable)
+    });
+    (hook, captured)
+}
+
+/// A wallet's confirmed tx count, for a key that is not the export's
+/// ([`wallet_nonce`] reads the funded dev key's).
+async fn nonce_of(key: &WalletKey, config: &NetworkConfig) -> u64 {
+    use alloy::providers::Provider;
+    let address = alloy::primitives::Address::from(*key.address().as_bytes());
+    key.evm_wallet(config)
+        .expect("wallet builds")
+        .to_provider()
+        .get_transaction_count(address)
+        .await
+        .expect("nonce query")
+}
+
+/// What a `pay` returned, as the S46 assertions print it: the class and the
+/// tx count — never a receipt field (hygiene, S7).
+fn pay_summary(result: &Result<PaymentReceipt, StorageError>) -> String {
+    match result {
+        Ok(receipt) => format!("Ok with {} tx(s)", receipt.txs.len()),
+        Err(error) => format!("Err({error})"),
+    }
+}
+
+/// **S46's Accept (D198), on a live devnet.** Five blobs at a forced cap of
+/// two pay as three sub-batches, and the hook reports capture 2 not durable.
+/// The payment stops there: `StrandedPayment { landed_tx_count: 2 }`, the
+/// approve and two sub-batch txs on-chain (nonce +3, not +4), no third
+/// capture, and the wallet's ANT down by exactly the last durable receipt
+/// (capture 1) plus one sub-batch (sub-batch 2) — so exactly one sub-batch's
+/// payment is unrecorded.
+///
+/// It pays from a throwaway wallet funded here, not the export's dev wallet:
+/// a stopped payment leaves part of its exact-amount allowance unspent, and
+/// on the shared wallet that residue could cover a later test's quote, whose
+/// approve `allowance_to_approve` would then skip — moving that test's nonce
+/// arithmetic.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::await_holding_lock)] // deliberate whole-test serialization; see `serial`
+async fn devnet_s46_a_not_durable_capture_stops_the_next_sub_batch() {
+    use alloy::primitives::U256;
+
+    let _serial = serial();
+    let Some((config, env)) = devnet() else {
+        return;
+    };
+    let dev_wallet = funded_key(&env)
+        .evm_wallet(&config)
+        .expect("dev wallet builds");
+    let payer = WalletKey::generate().expect("keygen");
+    let payer_address = alloy::primitives::Address::from(*payer.address().as_bytes());
+    dev_wallet
+        .transfer_gas_tokens(payer_address, U256::from(10u128.pow(17))) // 0.1 ETH
+        .await
+        .expect("fund gas");
+    dev_wallet
+        .transfer_tokens(payer_address, U256::from(10u128.pow(18))) // 1 ANT
+        .await
+        .expect("fund ANT");
+    let payer_wallet = payer.evm_wallet(&config).expect("payer wallet builds");
+
+    let (hook, captured) = scripted_hook(vec![CaptureOutcome::Durable, CaptureOutcome::NotDurable]);
+    let backend = AntCoreBackend::connect(&config, &payer)
+        .await
+        .expect("backend connects")
+        .with_max_transfers_per_tx(2)
+        .with_capture_hook(hook);
+
+    let batch = test_blobs(&env, "s46-stop", &[64, 128, 256, 512, 1_024]);
+    let quote = backend.quote_batch(&batch).await.expect("quote");
+    let nonce_before = nonce_of(&payer, &config).await;
+    let ant_before = payer_wallet.balance_of_tokens().await.expect("ANT before");
+    let result = backend.pay(&quote).await;
+    let nonce_after = nonce_of(&payer, &config).await;
+    let ant_after = payer_wallet.balance_of_tokens().await.expect("ANT after");
+    let captures = captured.lock().expect("capture sink lock").clone();
+    let observed = format!(
+        "pay → {}; {} capture(s); nonce +{}",
+        pay_summary(&result),
+        captures.len(),
+        nonce_after.saturating_sub(nonce_before)
+    );
+
+    match &result {
+        Err(StorageError::StrandedPayment {
+            landed_tx_count,
+            reason,
+        }) => {
+            assert_eq!(*landed_tx_count, 2, "two sub-batches landed — {observed}");
+            assert!(
+                reason.contains(
+                    "after sub-batch 2 of 3 landed, so no further sub-batch was submitted"
+                ),
+                "the reason names where the payment stopped: {reason}"
+            );
+        }
+        _ => panic!(
+            "S46: a not-durable capture of sub-batch 2 of 3 must stop the payment with \
+             StrandedPayment {{ landed_tx_count: 2 }} — {observed}"
+        ),
+    }
+    assert_eq!(captures.len(), 2, "no capture after the stop — {observed}");
+    assert_eq!(
+        nonce_after,
+        nonce_before + 3,
+        "the approve and two sub-batch txs, and no third — {observed}"
+    );
+
+    // The Accept's arithmetic: capture 1 is the last durable receipt, and
+    // capture 2 adds sub-batch 2, the one sub-batch the journal lacks.
+    let (durable, unrecorded) = (&captures[0], &captures[1]);
+    assert_eq!(durable.txs.len(), 1, "capture 1 carries sub-batch 1");
+    assert_eq!(unrecorded.txs.len(), 2, "capture 2 carries sub-batches 1-2");
+    let sub_batch_2 = &unrecorded.txs[1].quote_hashes;
+    let sub_batch_2_atto: u128 = unrecorded
+        .blobs
+        .iter()
+        .flat_map(|record| record.payments.iter())
+        .filter(|line| sub_batch_2.contains(&line.quote_hash))
+        .map(|line| line.amount_atto)
+        .sum();
+    assert!(
+        sub_batch_2_atto > 0,
+        "positive control: sub-batch 2 moved ANT"
+    );
+    assert_eq!(
+        unrecorded.storage_cost_atto,
+        durable.storage_cost_atto + sub_batch_2_atto,
+        "capture 2 is capture 1 plus sub-batch 2"
+    );
+    assert_eq!(
+        ant_before - ant_after,
+        U256::from(durable.storage_cost_atto + sub_batch_2_atto),
+        "the on-chain ANT delta is the durable receipt plus one sub-batch — {observed}"
+    );
+}
+
+/// **S46's other half:** a not-durable capture of the **last** sub-batch
+/// stops nothing. `pay` returns the receipt after all three sub-batch txs —
+/// the caller's own post-`pay` write is the second chance (D186 R3) — so a
+/// stop condition that also fired after the last sub-batch would turn a
+/// completed payment into a stranded one.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::await_holding_lock)] // deliberate whole-test serialization; see `serial`
+async fn devnet_s46_a_not_durable_last_capture_stops_nothing() {
+    let _serial = serial();
+    let Some((config, env)) = devnet() else {
+        return;
+    };
+    let key = funded_key(&env);
+    let (hook, captured) = scripted_hook(vec![
+        CaptureOutcome::Durable,
+        CaptureOutcome::Durable,
+        CaptureOutcome::NotDurable,
+    ]);
+    let backend = AntCoreBackend::connect(&config, &key)
+        .await
+        .expect("backend connects")
+        .with_max_transfers_per_tx(2)
+        .with_capture_hook(hook);
+
+    let batch = test_blobs(&env, "s46-last", &[64, 128, 256, 512, 1_024]);
+    let quote = backend.quote_batch(&batch).await.expect("quote");
+    let nonce_before = wallet_nonce(&backend, &env).await;
+    let result = backend.pay(&quote).await;
+    let nonce_after = wallet_nonce(&backend, &env).await;
+    let captures = captured.lock().expect("capture sink lock").clone();
+    let observed = format!(
+        "pay → {}; {} capture(s); nonce +{}",
+        pay_summary(&result),
+        captures.len(),
+        nonce_after.saturating_sub(nonce_before)
+    );
+
+    let Ok(receipt) = result else {
+        panic!("S46: a not-durable capture of the LAST sub-batch must not stop pay — {observed}");
+    };
+    assert_eq!(
+        receipt.txs.len(),
+        3,
+        "all three sub-batches paid — {observed}"
+    );
+    assert_eq!(captures.len(), 3, "one capture per landing — {observed}");
+    assert_eq!(
+        nonce_after,
+        nonce_before + 4,
+        "exact-allowance approve + 3 sequential sub-batch txs — {observed}"
+    );
+    assert_eq!(
+        *captures.last().expect("nonempty"),
+        receipt,
+        "the last capture is the receipt pay returned"
+    );
 }

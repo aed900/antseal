@@ -39,7 +39,7 @@ use antseal_core::crypto::secrets::SecretBuf;
 // rather than fail. The whole M1 devnet gate has not compiled since.
 // Second instance of U39's gap, and the reason its lane must be
 // `--all-targets`.
-use antseal_net::{DevnetEnv, NetworkConfig, PaymentReceipt, WalletKey};
+use antseal_net::{CaptureOutcome, DevnetEnv, NetworkConfig, PaymentReceipt, WalletKey};
 
 // ─────────────────────────────────────────────────────────────────────
 // Serialization and the environment gate
@@ -296,12 +296,16 @@ impl CapturedReceipts {
 }
 
 impl ReceiptSink for CapturedReceipts {
-    fn capture(&self, receipt: &PaymentReceipt) {
+    fn capture(&self, receipt: &PaymentReceipt) -> CaptureOutcome {
         self.fired.fetch_add(1, Ordering::SeqCst);
         match self.receipts.lock() {
             Ok(mut guard) => guard.push(receipt.clone()),
             Err(poisoned) => poisoned.into_inner().push(receipt.clone()),
         }
+        // An in-memory record: durability is the vault sink's to report
+        // (S46, D198 R3), so this double never stops a payment — the
+        // multi-sub-batch rows that use it pay every sub-batch.
+        CaptureOutcome::Durable
     }
 }
 

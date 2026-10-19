@@ -53,7 +53,7 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 use antseal_core::crypto::secrets::SecretBuf;
-use antseal_net::{NetworkId, WalletImportError, WalletKey, checksummed};
+use antseal_net::{NetworkId, WalletImportError, WalletKey, WalletOpsError, checksummed};
 use rand_core::TryCryptoRng;
 
 use crate::cli::{GlobalArgs, InitArgs, KdfChoice, WalletSource, WrapChoice};
@@ -536,9 +536,7 @@ pub fn run_init<P: InitPrompt, R: TryCryptoRng + ?Sized>(
 
     // ── 4. The wallet key itself ──
     let wallet_key = match wallet_source {
-        WalletSource::Generate => WalletKey::generate().map_err(|e| CliError::Internal {
-            detail: e.to_string(),
-        })?,
+        WalletSource::Generate => WalletKey::generate().map_err(wallet_generation_error)?,
         WalletSource::Import => {
             let candidate = match args.wallet_key_fd {
                 Some(fd) => read_secret_fd(fd).map_err(wallet_fd_error)?,
@@ -668,6 +666,23 @@ fn default_keyfile_path(layout: &VaultLayout) -> String {
 fn import_error(err: WalletImportError) -> CliError {
     CliError::Usage {
         message: format!("{err} — nothing was created; re-run `antseal init` with valid material"),
+    }
+}
+
+/// `WalletKey::generate`'s failure as `init` reports it. Only an OS random
+/// source that cannot supply the key is the machine's fault (D201, `U104`):
+/// the key is drawn before the vault is created (step 5 of [`run_init`]), so
+/// no vault was. Every other arm keeps its own text in the bug class,
+/// `KeyGenerationFailed` included, which D201 §4 leaves undecided.
+fn wallet_generation_error(err: WalletOpsError) -> CliError {
+    match err {
+        WalletOpsError::EntropySource => CliError::RandomSourceUnavailable {
+            what: "the wallet key",
+            consequence: "no vault was created",
+        },
+        other => CliError::Internal {
+            detail: other.to_string(),
+        },
     }
 }
 
@@ -869,6 +884,39 @@ mod tests {
                 "wrap",
                 "kdf"
             ]
+        );
+    }
+
+    /// **D201 R2 (`U104`)** at `init`'s wallet seam. `WalletKey::generate`
+    /// draws from the OS itself, so the mapping is the seam. Only
+    /// `EntropySource` is the machine's fault; `KeyGenerationFailed` keeps the
+    /// bug-class text, which D201 §4 leaves undecided.
+    #[test]
+    fn only_an_unavailable_random_source_blames_the_machine_for_the_wallet_key() {
+        let entropy = wallet_generation_error(WalletOpsError::EntropySource);
+        assert_eq!(entropy.class(), crate::error::ErrorClass::Internal);
+        assert_eq!(entropy.exit_code(), 1);
+        let message = entropy.to_string();
+        assert!(
+            message.contains(
+                "the operating system's random source is unavailable, so the wallet key could \
+                 not be generated: no vault was created."
+            ),
+            "{message}"
+        );
+        assert!(
+            message.contains("This is a fault of this machine, not a bug in antseal"),
+            "{message}"
+        );
+        assert!(!message.contains("this is a bug in antseal"), "{message}");
+
+        let other = wallet_generation_error(WalletOpsError::KeyGenerationFailed);
+        assert_eq!(other.class(), crate::error::ErrorClass::Internal);
+        assert!(
+            other
+                .to_string()
+                .ends_with("(this is a bug in antseal — please report it)"),
+            "{other}"
         );
     }
 }

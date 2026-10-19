@@ -555,16 +555,6 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
                 reason: ConsentOutcome::MachineModeWithoutYes,
             },
         ),
-        // T3's way forward (D185 R6), through its real producer — the
-        // function `run_seal`'s resume arm returns for a seal interrupted
-        // before its staging finished. It is a usage message, frozen here
-        // because it is the only exit that dead end has.
-        (
-            "usage (seal interrupted before staging finished)",
-            antseal_cli::seal_resume::interrupted_before_staging(
-                &antseal_core::crypto::secrets::SealId::from_bytes([0xE4; 16]),
-            ),
-        ),
         // **D186** (S37), appended for D147's reason. The third money-moved
         // class, through its real producer — `From<SealError>` — with the
         // fault rendered as the sink renders a failed store write
@@ -590,6 +580,24 @@ fn exemplars() -> Vec<(&'static str, CliError)> {
                 },
                 detail: "a payment sub-batch transaction reverted on-chain".into(),
             }),
+        ),
+        // **D201** (U103 + U104), appended for D147's reason. The one site
+        // that changes class: an OS random source that could not supply a
+        // timestamp request nonce leaves 22 for `internal` (1), worded as a
+        // fault of the machine. Built through its real producer,
+        // `From<SealError>`, over the anchor crate's own value (D194 §2 R4);
+        // the six other sites share the variant and are asserted by their own
+        // tests.
+        (
+            "random-source-unavailable",
+            CliError::from(antseal_cli::pipeline::error::SealError::AnchorGate(
+                antseal_cli::pipeline::error::GateRefusal {
+                    seal_id: antseal_core::crypto::secrets::SealId::from_bytes([0xA1; 16]),
+                    error: antseal_anchor::gate::AnchorGateError::Entropy(
+                        antseal_anchor::nonce::NonceUnavailable,
+                    ),
+                },
+            )),
         ),
     ]
 }

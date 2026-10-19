@@ -144,7 +144,7 @@ pub use quote::{
     QuotePreimage, RewardsAddress, TxHash,
 };
 pub use receipt::{
-    BlobPaymentRecord, GasSummary, JournalReceipt, PaymentReceipt, RECEIPT_JOURNAL_VERSION,
-    ReceiptFormatError, TxRecord, TxStatus,
+    BlobPaymentRecord, CaptureOutcome, GasSummary, JournalReceipt, PaymentReceipt,
+    RECEIPT_JOURNAL_VERSION, ReceiptFormatError, TxRecord, TxStatus,
 };
 pub use wallet::{WalletImportError, WalletKey, WalletOpsError, checksummed};

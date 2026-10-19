@@ -57,8 +57,8 @@ for anything else should never be the address a vault pays from.
 
 A seal's whole public footprint is one ERC-20 `approve` followed by one
 `payForQuotes` call in the common case — up to 256 blob payments ride a
-single transaction (`crates/antseal-net/src/ant_backend.rs:36-40`,
-`:674-691`).
+single transaction (`crates/antseal-net/src/ant_backend.rs:61-65`,
+`:635-652`).
 
 **Nothing in that calldata says "antseal".** The payment struct is Autonomi's
 own three fields — the storage node's rewards address, an amount, and a quote
@@ -70,13 +70,13 @@ observer watching those payments sees an Autonomi user, not an antseal user.
 **The allowance is a different story, and this page records it without
 settling it.** Before paying, antseal approves the payment contract to spend
 **exactly the quoted total**, never an unlimited amount
-(`crates/antseal-net/src/ant_backend.rs:437-455`). Upstream Autonomi clients
+(`crates/antseal-net/src/ant_backend.rs:460-478`). Upstream Autonomi clients
 approve `U256::MAX` — unlimited — at the same point in the flow
 (`evmlib-0.9.0/src/wallet.rs:421`; `ant-core-0.5.0/src/data/client/payment.rs:130`
 documents *"Approves `U256::MAX` (unlimited) spending."*).
 
 Both clients skip the approval when the standing allowance already covers the
-bill (antseal at `crates/antseal-net/src/ant_backend.rs:446-448`, upstream at
+bill (antseal at `crates/antseal-net/src/ant_backend.rs:469-471`, upstream at
 `evmlib-0.9.0/src/wallet.rs:415`), so the shapes differ only in the amount —
 but that difference decides how often the step happens. An unlimited
 allowance is approved once and covers every later payment. An exact allowance
@@ -116,7 +116,7 @@ fresh and its funding being unlinked, which are things you control.
 ```
 
 (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:286-287`; the flag
-is defined at `crates/antseal-cli/src/cli.rs:436-439`.)
+is defined at `crates/antseal-cli/src/cli.rs:444-447`.)
 
 **The default is off and there is no configuration that changes it.** It is a
 plain boolean with no default value written anywhere and no config key behind
@@ -228,12 +228,12 @@ going to imply otherwise.** Measured on the frozen CLI surface:
   `reveal`, `verify`, `vault` and `abandon`
   (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16`).
 - The config file holds operator preferences only — *"never secrets, never
-  per-work"* (`crates/antseal-cli/src/config.rs:8`) — so no address can be
-  named there either.
+  per-work"* (`crates/antseal-cli/src/config.rs:8`), bar a provider's API key in
+  a `[verify]` URL (`docs/config.md`) — so no address can be named there either.
 - `antseal init` will not run twice in one place. A vault already at the
   target path is an absolute refusal with no `--force`, because overwriting
   one destroys the reveal and restore keys of every work it holds
-  (`crates/antseal-cli/src/init.rs:601-612`,
+  (`crates/antseal-cli/src/init.rs:623-635`,
   `crates/antseal-cli/src/vault/session.rs:225-232`).
 
 So the fresh-address recommendation has exactly one mechanism behind it: **a
@@ -317,7 +317,7 @@ What actually keeps two addresses apart:
   a work costs before you move anything.
 - **Never import the same key into two vaults.** `init --wallet import`
   exists for bringing your own key material in
-  (`crates/antseal-cli/src/init.rs:513-529`), and using it twice with one key
+  (`crates/antseal-cli/src/init.rs:537-560`), and using it twice with one key
   produces two vaults with one address, which is the appearance of hygiene
   with none of the substance.
 
@@ -373,15 +373,15 @@ Nothing above is asserted from memory. The primary sources:
 
 | claim | source |
 | --- | --- |
-| the flag, its help text and its default | `crates/antseal-cli/src/cli.rs:436-439`; `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:286-287` |
+| the flag, its help text and its default | `crates/antseal-cli/src/cli.rs:444-447`; `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:286-287` |
 | the include branch and the missing-receipt refusal | `crates/antseal-cli/src/pipeline/reveal.rs:653-657`, `:948-950` |
 | presence in the bundle is the opt-in | `crates/antseal-core/src/bundle/schema.rs:727-741` |
 | the whole journaled receipt is what ships | `crates/antseal-cli/src/pipeline/receipt_sink.rs:84-87` |
-| receipts are wallet-linkable, so they never reach a log | `crates/antseal-net/src/receipt.rs:155-158` |
+| receipts are wallet-linkable, so they never reach a log | `crates/antseal-net/src/receipt.rs:159-162` |
 | the consent-screen warning, as rendered | `crates/antseal-cli/src/reveal_consent.rs:131-134`; `crates/antseal-cli/tests/snapshots/reveal-consent.txt:50` |
 | the default is proven against produced bundle bytes | `crates/antseal-cli/tests/reveal_flow.rs:585-628`; `crates/antseal-cli/tests/reveal_output.rs:438-479` |
-| one payment call, up to 256 blobs | `crates/antseal-net/src/ant_backend.rs:36-40`, `:674-691` |
-| the exact-allowance approve, and upstream's unlimited one | `crates/antseal-net/src/ant_backend.rs:437-455`; `evmlib-0.9.0/src/wallet.rs:415`, `:421`; `ant-core-0.5.0/src/data/client/payment.rs:130` |
+| one payment call, up to 256 blobs | `crates/antseal-net/src/ant_backend.rs:61-65`, `:635-652` |
+| the exact-allowance approve, and upstream's unlimited one | `crates/antseal-net/src/ant_backend.rs:460-478`; `evmlib-0.9.0/src/wallet.rs:415`, `:421`; `ant-core-0.5.0/src/data/client/payment.rs:130` |
 | the allowance question is open and owned | row `Q240`; `docs/decisions/D73-external-completions-without-telemetry.md:743-750`; `docs/threat-model.md` §2.3 |
 | the signing key is per work | `crates/antseal-core/src/crypto/secrets.rs:43`; `crates/antseal-core/src/crypto/sig_ed25519.rs:252` |
 | a quote hash needs more than the blob address | `evmlib-0.9.0/src/data_payments.rs:130-134`, `:146-170` |
@@ -389,7 +389,7 @@ Nothing above is asserted from memory. The primary sources:
 | one vault has exactly one wallet record | `crates/antseal-cli/src/vault/cipher.rs:100-118` |
 | the only wallet flags, and the ten subcommands | `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16`, `:53-66` |
 | config holds no wallet and no per-work data | `crates/antseal-cli/src/config.rs:8` |
-| `init` refuses an existing vault, with no override | `crates/antseal-cli/src/init.rs:601-612`; `crates/antseal-cli/src/vault/session.rs:225-232` |
+| `init` refuses an existing vault, with no override | `crates/antseal-cli/src/init.rs:623-635`; `crates/antseal-cli/src/vault/session.rs:225-232` |
 | `ANTSEAL_DIR` is a path, never a secret | `crates/antseal-cli/src/vault/layout.rs:16`, `:75-86` |
 | the upgrade hook runs only for the unlocked vault | `crates/antseal-cli/src/upgrade_hook.rs:90-95` |
 | the receipt's class, and that it carries no time | `crates/antseal-core/src/verify/wording.rs:392`; `crates/antseal-core/src/verify/report.rs:743-757` |

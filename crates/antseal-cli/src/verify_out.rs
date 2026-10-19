@@ -104,6 +104,11 @@ const DETAIL_INDENT: &str = "      ";
 /// **one** value and cannot describe different runs.
 pub struct VerifyRun {
     outcome: VerifyOutcome,
+    /// Why `--live` made no connection to the network, when it made none —
+    /// the degrade's carried reason (R98, D199 §2 R3). Not antseal-authored
+    /// throughout, so it is never part of [`Self::render`] or [`Self::json`]
+    /// (R79): it leaves only as [`Self::live_note`], on stderr.
+    live_refusal: Option<String>,
 }
 
 impl VerifyRun {
@@ -111,6 +116,31 @@ impl VerifyRun {
     #[must_use]
     pub const fn outcome(&self) -> &VerifyOutcome {
         &self.outcome
+    }
+
+    /// The stderr note for a `--live` run that made no connection, or `None`
+    /// for every other run (R98, D199 §2 R3):
+    /// `` note: `verify --live` checked nothing — {reason} ``, the reason
+    /// passed through [`escape_for_terminal`], so it is exactly one line
+    /// whatever the connection error carried. A CLI diagnostic outside the
+    /// verdict document: the live section itself says `not-connected` in
+    /// closed words, and `--json` carries that closed value, never this text.
+    #[must_use]
+    pub fn live_note(&self) -> Option<String> {
+        self.live_refusal.as_deref().map(|reason| {
+            format!(
+                "note: `verify --live` checked nothing — {}",
+                escape_for_terminal(reason)
+            )
+        })
+    }
+
+    /// Attach why `--live` made no connection (R98). The live run's only
+    /// producer is [`crate::verify_host::run_verify_live`].
+    #[must_use]
+    pub(crate) fn with_live_refusal(mut self, reason: &str) -> Self {
+        self.live_refusal = Some(reason.to_owned());
+        self
     }
 
     /// D69's rung as a U2 class, or `None` for the clean verdict (exit 0).
@@ -404,7 +434,10 @@ where
     H: VerifyHost + ?Sized,
 {
     let outcome = verify_with_host(bundle, options, modes, host, &escape_for_terminal)?;
-    Ok(VerifyRun { outcome })
+    Ok(VerifyRun {
+        outcome,
+        live_refusal: None,
+    })
 }
 
 /// D69 §3 R2 routes the run error's two arms to two different classes, and

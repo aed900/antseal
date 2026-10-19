@@ -59,11 +59,11 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 # Internal path dep. The explicit `version` (matching the crate's own,
 # pre-publish 0.0.0) exists for the SEVEN NORMAL edges that inherit this
-# entry: cargo-deny's `wildcards = "deny"` (deny.toml:80) reds an implicit
+# entry: cargo-deny's `wildcards = "deny"` (deny.toml:126) reds an implicit
 # `*` on a path dep of a PUBLIC crate, and six of those seven are public
 # (antseal-wasm's is exempt via `publish = false`). It is NOT needed by the
 # nine `[dev-dependencies]` edges that also inherit it — `allow-wildcard-paths`
-# (deny.toml:81) exempts every dev edge and every private crate
+# (deny.toml:127) exempts every dev edge and every private crate
 # (cargo-deny 0.19.8, src/bans.rs:984-989, measured D158 §1.3). Those nine
 # inherit it anyway, and THAT is what makes all four publishable crates
 # unpackageable: D158 §2 R4 / Q241.

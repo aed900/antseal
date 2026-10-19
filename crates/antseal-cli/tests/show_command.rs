@@ -158,7 +158,7 @@ fn seal_fixture(mock: &MockBackend, vault: &UnlockedVault, scratch: &Scratch) ->
         dry_run: false,
         sig_policy: SigPolicy::hybrid(),
         // The production path fills `SealRequest.title` **from**
-        // `plan.shaping.title` (`seal_run.rs:507`) and stores the shaping on
+        // `plan.shaping.title` (`seal_run.rs:506`) and stores the shaping on
         // the record, so the fixture sets both from one value — as `seal`
         // does — and `show` reads the title where `list` and `status` read
         // it.

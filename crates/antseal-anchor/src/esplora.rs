@@ -63,6 +63,8 @@
 //! rendered as "corroborated by 1 of 2", and one esplora instance is exactly
 //! the trust level A16 exists to avoid.
 
+use std::time::Instant;
+
 use antseal_core::anchor::model::OnlineBlockResult;
 use antseal_core::bundle::registry::BLOCK_HEADER_LEN;
 
@@ -103,13 +105,37 @@ const BLOCK_HASH_HEX_LEN: usize = 64;
 /// `Agreed(None)` is an agreed absence (D56 rule O7). Everything else is
 /// [`Agreement::Disagreed`] or [`Agreement::Unavailable`], and neither may be
 /// projected into core — see [`into_online_block_result`].
+///
+/// Every request may start: this is the form for a caller with no time
+/// budget, which `verify --online` is. The opportunistic upgrade pass, which
+/// has one, confirms its headers through a deadline-taking sibling inside
+/// this crate (D202 R2).
 pub fn fetch_agreed_header(
     client: &HttpClient,
     pair: &EndpointPair,
     height: u64,
 ) -> Agreement<Option<BlockHeader>> {
+    fetch_agreed_header_by(client, pair, height, None)
+}
+
+/// [`fetch_agreed_header`], starting no request once `deadline` has passed
+/// (A141; D202 R2). `None` is no deadline.
+///
+/// The deadline gates **starts**, never completions: the substrate exposes no
+/// per-call deadline, so a request already in flight runs to its own timeout.
+/// Each endpoint checks it before each of its two GETs, which is what stops a
+/// slow first answer from carrying the second request past it. A request
+/// refused this way is [`EndpointFailure::NotStarted`], so the pair is
+/// [`Agreement::Unavailable`] — advisory and re-askable, and never an agreed
+/// header or an agreed absence.
+pub(crate) fn fetch_agreed_header_by(
+    client: &HttpClient,
+    pair: &EndpointPair,
+    height: u64,
+    deadline: Option<Instant>,
+) -> Agreement<Option<BlockHeader>> {
     fetch_and_agree(client, pair, |client, endpoint| {
-        header_at_height(client, endpoint, height)
+        header_at_height(client, endpoint, height, deadline)
     })
 }
 
@@ -130,12 +156,15 @@ pub fn into_online_block_result(
 }
 
 /// One endpoint's own answer: height → hash → header, with no input from the
-/// other endpoint at any step.
+/// other endpoint at any step — and neither of its two GETs starts once
+/// `deadline` has passed.
 fn header_at_height(
     client: &HttpClient,
     endpoint: &Endpoint,
     height: u64,
+    deadline: Option<Instant>,
 ) -> Result<Option<BlockHeader>, EndpointFailure> {
+    may_start(endpoint, deadline)?;
     let Some(hash) = block_hash_at_height(client, endpoint, height)? else {
         return Ok(None);
     };
@@ -145,6 +174,9 @@ fn header_at_height(
         &format!("{ESPLORA_BLOCK_PATH}/{hash}/{ESPLORA_HEADER_SUFFIX}"),
     );
     let target = reparse(endpoint, &url)?;
+    // Checked again here, not only once above: the first GET may have
+    // answered after the deadline, and this one would then start past it.
+    may_start(endpoint, deadline)?;
     let body = get(client, &target)?;
 
     // A 404 here is NOT an absent block: step 1 just told us this hash exists
@@ -256,6 +288,18 @@ fn join(endpoint: &Endpoint, path: &str) -> String {
 fn reparse(_endpoint: &Endpoint, url: &str) -> Result<Endpoint, EndpointFailure> {
     Endpoint::parse(url, crate::http::TlsPolicy::RequiredExceptLoopback)
         .map_err(|error| EndpointFailure::Http(error.into()))
+}
+
+/// Whether a request to `endpoint` may still start: `Ok` with no deadline or
+/// before it, [`EndpointFailure::NotStarted`] at or after it (D202 R2).
+///
+/// A check on the clock and nothing else — no socket is opened to make it,
+/// so a refused request leaves no trace at the endpoint.
+fn may_start(endpoint: &Endpoint, deadline: Option<Instant>) -> Result<(), EndpointFailure> {
+    match deadline {
+        Some(deadline) if Instant::now() >= deadline => Err(EndpointFailure::not_started(endpoint)),
+        _ => Ok(()),
+    }
 }
 
 fn get(client: &HttpClient, endpoint: &Endpoint) -> Result<Vec<u8>, EndpointFailure> {

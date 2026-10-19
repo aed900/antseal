@@ -16,8 +16,8 @@
 //!
 //! The obvious alternative — a channel the pipeline drains between
 //! sub-batches — cannot work, and the reason is worth stating where the
-//! code is. Upstream's hook is a **synchronous** `Fn(&PaymentReceipt)`
-//! invoked inline from `pay`'s own body, while the pipeline's future is
+//! code is. antseal-net's hook (`CaptureHook`) is a **synchronous** call
+//! made inline from `pay`'s own body, while the pipeline's future is
 //! suspended at `backend.pay(quote).await` **in the same task**. A channel
 //! `send` returns immediately and nobody can dequeue it: the only code that
 //! could is the caller currently blocked inside the call that fired the
@@ -28,8 +28,8 @@
 //! "Amendment — 2026-08-02 (S31)".)
 //!
 //! So [`VaultReceiptSink::capture`] performs U9's atomic + fsync'd write
-//! **inline**. The hook returns only once the receipt-so-far is on disk,
-//! and only then does upstream's loop submit the next sub-batch.
+//! **inline** and returns whether it became durable: the adapter's loop
+//! submits the next sub-batch only after a durable capture (S46).
 //!
 //! # The three properties the shape had to keep
 //!
@@ -61,7 +61,7 @@
 use std::sync::{Arc, Mutex};
 
 use antseal_core::crypto::secrets::SealId;
-use antseal_net::{JournalReceipt, PaymentReceipt};
+use antseal_net::{CaptureOutcome, JournalReceipt, PaymentReceipt};
 
 use super::journal::JournalError;
 use crate::rng::OsEntropy;
@@ -209,7 +209,7 @@ impl std::fmt::Display for ReceiptSinkFault {
 /// write → bookkeeping, and those must not interleave with an `arm` from
 /// another thread. In practice there is no contention at all — `pay`'s
 /// sub-batch loop is sequential and the pipeline is suspended inside it —
-/// but the sink is `Sync` by upstream's requirement, so the lock is what
+/// but antseal-net's hook type requires a `Sync` sink, so the lock is what
 /// makes that requirement honest rather than assumed.
 struct SinkState {
     target: Option<SealId>,
@@ -231,7 +231,9 @@ struct SinkState {
     /// receipt-so-far), so a failed capture is *healed* by any later
     /// durable one, and only the latest says whether the vault holds what
     /// was bought. Reading `fault` instead would call a healed payment
-    /// unrecorded.
+    /// unrecorded. Since S46 (D198) the adapter's loop makes no capture after
+    /// a not-durable one, so no `pay` produces that heal any more; the rule
+    /// stays, because it is what the predicate means.
     unrecorded: Option<ReceiptSinkFault>,
     /// The test seam (D186): fail this many upcoming writes, so a
     /// fail-then-heal sequence can be scripted without a broken disk.
@@ -253,18 +255,22 @@ impl SinkState {
     /// A capture that did not become durable. It sets the S37 predicate as
     /// well as the diagnostic slot. Only the three capture outcomes come
     /// here (`NotArmed`, `Encode`, `Write`) and never `Rearmed`, which
-    /// re-targets and still writes (D186 R1).
-    fn not_durable(&mut self, fault: ReceiptSinkFault) {
+    /// re-targets and still writes (D186 R1). It returns the verdict
+    /// `capture` answers (S46), so the answer and the predicate cannot part.
+    fn not_durable(&mut self, fault: ReceiptSinkFault) -> CaptureOutcome {
         self.unrecorded = Some(fault.clone());
         self.note(fault);
+        CaptureOutcome::NotDurable
     }
 
     /// A capture that reached the disk. It clears the S37 predicate: the
     /// receipt it wrote is cumulative, so it covers whatever an earlier
-    /// failed capture of this payment had dropped.
-    fn durable(&mut self) {
+    /// failed capture of this payment had dropped. It returns the verdict
+    /// `capture` answers (S46).
+    fn durable(&mut self) -> CaptureOutcome {
         self.writes += 1;
         self.unrecorded = None;
+        CaptureOutcome::Durable
     }
 }
 
@@ -388,20 +394,29 @@ impl VaultReceiptSink {
         self.lock().fail_next_writes = n;
     }
 
-    /// Journal the receipt-so-far, synchronously.
+    /// Journal the receipt-so-far, synchronously, and say whether it became
+    /// durable.
     ///
-    /// This is the whole point: when it returns, the record is on disk
-    /// (U9's `put_receipt` is atomic and fsync'd), and upstream's loop has
-    /// not yet submitted the next sub-batch. Later, more complete receipts
-    /// overwrite earlier partial ones — the same idempotence
+    /// This is the whole point: when it returns [`CaptureOutcome::Durable`],
+    /// the record is on disk (U9's `put_receipt` is atomic and fsync'd), and
+    /// the adapter's loop has not yet submitted the next sub-batch. When it
+    /// returns [`CaptureOutcome::NotDurable`] — the failure is then in
+    /// [`Self::unrecorded`] and [`Self::fault`] — that loop submits no further
+    /// sub-batch and fails with `StrandedPayment` (S46), so at most one
+    /// sub-batch is paid without a record; after the last sub-batch it stops
+    /// nothing, and the pipeline's own write is the second chance (D186 R3).
+    /// The answer is the S37 predicate's: `Durable` exactly where this
+    /// capture cleared [`Self::unrecorded`], `NotDurable` where it set it.
+    ///
+    /// Later, more complete receipts overwrite earlier partial ones — the
+    /// same idempotence
     /// [`SealJournal::put_receipt`](super::journal::SealJournal::put_receipt)
     /// documents, which is also how the pipeline's own post-`pay` write
     /// supersedes the last capture.
-    pub fn capture(&self, receipt: &PaymentReceipt) {
+    pub fn capture(&self, receipt: &PaymentReceipt) -> CaptureOutcome {
         let mut state = self.lock();
         let Some(seal_id) = state.target else {
-            state.not_durable(ReceiptSinkFault::NotArmed);
-            return;
+            return state.not_durable(ReceiptSinkFault::NotArmed);
         };
         // Never write less than what is already durable: on a remainder
         // payment the receipt-so-far covers only this round's sub-batches,
@@ -412,19 +427,15 @@ impl VaultReceiptSink {
         };
         let bytes = match encode_receipt(&record) {
             Ok(bytes) => bytes,
-            Err(_) => {
-                state.not_durable(ReceiptSinkFault::Encode);
-                return;
-            }
+            Err(_) => return state.not_durable(ReceiptSinkFault::Encode),
         };
         #[cfg(test)]
         {
             if state.fail_next_writes > 0 {
                 state.fail_next_writes -= 1;
-                state.not_durable(ReceiptSinkFault::Write {
+                return state.not_durable(ReceiptSinkFault::Write {
                     detail: "injected write failure (test seam)".to_owned(),
                 });
-                return;
             }
         }
         let store = WorkStore::new(self.vault.as_ref());
@@ -453,7 +464,7 @@ mod tests {
     use std::sync::Arc;
 
     use antseal_core::crypto::secrets::{MasterSecret, SealId};
-    use antseal_net::{GasSummary, PaymentReceipt};
+    use antseal_net::{CaptureOutcome, GasSummary, PaymentReceipt};
 
     use super::{ReceiptSinkFault, VaultReceiptSink};
     use crate::pipeline::journal::{SealJournal, WorkIdentity};
@@ -463,7 +474,7 @@ mod tests {
     use crate::vault::session::{UnlockedVault, create_vault, unlock_vault};
     use crate::vault::store::{SealShapingFlags, WorkStore};
 
-    /// The sink must satisfy upstream's `CaptureHook` bounds without the
+    /// The sink must satisfy antseal-net's `CaptureHook` bounds without the
     /// `ant-backend` feature being on — if this ever stops holding, the
     /// gated `impl ReceiptSink for VaultReceiptSink` in `backend.rs` stops
     /// compiling in a lane no required gate runs.
@@ -566,7 +577,11 @@ mod tests {
             "nothing is journaled before the first capture"
         );
 
-        sink.capture(&receipt(4_242));
+        assert_eq!(
+            sink.capture(&receipt(4_242)),
+            CaptureOutcome::Durable,
+            "a durable write answers Durable (S46)"
+        );
 
         let read_back = reader
             .receipt(&fx.seal_id)
@@ -674,7 +689,11 @@ mod tests {
         let fx = Fixture::new("unarmed");
         let sink = VaultReceiptSink::new(Arc::clone(&fx.vault));
 
-        sink.capture(&receipt(1));
+        assert_eq!(
+            sink.capture(&receipt(1)),
+            CaptureOutcome::NotDurable,
+            "a dropped receipt answers NotDurable (S46)"
+        );
 
         assert_eq!(sink.writes(), 0);
         assert_eq!(sink.fault(), Some(ReceiptSinkFault::NotArmed));
@@ -720,7 +739,11 @@ mod tests {
         let ghost = SealId::generate(&mut rng).expect("seal id");
         sink.arm(&ghost, None);
 
-        sink.capture(&receipt(9));
+        assert_eq!(
+            sink.capture(&receipt(9)),
+            CaptureOutcome::NotDurable,
+            "a failed write answers NotDurable (S46)"
+        );
 
         assert_eq!(sink.writes(), 0);
         match sink.fault() {
@@ -753,7 +776,11 @@ mod tests {
         };
 
         sink.fail_next_writes(1);
-        sink.capture(&receipt(10));
+        assert_eq!(
+            sink.capture(&receipt(10)),
+            CaptureOutcome::NotDurable,
+            "an injected write failure answers NotDurable (S46)"
+        );
         let first = sink.unrecorded().expect("the failed capture is unrecorded");
         assert!(matches!(first, ReceiptSinkFault::Write { .. }), "{first:?}");
         assert_eq!(
@@ -762,7 +789,11 @@ mod tests {
             "positive control: nothing reached the disk"
         );
 
-        sink.capture(&receipt(20));
+        assert_eq!(
+            sink.capture(&receipt(20)),
+            CaptureOutcome::Durable,
+            "the healing write answers Durable (S46)"
+        );
         assert_eq!(
             sink.unrecorded(),
             None,
@@ -776,7 +807,11 @@ mod tests {
         assert_eq!(durable_cost(), Some(20));
 
         sink.fail_next_writes(1);
-        sink.capture(&receipt(30));
+        assert_eq!(
+            sink.capture(&receipt(30)),
+            CaptureOutcome::NotDurable,
+            "the second injected failure answers NotDurable (S46)"
+        );
         assert_eq!(
             sink.unrecorded(),
             Some(first),
