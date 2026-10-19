@@ -351,3 +351,23 @@ Three closes and three reopens since 2026-09-12, none with a change to `crypto/h
 **A dismissal holds where `fixed` does not.** #23, the same rule two lines up (`crypto/hkdf.rs:474`), dismissed 2026-09-13, was last re-detected at `974d9ad` on 2026-10-15 and is still `dismissed`, unchanged since its dismissal.
 
 **Visibility, re-measured 2026-10-15**: an anonymous `GET` of the alerts API returns 401 and the anonymous web pages for code scanning return 404, as `Q271`'s note measured in September. These alerts are visible only to accounts with write access.
+
+## Addendum — 2026-10-19: #8 came back as #67, re-keyed by a test added after it, and was dismissed by class
+
+**#67 is #8's finding under a new number.** The Rust analysis of `4aa04b6` (2026-10-19T19:20:09Z) set #8's `fixed_at` to that instant, while its `state` stays `dismissed`. It also opened #67: the same rule (`rust/cleartext-logging`), column 43 and message, on the same code, `assert!(!rendered.contains("ab"), "{rendered}")` in the test `debug_never_prints_key_bytes`, now at `crates/antseal-cli/src/vault/keyfile.rs:441`.
+
+**The text after the line re-keyed it, not the move.** Code scanning keys an alert by its `primaryLocationLineHash`, a rolling hash of the 100 non-blank characters from the start of the flagged line. A local re-implementation of that hash reproduces all six values the two analyses recorded for the alerts in `vault/keyfile.rs` and `vault/cipher.rs`:
+
+| alert | `07a170c` (analysis `1979395115`) | `4aa04b6` (analysis `1983498613`) | number |
+|---|---|---|---|
+| CL, `keyfile.rs`, the test assertion | `:437` `ddd3b4f7afe2ec16:1` | `:441` `601112c5cb0bf0fb:1` | #8, then #67 |
+| HC, `keyfile.rs`, the HKDF output buffer | `:261` `39954406f29f0d51:1` | `:265` `39954406f29f0d51:1` | #26 kept |
+| HC, `cipher.rs`, the fixture vault key | `:322` `df0bf78392a087f5:1` | `:325` `df0bf78392a087f5:1` | #25 kept |
+
+#8's line sat three lines from the end of the file, so its window ran through the end of the test and of `mod tests`. Wave 39 (`U104`, D201) inserted new test code directly after it. Two controls support this. The `4aa04b6` file with that test removed hashes `:441` to `ddd3b4f7afe2ec16:1`, #8's own value. The `07a170c` file with four lines inserted above `:261` keeps both hashes. So a move alone keeps an alert and its dismissal. An edit inside the 100 non-blank characters from a dismissed alert's line re-opens it under a new number.
+
+| # | rule | state | location | class | verdict | reason |
+|---:|---|---|---|---|---|---|
+| 67 | CL | dismissed | `crates/antseal-cli/src/vault/keyfile.rs:441` | L-TEST | used in tests | `#[cfg(test)]` (keyfile.rs:306); prints `KeyfileSecret(<redacted>)` for a fixture key; #8's finding, re-keyed |
+
+**Dismissed 2026-10-19 by class**, as D169 §2 R1 rules: L-TEST, reason `used in tests`. The Rust analysis of `ab640ae` (`1984302154`, 59 results) had detected #67 again first and opened nothing new. Consent: the maintainer's words *“consent to 1 and 2”*, in direct reply to a numbered request whose item 2 read *“Dismiss CodeQL alert #67 as "used in tests", the same treatment #8 got.”* Read back from a separate `GET` after the write: `state` `dismissed`, `dismissed_reason` `used in tests`, `dismissed_by` `aed900`, at 2026-10-19T21:22:13Z, and the comment equal byte for byte to the one sent: *“Q271/D169 class L-TEST: test assertion text printing a redacted Debug form; source is fixture data. #8's finding (keyfile.rs:437, now :441, code unchanged), re-keyed by a test added after it; dismissed by class per D169 §2 R1. Record: docs/reviews/codeql-triage-2026-09-13.md”* #8 is unchanged. Totals: **0 open, 66 dismissed, 1 fixed** (#6).
