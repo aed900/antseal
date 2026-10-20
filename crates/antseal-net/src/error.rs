@@ -34,11 +34,13 @@ pub enum StorageError {
         /// Diagnostic detail.
         reason: String,
     },
-    /// Payment submission failed **before any transaction landed** (no
-    /// money moved). A failure after one or more sub-batch txs landed is
-    /// [`StorageError::StrandedPayment`] instead — the distinction is the
-    /// whole point of the split.
-    #[error("payment failed before any transaction landed: {reason}")]
+    /// Payment failed **before any ANT moved**. Gas may have been spent —
+    /// by a token approval, or by a first payment sub-batch that reverted
+    /// on-chain (S50) — but no quote is paid and nothing is journaled, so a
+    /// resume quotes and pays everything afresh. A failure after one or
+    /// more sub-batch txs landed is [`StorageError::StrandedPayment`]
+    /// instead — the distinction is the whole point of the split.
+    #[error("payment failed before any ANT moved: {reason}")]
     Payment {
         /// Diagnostic detail.
         reason: String,
@@ -78,7 +80,9 @@ pub enum StorageError {
         reason: String,
     },
     /// Payment failed **mid-sequence with money already moved**: one or
-    /// more sub-batch txs landed before the failure. The adapter hands the
+    /// more sub-batch txs landed before the failure. A revert reports at
+    /// least one landing (S50); only an unobserved first landing reports 0,
+    /// because there money may have moved. The adapter hands the
     /// partial quote→tx map to its capture hook before this error surfaces
     /// (D37 Decisions 2 and 7), but **whether that record became durable is
     /// the hook's to report, not this error's**: when the latest capture was

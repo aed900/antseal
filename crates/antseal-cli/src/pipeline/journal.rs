@@ -1120,6 +1120,53 @@ pub fn recorded_state(
     }
 }
 
+/// The coarse state a reader classifies a work by: the fine tag's
+/// [`SealState::work_state`] whenever the journal carries a tag, and the
+/// meta record's mirror only when it does not (**D203 R1**, S48).
+///
+/// The mirror can only ever *trail* the tag. `VaultJournal::write_state`
+/// writes the tag first and the mirror second, each through the store's
+/// atomic, fsync'd write, so a kill between them leaves "tag only" and never
+/// "mirror only" — and the store's mirror-only writers have no production
+/// caller. Where a tag exists it is therefore the answer, and a reader that
+/// takes the mirror there classifies a work by a transition it has already
+/// left: an abandoned work offered as a resume (S48's window A), a complete
+/// one listed incomplete and refused by `restore` and `reveal` (window B).
+/// The mirror answers for exactly the works with no tag — one killed inside
+/// `begin` (two writes, D106 W2), or one imported from an export made before
+/// S29 kept journal entries 0–2.
+///
+/// Every classifying production reader takes this (D203 R2), so there is
+/// nothing for a writer to repair. Whether money moved is not a state
+/// question: the receipt answers it ([`payment_recorded`]).
+#[must_use]
+pub const fn effective_work_state(fine: Option<SealState>, mirror: WorkState) -> WorkState {
+    match fine {
+        Some(state) => state.work_state(),
+        None => mirror,
+    }
+}
+
+/// Whether the vault records a payment for a work: it holds a receipt that
+/// maps at least one quote to a transaction (**D203 M1**, U109).
+///
+/// That is exactly the set of quotes a resume will not buy again (D37
+/// Decision 5), and what exit 28 promises. A mapping to a `Submitted`
+/// transaction — an unobserved landing — counts, because money *may* have
+/// moved. A `Reverted` transaction is never mapped, so a receipt that
+/// journaled nothing but a reverted first sub-batch (written before S50)
+/// answers `false`.
+///
+/// `false` is not "nothing was paid". After an exit 37 with no durable
+/// capture the vault holds no record that money moved at all, and a consent
+/// record is an authorisation, not a payment. So copy built on `false` says
+/// "no payment is recorded", never "nothing was paid". The receipt itself is
+/// read with [`recorded_receipt`](super::receipt_sink::recorded_receipt).
+#[must_use]
+pub fn payment_recorded(receipt: Option<&PaymentReceipt>) -> bool {
+    receipt.is_some_and(|receipt| !receipt.tx_map.is_empty())
+}
+
 /// The journaled [`SealPlan`], read straight from U9's store — the
 /// [`recorded_state`] shape for entry [`PLAN_ENTRY`] (`status`, U23).
 ///

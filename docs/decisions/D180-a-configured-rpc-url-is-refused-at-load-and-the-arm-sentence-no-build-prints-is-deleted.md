@@ -455,3 +455,36 @@ build says more than the ruling did:
 ## Closing — this record is not consent
 
 It changes code, tests and documents. It authorises no network act beyond the local devnet.
+
+## Addendum — 2026-10-20 (wave 40, D207 §2 R5): the refusal's scope is every table, not only `[networks.<id>]`
+
+§2 R1 refuses `rpc_url` *"under any `[networks.<id>]`"*. Everywhere else the key was an unknown
+key and only warned. Wave 40's planning lane executed it at `6e1cab3` at the top level and under
+`[verify]`, `[verify.arbitrum-one]`, `[verify.arbitrum-sepolia]` and `[anchors]`: exit 4 on
+`--json verify` each time, after one *"unknown key … — ignored (newer antseal?)"* warning (D207
+§1.1). This record's own reason for refusing — *"The rule that unknown keys only warn points the
+other way here. An older binary that cannot honour a future `rpc_url` should refuse it, and no
+release exists yet that a refusal could break"* (`:19-20`) — holds in those tables too, and the
+`[verify.arbitrum-one]` case is a plausible guess for the receipt RPC. **D207 (`U107`) widens
+the scope.**
+
+- **`rpc_url` is refused at load in every table:** exit 17 (`malformed-config`), raised on the
+  key before the value is parsed, never repeating the value. Outside `[networks.<id>]` the refusal
+  goes through D196's `KEY_HOMES`, with a `Home` variant of its own.
+- **Its words there name both facts:** antseal reads no payment-RPC override, and the receipt
+  check's pair is `rpc_endpoints` under `[verify.arbitrum-one]` or `[verify.arbitrum-sepolia]`
+  (*"in this table"* when the key sits in one). The generic retired text of `arbitrum_endpoints`
+  was refused for it: it would tell a payment-RPC user that `rpc_endpoints` replaces the key.
+- **Under `[networks.<id>]` nothing changes.** The check in `config::parse` (§2 R1's amended
+  order) still runs first with this record's text, §2 R2's order still holds (an unknown network
+  keeps *"not a known network"*), and the two pinned tests (`config_file.rs:1189`, `:1271` at
+  `6e1cab3`) stay green unchanged. Folding this check into `KEY_HOMES` was refused as churn
+  (D207 §2 R2).
+- **A future wiring (§2 R5) meets one more surface.** D207's texts say that antseal reads no
+  payment-RPC override, so a wiring would make them false and would have to change them too
+  (D207 §4). §2 R5 itself is unchanged.
+- `CONTRIBUTING.md:316` and `docs/threat-model.md:944` (*"`rpc_url` is refused at load"*) state
+  no scope and stay true; `docs/config.md`'s three `[networks.*]`-scoped passages move with D207
+  (§2 R3).
+
+The rulings above are not rewritten.

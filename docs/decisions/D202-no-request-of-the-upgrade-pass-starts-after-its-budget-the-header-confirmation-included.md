@@ -454,3 +454,57 @@ It changes when the opportunistic upgrade pass may start a request, inside the w
 commits. Nothing in it authorises a push, a workflow dispatch, a deploy or any other outward
 act; each of those needs the maintainer's express consent naming the action, the destination and
 the account.
+
+## Addendum — 2026-10-20 (wave 40, `A142`): §2 R2's "existing signatures stay" is answered — `confirm_header` takes the deadline itself
+
+§2 R2 ruled: *"The existing signatures stay for `verify --online`
+(`crates/antseal-cli/src/verify_host.rs:166`), which passes no deadline"* (`:191-192`). §6's
+deviation 1 found that premise half true: `verify --online` calls `fetch_agreed_header` but
+never called `confirm_header`, whose only production caller was the engine (`:354-358`). So as
+built, `confirm_header` stayed `pub` and re-exported with only tests calling it, and the
+register carries the fix as `A142` (`TODO.md:1097`). At `6e1cab3`:
+- `confirm_header` is a `pub` wrapper (`crates/antseal-anchor/src/ots/upgrade.rs:539-546`) that
+  delegates with `None` to `pub(crate) fn confirm_header_by` (`:558`), and `ots/mod.rs:47`
+  re-exports it;
+- the engine imports and calls the sibling (`ots/engine.rs:72`, and `:586`
+  `match confirm_header_by(client, pair, attestation, fetch_date, deadline) {`);
+- `confirm_header`'s six callers are tests: five in `ots/upgrade/tests.rs` (`:767`, `:800`,
+  `:827`, `:850`, `:868`) and one in `ots/engine/tests.rs:642`, through the re-export.
+
+**Wave 40 rules `A142` by its own Do, without a new record**, on planning lane P3's
+measurements, each executed in a shadow copy with a private target:
+- **Demotion alone does not build.** `pub(crate)` plus the re-export dropped makes
+  `cargo clippy -p antseal-anchor --all-targets -- -D warnings` exit 101 on *"function
+  `confirm_header` is never used"* (`-D dead-code`, implied by `-D warnings`): a `pub(crate)`
+  function whose only callers are `#[cfg(test)]` is dead in the lib target. The orchestrator's
+  lean (*"demote confirm_header to pub(crate) (or delete it and point its six test sites at
+  confirm_header_by) and drop it from ots/mod.rs's re-export"*) therefore fell (c) on its first
+  branch; its delete-and-repoint branch builds and was an equal alternative.
+- **The fold is ruled.** One `pub fn confirm_header(client, pair, attestation, fetch_date,
+  deadline: Option<Instant>)`; the no-deadline wrapper and the `confirm_header_by` name go; the
+  engine calls the folded function with its deadline; the six test sites pass `None`; the two docs
+  merge (the wrapper's `# Errors` and the deadline paragraph). `ots/mod.rs:47` is untouched and
+  stays true. In P3's shadow: clippy exit 0, `antseal-anchor` lib `220 passed; 0 failed;
+  1 ignored`, net −11 lines over four files (+14/−25, measured by the implementing lane; the planner's estimate was −10).
+- **§2 R2's *"existing signatures stay"* now holds for `fetch_agreed_header` only.** It keeps its
+  signature for `verify --online` (`verify_host.rs:175` at `6e1cab3`) and still delegates with
+  `None` to `fetch_agreed_header_by`; `esplora.rs`'s *"deadline-taking sibling inside this crate
+  (D202 R2)"* names that sibling and stays true. `confirm_header` takes the deadline itself.
+- **The rule applied** is the one D190 §2 R2 cites from `R91`'s Accept: a public function
+  *"either has a production caller or does not exist"* (D190:224-225). No consumer outside the
+  workspace is promised: no `antseal*` crate is published at M4 (D72:562), and release tags follow
+  SemVer over the CLI surface (`docs/user/versioning.md:129`).
+- **The Accept's grep, with its control:** `command grep -n 'confirm_header('
+  crates/antseal-anchor/src/ots/engine.rs` finds 0 lines at `6e1cab3`, where the engine calls
+  `confirm_header_by(`, and must find exactly 1 production call after the fold; the control
+  `poll_upgrade(` finds 1.
+- **The fold keeps this record's deadline observable.** Plant P-A1 — the engine passes `None`
+  instead of `deadline` to the folded function — executed by P3 on the folded shadow, gave
+  `219 passed; 1 failed`, the one red row being `a_confirmation_starts_no_request_after_the_budget`
+  (*"a header GET started after the budget was spent"*). The lane owes the same plant.
+
+§2 R1–R4 are unchanged: the deadline still reaches each of the confirmation's GETs, and only the
+name the engine calls changes. Lane L-ANCHOR3 implements the fold in wave 40. Not in `A142`: the
+seven other `pub fn`s of `antseal-anchor` with no production caller, which P3 found by a
+compiler-resolved census (86 of 94 `pub fn`s used, 8 not, `A142` among the 8) and this wave's
+rulings mint as `A143`. The text above stays as written.

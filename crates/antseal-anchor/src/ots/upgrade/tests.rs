@@ -769,6 +769,7 @@ fn an_agreeing_pair_whose_header_commits_the_attestation_is_accepted() {
         &esplora_pair(&first, &second),
         &bitcoin_attestation_at(crate::testing::replay::RECORDED_HEIGHT, root),
         1_754_211_818,
+        None,
     )
     .expect("an agreeing, committing pair");
 
@@ -802,6 +803,7 @@ fn a_wrong_header_is_rejected_before_recording() {
         &pair,
         &bitcoin_attestation_at(crate::testing::replay::RECORDED_HEIGHT, [0x5a; 32]),
         0,
+        None,
     )
     .expect_err("a non-committing header must be refused");
     assert_eq!(
@@ -829,6 +831,7 @@ fn a_disagreeing_pair_records_nothing() {
         &esplora_pair(&honest, &liar),
         &bitcoin_attestation_at(crate::testing::replay::RECORDED_HEIGHT, root),
         0,
+        None,
     )
     .expect_err("a disagreeing pair must record nothing");
     assert_eq!(
@@ -852,6 +855,7 @@ fn an_unreachable_pair_records_nothing() {
             &esplora_pair(&down, &other),
             &bitcoin_attestation_at(crate::testing::replay::RECORDED_HEIGHT, [0; 32]),
             0,
+            None,
         ),
         Err(HeaderError::NotAgreed { .. })
     ));
@@ -870,6 +874,7 @@ fn an_agreed_absence_is_refused() {
             &esplora_pair(&first, &second),
             &bitcoin_attestation_at(crate::testing::replay::RECORDED_HEIGHT, [0; 32]),
             0,
+            None,
         ),
         Err(HeaderError::NoSuchBlock { .. })
     ));

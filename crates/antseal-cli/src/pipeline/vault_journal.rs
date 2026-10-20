@@ -11,11 +11,11 @@
 //!
 //! State lives in the fine [`SealState`] record (journal entry
 //! [`STATE_ENTRY`]); U9's coarse [`WorkState`] in the meta record is a
-//! **derived mirror**, written in the same call so `list`/`status`/D45's
-//! resume scan never decrypt a journal entry to know where a work stands.
-//! [`SealJournal::state`] reads the fine tag; if the two ever disagreed,
-//! the fine tag is authoritative and the mirror is what a repair would
-//! rewrite.
+//! **derived mirror**, written second in the same call, so it can only
+//! trail the tag. Every classifying reader takes the tag when one exists
+//! and the mirror only when it is absent (D203 R1–R2,
+//! `effective_work_state`), and nothing repairs the mirror (D203 R3).
+//! [`SealJournal::state`] reads the fine tag, which is authoritative.
 //!
 //! # The RNG lives here
 //!
@@ -136,8 +136,14 @@ impl<'v, R: TryCryptoRng + ?Sized> VaultJournal<'v, R> {
 
     /// Write a transition: the fine tag first (authoritative), the coarse
     /// mirror second. A crash between them leaves the mirror one barrier
-    /// stale, which no safety rule reads — whereas the reverse could show a
-    /// work as paid before its receipt-bearing state record exists.
+    /// stale — the tag already holds the new state, the mirror the old one.
+    /// That is safe only because every reader that classifies a work takes
+    /// the tag whenever one exists
+    /// ([`effective_work_state`](super::journal::effective_work_state), D203
+    /// R1–R2). S48 measured the opposite at 6e1cab3: eleven readers keyed on
+    /// the mirror, and this window made an abandoned work resumable and a
+    /// complete one a dead end. The reverse order could show a work as paid
+    /// before its receipt-bearing state record exists.
     fn write_state(&self, seal_id: &SealId, state: SealState) -> Result<(), JournalError> {
         let bytes = encode_state(state)?;
         {

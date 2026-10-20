@@ -566,3 +566,36 @@ It turns a class of config warnings into refusals and moves one validation from 
 inside the wave's own commits. Nothing in it authorises a push, a workflow dispatch, a deploy or
 any other outward act; each of those needs the maintainer's express consent naming the action,
 the destination and the account.
+
+## Addendum — 2026-10-20 (wave 40, D207 §2 R5): `rpc_url` outside `[networks.*]` enters `KEY_HOMES`, with words of its own
+
+§4 left this open — *"**`rpc_url` outside `[networks.*]`.** Whether it enters `KEY_HOMES` is
+the lane's choice (P2 listed it as optional); D180's refusal in every `[networks.*]` table is
+unchanged either way"* (`:374-375`) — and §6 listed *"Refuse `rpc_url` outside `[networks.*]`;
+§4 left this to the lane"* among the lane's unnumbered proposals (`:553`). The lane did not take
+it, and the register now carries it as `U107` (`TODO.md:1102`). **D207 (`U107`) answers both.**
+
+- **Measured first, at `6e1cab3`:** `rpc_url` written at the top level or under `[verify]`,
+  `[verify.arbitrum-one]`, `[verify.arbitrum-sepolia]` or `[anchors]` only warned (exit 4 on
+  `--json verify`), and of the 9 names the loader has ever matched it was the only one that still
+  warned anywhere (D207 §1.1, §1.3).
+- **`rpc_url` enters `KEY_HOMES`**, through a new `Home` variant: a malformed config (exit 17)
+  in every table, raised on the key before the value is parsed, never repeating the value.
+- **Its words are not `arbitrum_endpoints`' retired text.** That redirect (*"the Arbitrum RPC
+  pair is set per network — write `rpc_endpoints` … instead"*) is right for a key that was a
+  receipt pair, and false for a payment-RPC user outside `[verify.<net>]`: antseal reads no
+  payment-RPC override at all. D207's two texts say both facts — no payment-RPC override, and the
+  receipt check's pair is `rpc_endpoints` — and under `[verify.<net>]` they say *"in this table"*,
+  as §2 R2 does for `arbitrum_endpoints`.
+- **§2 R2's *"`rpc_url` stays refused in every `[networks.*]` table (D180)"* holds unchanged.**
+  D180's check in `config::parse` still runs first, with its own text, and its two pinned tests
+  stay green.
+- **One sentence of this record's code becomes false and is rewritten by D207's lane:** the
+  `KEY_HOMES` doc's *"and `rpc_url` keeps its own refusal in `[networks.*]` only (D180)"*
+  (`crates/antseal-cli/src/config.rs:753-754` at `6e1cab3`), with the module doc and
+  `docs/config.md`'s three `rpc_url` passages (D207 §2 R3).
+- **G100-3 does not move:** `rpc_url` is a retired name, not a key of the full schema, so its
+  count of 8 stands. §2 R1's ground — *"a warned override quietly uses the very defaults it was
+  written to replace"* — now reaches every name the loader has ever matched.
+
+The rest of this record stands. The text above stays as written.

@@ -1273,3 +1273,29 @@ Assign an id to §4's routed rows from inside this record (they are described,
 not numbered), tick U86 (this is a planning lane; nothing was implemented), edit
 any Rust source or snapshot, or run `scripts/local-gate.sh` or any
 `--self-test` while other lanes hold this tree.
+
+## Addendum — 2026-10-20 (wave 40, D205 §2 R6): §4.4's "safe direction" is true of an empty directory only
+
+§4.4 (`:1141-1149`) recorded that the shipped predicate is `header.exists()`
+and judged its divergence from D39:142-145 to be *"in the **safe** direction
+(an empty directory holds no `W` to destroy)"*. That is true of an **empty**
+directory only. Wave 40's planning lane executed two non-empty directories the
+paragraph did not consider (D205 §1.3–1.4):
+- a hand-written `config.toml` alone: `init` exited 0 and replaced it;
+- a vault whose `vault.header` alone had been moved aside: `init` exited 0 and
+  replaced `store/check` and `store/wallet`, and the old header then failed to
+  unlock the store (`list`, exit 12).
+
+**D205 §2 R1** closes both with a second check placed after the `header.exists()`
+gate, before any passphrase is asked: a directory with no header that holds
+any file other than `vault.lock`, at any depth, is refused in the usage class
+(exit 2). §2 R1 of this record stands: the gate does not move, and the new
+check decodes nothing — it asks only whether a file is there, and its text
+names paths, never contents. The empty-directory allowance §4.4 described also
+stands: directories alone and a lone `vault.lock` do not count, so `init` still
+proceeds in an empty directory, in the directory its own handler has just
+locked, and over the empty directories a failed KDF leaves.
+
+R7's choice not to amend D39:142-145 also stands; D39 takes its own addendum
+from D205. §4.3's second author (`vault/session.rs:224-232`) is untouched.
+This record is not rewritten.

@@ -1051,3 +1051,340 @@ fn passphrase_fd_of(dir: &TestDir) -> u32 {
     let file = std::fs::File::open(&path).expect("open passphrase file");
     u32::try_from(file.into_raw_fd()).expect("fd fits u32")
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// U105 (D205): a directory that holds files but no vault header
+// ─────────────────────────────────────────────────────────────────────
+
+/// The marker a hand-written `config.toml` carries in an endpoint URL's
+/// path, where a provider's API key would sit (D195): a refusal must never
+/// repeat it. NON-SECRET: a fixture string, not a key.
+const CONFIG_CANARY: &str = "CANARY-U105-not-a-real-key";
+
+/// A `config.toml` as a user who wrote one before running `init` would have
+/// it: a comment, a network, an anchor setting, and a receipt-check pair
+/// whose first URL carries [`CONFIG_CANARY`] in its path. Inside the
+/// loader's subset, so the spawned check reaches `init` at all (a malformed
+/// file is refused at dispatch, exit 17, before any handler runs).
+fn hand_written_config() -> String {
+    format!(
+        "# written by hand before `antseal init` ran\n\
+         default_network = \"arbitrum-sepolia\"\n\
+         \n\
+         [anchors]\n\
+         opportunistic_upgrades = false\n\
+         \n\
+         [verify.arbitrum-one]\n\
+         rpc_endpoints = [\"https://arb1.example/v2/{CONFIG_CANARY}\", \
+         \"https://arb2.example/rpc\"]\n"
+    )
+}
+
+/// The lockfile the handler creates before `run_init` runs (`commands.rs`:
+/// `create_dir_all`, then `VaultLock::acquire`) and a refused `init` leaves
+/// behind, with the bytes a real one holds: a pid and a newline.
+fn write_lockfile(layout: &VaultLayout) {
+    std::fs::create_dir_all(layout.root()).expect("create the vault directory");
+    std::fs::write(layout.beside_path(BesideFile::Lockfile), b"4242424\n")
+        .expect("write vault.lock");
+}
+
+/// **U105 (D205 R1-R2), the row's own case.** A directory holding a
+/// hand-written `config.toml` (and the lockfile the handler always makes)
+/// but no `vault.header` is refused: class usage, exit 2, naming the file it
+/// found and the remedy, never the file's contents. The file is left byte for
+/// byte as it was, and nothing is created.
+///
+/// Machine mode ON with NO passphrase channel, on purpose (the device
+/// `a_keyfile_wrap_without_a_path_channel_refuses_before_anything_is_created`
+/// uses): a refusal placed after the passphrase step would surface as
+/// passphrase-unavailable instead, so this test also pins the refusal's
+/// position, before any secret is asked for.
+#[test]
+fn init_over_a_hand_written_config_toml_refuses_and_keeps_it() {
+    let dir = TestDir::new("hand-config");
+    let layout = VaultLayout::at(dir.vault_root());
+    write_lockfile(&layout);
+    let config_path = layout.beside_path(BesideFile::Config);
+    let written = hand_written_config();
+    std::fs::write(&config_path, &written).expect("write the hand-written config.toml");
+
+    let err = run_init(
+        &layout,
+        &fully_flagged(),
+        None,
+        true,
+        NetworkId::ArbitrumOne,
+        &mut Scripted::silent(),
+        &mut rng(),
+    )
+    .expect_err("init over a hand-written config.toml must refuse");
+    assert_eq!(err.class(), ErrorClass::Usage, "{err}");
+    assert_eq!(err.exit_code(), 2, "{err}");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains(&config_path.display().to_string()),
+        "the refusal names the file it found: {rendered}"
+    );
+    assert!(
+        rendered.contains("aside"),
+        "the refusal names the remedy: {rendered}"
+    );
+    assert!(
+        rendered.contains("copy config.toml back"),
+        "a hand-written config.toml is worth copying back, and the refusal says so: \
+         {rendered}"
+    );
+    for fragment in [CONFIG_CANARY, "arb1.example", "arbitrum-sepolia"] {
+        assert!(
+            !rendered.contains(fragment),
+            "the refusal repeated the file's contents ({fragment}): {rendered}"
+        );
+    }
+
+    assert_eq!(
+        std::fs::read_to_string(&config_path).expect("config.toml is still there"),
+        written,
+        "the hand-written config.toml was changed"
+    );
+    assert!(!layout.beside_path(BesideFile::Header).exists());
+    assert!(
+        !layout.store_root().exists(),
+        "a refused init created the store"
+    );
+}
+
+/// **U105, the widened half (D205 §1.4).** A complete vault whose
+/// `vault.header` was moved aside still holds its key-check and wallet
+/// records and its `config.toml`; `init` must refuse rather than write new
+/// ones over them. A passphrase channel is supplied, so nothing but the
+/// refusal stands between `init` and the overwrite, and the second run draws
+/// from a differently seeded RNG, so a re-created vault could not come out
+/// byte-identical by accident. Putting the header back must give the old
+/// vault back whole: it unlocks, and its wallet key derives the address the
+/// first `init` printed.
+#[test]
+fn init_over_a_vault_whose_header_was_moved_aside_refuses() {
+    let dir = TestDir::new("header-aside");
+    let layout = VaultLayout::at(dir.vault_root());
+    let first = run_init(
+        &layout,
+        &fully_flagged(),
+        Some(passphrase_fd_of(&dir)),
+        true,
+        NetworkId::Devnet,
+        &mut Scripted::silent(),
+        &mut rng(),
+    )
+    .expect("the first init creates the vault");
+
+    let kept = [
+        layout.check_record_path(),
+        layout.wallet_record_path(),
+        layout.beside_path(BesideFile::Config),
+    ];
+    let read_all = || -> Vec<Vec<u8>> {
+        kept.iter()
+            .map(|path| {
+                std::fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+            })
+            .collect()
+    };
+    let before = read_all();
+    assert_eq!(before.len(), 3, "the three files the old vault must keep");
+
+    let header = layout.beside_path(BesideFile::Header);
+    let aside = dir.0.join("vault.header.moved-aside");
+    std::fs::rename(&header, &aside).expect("move the header aside");
+
+    let result = run_init(
+        &layout,
+        &fully_flagged(),
+        Some(passphrase_fd_of(&dir)),
+        true,
+        NetworkId::Devnet,
+        &mut Scripted::silent(),
+        &mut ChaCha20Rng::from_seed([0xA5u8; 32]),
+    );
+    let after = read_all();
+    for ((path, old), new) in kept.iter().zip(&before).zip(&after) {
+        assert!(
+            old == new,
+            "init over a vault whose header was moved aside rewrote {}: the old vault's \
+             records are gone",
+            path.display()
+        );
+    }
+    let err = result.expect_err("init over a vault whose header was moved aside must refuse");
+    assert_eq!(err.class(), ErrorClass::Usage, "{err}");
+    assert_eq!(err.exit_code(), 2, "{err}");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains(&layout.root().display().to_string()),
+        "{rendered}"
+    );
+    assert!(rendered.contains("aside"), "{rendered}");
+    assert!(!header.exists(), "a refused init wrote a new header");
+
+    // The old vault is whole.
+    std::fs::rename(&aside, &header).expect("put the header back");
+    let vault = unlock_vault(&layout, &passphrase()).expect("the old vault still unlocks");
+    let handle = load_wallet_key(&vault)
+        .expect("the wallet record is readable")
+        .expect("the old wallet key is still stored");
+    let hex: String = handle
+        .secret_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let key = antseal_net::WalletKey::import(&SecretBuf::new(hex.into_bytes()))
+        .expect("the stored key is a valid payment key");
+    assert_eq!(
+        checksummed(key.address()),
+        first.address,
+        "the old vault's wallet key survived"
+    );
+}
+
+/// **U105's load-bearing control (D205 R1).** Directories alone and the
+/// lockfile are not content, so `init` proceeds over each of: an empty
+/// directory made in advance (`scripts/stage0.sh` makes one), the lockfile
+/// the handler always creates before `run_init` runs (and a refused `init`
+/// leaves behind), and that lockfile beside the empty `store/works/` a KDF
+/// failure leaves (vault/session.rs creates the directories before running
+/// the KDF). A predicate that counted any of them would refuse every `init`
+/// that follows a refused one.
+#[test]
+fn init_proceeds_over_an_empty_directory_its_lockfile_and_empty_store_dirs() {
+    // A residue's label, and how to leave it in a fresh vault directory.
+    type Residue = (&'static str, fn(&VaultLayout));
+    let cases: [Residue; 3] = [
+        ("an empty directory", |layout| {
+            std::fs::create_dir_all(layout.root()).expect("create the vault directory");
+        }),
+        ("the lockfile alone", write_lockfile),
+        ("the lockfile and empty store directories", |layout| {
+            write_lockfile(layout);
+            std::fs::create_dir_all(layout.works_dir()).expect("create store/works");
+        }),
+    ];
+    assert_eq!(
+        cases.len(),
+        3,
+        "the three residues a fresh init must accept"
+    );
+    for (label, setup) in cases {
+        let dir = TestDir::new("empty-ok");
+        let layout = VaultLayout::at(dir.vault_root());
+        setup(&layout);
+        assert!(
+            layout.root().is_dir(),
+            "{label}: the directory exists before init"
+        );
+        let report = run_init(
+            &layout,
+            &fully_flagged(),
+            Some(passphrase_fd_of(&dir)),
+            true,
+            NetworkId::Devnet,
+            &mut Scripted::silent(),
+            &mut rng(),
+        )
+        .unwrap_or_else(|e| panic!("{label}: init must proceed, but refused: {e}"));
+        assert!(layout.beside_path(BesideFile::Header).exists(), "{label}");
+        assert!(layout.beside_path(BesideFile::Config).exists(), "{label}");
+        assert!(report.address.starts_with("0x"), "{label}");
+    }
+}
+
+/// **U105, the walk itself.** The only file is nested: the residue of a
+/// create killed between the key-check record and the header
+/// (vault/session.rs writes the header last). The two refusals above both
+/// meet `config.toml` first, so only this case shows the walk descending;
+/// and with no `config.toml` there, the refusal does not tell the reader to
+/// copy one back.
+#[test]
+fn init_over_a_lone_nested_record_refuses_naming_it() {
+    let dir = TestDir::new("lone-check");
+    let layout = VaultLayout::at(dir.vault_root());
+    write_lockfile(&layout);
+    std::fs::create_dir_all(layout.works_dir()).expect("create store/works");
+    let check = layout.check_record_path();
+    let residue = b"a key-check record whose header never landed".to_vec();
+    std::fs::write(&check, &residue).expect("write store/check");
+
+    let result = run_init(
+        &layout,
+        &fully_flagged(),
+        Some(passphrase_fd_of(&dir)),
+        true,
+        NetworkId::Devnet,
+        &mut Scripted::silent(),
+        &mut rng(),
+    );
+    assert!(
+        std::fs::read(&check).expect("store/check is still there") == residue,
+        "init rewrote the nested store/check it should have refused over"
+    );
+    let err = result.expect_err("init over a lone store/check must refuse");
+    assert_eq!(err.class(), ErrorClass::Usage, "{err}");
+    assert_eq!(err.exit_code(), 2, "{err}");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains(&check.display().to_string()),
+        "the refusal names the nested file the walk met: {rendered}"
+    );
+    assert!(
+        !rendered.contains("config.toml back"),
+        "no config.toml was there to copy back: {rendered}"
+    );
+    assert!(!layout.beside_path(BesideFile::Header).exists());
+    assert!(!layout.beside_path(BesideFile::Config).exists());
+}
+
+/// **U105 through the real binary.** A hand-written config.toml inside the
+/// loader's subset loads at dispatch, and the handler then refuses before
+/// asking for the passphrase it was offered: exit 2, the usage class on the
+/// one `--json` document, the file named and its contents on neither stream,
+/// the file unchanged and no vault created.
+#[test]
+fn the_binary_refuses_init_over_a_hand_written_config_toml() {
+    let dir = TestDir::new("spawn-config");
+    let root = dir.vault_root();
+    std::fs::create_dir_all(&root).expect("create the vault directory");
+    let config_path = root.join("config.toml");
+    let written = hand_written_config();
+    std::fs::write(&config_path, &written).expect("write the hand-written config.toml");
+
+    let out = spawn(
+        &root,
+        &["--json", "--passphrase-fd", "0", "init"],
+        b"a long enough fixture passphrase\n",
+    );
+    assert_eq!(out.code, Some(2), "stderr: {}", out.stderr);
+    let doc: serde_json::Value =
+        serde_json::from_str(out.stdout.trim()).expect("stdout is exactly one JSON document");
+    assert_eq!(doc["ok"], false, "{doc}");
+    assert_eq!(doc["command"], "init", "{doc}");
+    assert_eq!(doc["error"]["class"], "usage", "{doc}");
+    assert_eq!(doc["error"]["exit_code"], 2, "{doc}");
+    let message = doc["error"]["message"].as_str().expect("an error message");
+    assert!(
+        message.contains(&config_path.display().to_string()),
+        "{message}"
+    );
+    assert!(message.contains("aside"), "{message}");
+    for (name, stream) in [("stdout", &out.stdout), ("stderr", &out.stderr)] {
+        assert!(
+            !stream.contains(CONFIG_CANARY),
+            "{name} repeated the file's contents: {stream}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(&config_path).expect("config.toml is still there"),
+        written,
+        "the hand-written config.toml was changed"
+    );
+    assert!(!root.join("vault.header").exists());
+    assert!(!root.join("store").exists());
+}

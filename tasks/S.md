@@ -705,6 +705,7 @@
 - Do: rule between re-syncing a stale mirror in the idempotent branch (one `update_meta`) and letting the candidate scan and `list` prefer the fine tag, as `incomplete_works` already does (D106); correct the comment; make `antseal abandon`'s report true for a repaired work.
 - Accept:
   - A test reconstructs the window (fine tag `Abandoned`, mirror `IncompletePrePay`) and shows the ruled outcome: the exact re-run seals fresh (or is told the truth), `list` does not offer a resume, and `antseal abandon` either repairs the mirror or says nothing needed doing — red baseline recorded first.
+- Notes: **[2026-10-20, wave 40 — TICKED (D203, lane L-RESUME2).]** Captures on the `TODO.md` row; D203 §6 records what was built and every deviation.
 
 ### S49 — After a sub-batch lands, a proof-construction failure is reported as a payment that moved no money, and that sub-batch's capture is skipped
 - Milestone: M4
@@ -716,6 +717,7 @@
 - Do: capture first, then return `StrandedPayment` with the confirmed count (the `stranded_or_payment` helper's rule), so the class and the journal agree that money moved.
 - Accept:
   - An in-crate test under `ant-backend` that injects a proof-construction failure after a landed sub-batch shows the capture delivered and `StrandedPayment { landed_tx_count: n }` returned; a plant restoring the old order reddens it by message.
+- Notes: **[2026-10-20, wave 40 — TICKED (D204, lane L-NET3).]** Captures on the `TODO.md` row; D204 §6 records what was built and every deviation.
 
 ### S50 — A revert of the first sub-batch is reported as `StrandedPayment { landed_tx_count: 0 }`, whose words say money moved
 - Milestone: M4
@@ -727,3 +729,38 @@
 - Do: rule whether a zero-count revert is `StorageError::Payment` (nothing moved but gas) or keeps the stranded class with true words; implement and test it.
 - Accept:
   - A first-sub-batch revert yields the ruled class and a message true of a zero-ANT revert, asserted by message under `ant-backend` (devnet or an in-crate double).
+- Notes: **[2026-10-20, wave 40 — TICKED (D204, lane L-NET3).]** Captures on the `TODO.md` row; D204 §6 records what was built and every deviation.
+
+### S51 — A first-sub-batch submission error is reported as a payment that moved no money, though the node may already hold the signed transaction
+- Milestone: M4
+- Size: S (plus a decision; S–M if the journal-first shape is chosen)
+- Deps: after S46 (the pay loop's per-sub-batch shape is D198's and D204's)
+- Spec: D37 Decision 2 (the one-transaction loss bound); D33 (journal first); D147 (the stranded-payment class: "money already moved")
+- Discovered by: wave-40 planning lane P1, 2026-10-20 (code-traced, not executed). Id assigned centrally.
+- Problem: `pay` maps any `send_transaction` error to `stranded_or_payment(txs.len(), "sub-batch tx submission failed: …")` (`crates/antseal-net/src/ant_backend.rs`, the submission branch), which is `StorageError::Payment` — exit 23, "retry" — for the first sub-batch. `send_transaction` fills (estimate, nonce, chain id), signs and calls `eth_sendRawTransaction`; a transport error AFTER the node received the raw transaction (a timeout, a reset) leaves a signed transaction that can still be mined. A retry then quotes and pays afresh: a double payment of up to one sub-batch. The unobserved-landing branch already classes "money MAY have moved" as stranded; the broadcast step does not.
+- Do: rule between (a) signing locally and journaling the hash as `Submitted` before broadcasting (D33's journal-first rule, extended to the send), so backfill resolves it, and (b) classing post-broadcast transport errors as `StrandedPayment` ("may have moved"); implement and test the ruled shape.
+- Accept:
+  - A JSON-RPC stub that accepts `eth_sendRawTransaction` and drops the reply drives the first sub-batch's submission; the ruled class and journal state follow (a retry does not pay a quote the vault records as possibly paid), asserted by message, with a plant restoring today's `Payment` reddening it.
+
+### S52 — A work paid in one run and finished by a resume never records its cost, and `complete()` writes the `Complete` tag before its outcome
+- Milestone: M4
+- Size: S
+- Deps: with S48 (D203 R7; the same lane and the same family of crash windows)
+- Spec: S16 (the journaled receipt is the money authority); D106 (the fine tag is authoritative); D37 Decision 5 (the remainder)
+- Discovered by: wave-40 planning lane P1, 2026-10-20, in the orchestrator's challenge round (executed in the planning probe). Id assigned centrally.
+- Problem: `complete()` (`crates/antseal-cli/src/pipeline/resume.rs`) calls `set_state(Complete)` and then `record_outcome(seal_id, Some(id), if paid_here { Some(paid_atto) } else { None })`. `paid_here` is the RUN's own payment, so any work paid in one run and finished by a resume records no cost, ever: one ordinary upload failure (exit 23, "aborted after storing 1 blob(s)") then a resume left `cost_atto = None` while the receipt held 18 498 atto-ANT, and `list` printed "cost: not recorded (nothing paid)" beside a complete work. And because the tag is written before the outcome, a kill between them loses the cost (and, after a second kill or from an import, the work id, which is the only key `restore` and `reveal` find a work by).
+- Do: `complete()` writes the outcome — the work id and the journaled receipt's `storage_cost_atto` (accumulated across rounds) — BEFORE `set_state(Complete)`; `paid_here` keeps only its run-report job (D203 R7).
+- Accept:
+  - A journal wrapper failing `set_state(Complete)` shows the meta already holding the work id and the cost; the pay → exit 23 → resume sequence ends with the meta cost equal to the receipt's; plants swapping the calls back and restoring `if paid_here` redden them by message.
+- Notes: **[2026-10-20, wave 40 — TICKED (D203, lane L-RESUME2).]** Captures on the `TODO.md` row; D203 §6 records what was built and every deviation.
+
+### S53 — An expired-proof re-payment replaces the journaled receipt, so the vault forgets the payment it replaced
+- Milestone: M4
+- Size: S
+- Deps: after S52 (D203 R7 records the receipt's cost)
+- Spec: S16 (the receipt is the money authority); D37 Decision 6 (the proof clock); D203 R7
+- Discovered by: wave-40 lane L-RESUME2, 2026-10-20, while landing D203 R7 (code-traced, not executed). Id assigned centrally.
+- Problem: when a paid work's payment proofs have expired, the resume re-pays everything (`crates/antseal-cli/src/pipeline/resume.rs`, the expired-proof arm → `consent_anchor_pay(…, true, None)`), and `put_receipt` writes the fresh receipt OVER the old one. The vault then holds no record of the expired payment (nor of a remainder paid in an earlier round), and the cost `complete()` records under D203 R7 — the receipt's `storage_cost_atto` — and `list`'s "so far" line count only the replacement.
+- Do: rule between a cumulative spent-atto field in the meta written at each `put_receipt` and keeping replaced receipts as history; implement and test it.
+- Accept:
+  - A work whose proofs expired and was re-paid records both payments (or their sum) where `list` and the cost line read them, asserted through the expired-proof seam; a plant restoring the overwrite reddens it by message.

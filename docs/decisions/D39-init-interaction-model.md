@@ -176,3 +176,34 @@ error names the vault path, manual filesystem action is the consent, and
 *"refusing too much is recoverable, refusing too little is not"* — is the
 ground on which D155 §2 R1 keeps the `header.exists()` predicate and refuses
 to hang a fallible decode off it.
+
+## Addendum — 2026-10-20 (wave 40, D205 §2 R1–R2, R6): the absolute refusal reaches a non-empty directory without a header
+
+Decision 4 (`:87-95`) refuses an existing vault absolutely, and the shipped
+gate keys on `vault.header` alone (`crates/antseal-cli/src/init.rs:417-419`),
+which D155 §2 R1 keeps. Wave 40's planning lane executed two directories that
+gate let through (D205 §1.3–1.4):
+- a directory holding only a hand-written `config.toml`: `init` exited 0,
+  replaced the file, and printed a `--json` envelope that named one network at
+  its top level and another in its result;
+- a vault whose `vault.header` alone had been moved aside: `init` exited 0 and
+  replaced `store/check` and `store/wallet`, and with the old header put back
+  `list` exited 12 (*"vault authentication failed"*). That is the overwrite
+  this Decision exists to refuse, reached through a partial wipe.
+
+**D205** adds a second refusal after this Decision's check, unchanged, and
+before any passphrase is asked: a directory that holds no `vault.header` but
+holds any file other than `vault.lock`, at any depth, is refused in the usage
+class (exit 2). The text names the directory and the first file found, and
+says to move the directory aside rather than delete it. Directories alone and
+a lone `vault.lock` do not count: the handler creates the lock before `init`
+runs, and a failed KDF leaves at most empty directories.
+
+So the absolute refusal now reaches a non-empty directory without a header.
+The residual-risk paragraph (`:142-145`) is still not amended. Its verdict,
+*"refusing too much is recoverable, refusing too little is not"*, is the
+ground D205 stands on for its broad predicate. Its example — an empty
+directory *"also refuses"* — is still not what the code does, and stays so on
+purpose (D155 §4.4 and its 2026-10-20 addendum). Decision 4's text, the
+2026-08-19 amendment above and the existing-vault refusal's wording are
+unchanged. This record is not rewritten.

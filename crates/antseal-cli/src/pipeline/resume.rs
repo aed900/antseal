@@ -138,9 +138,9 @@ where
     /// [`SealError::StagedBytes`] (the work is marked abandoned first);
     /// [`SealError::ConsentDeclined`] (no state change);
     /// [`SealError::ConsentDeclined`] when the re-consented re-payment D36
-    /// requires is refused (`:465`); [`SealError::Storage`]
+    /// requires is refused (`:475`); [`SealError::Storage`]
     /// (`StorageError::ProofsExpired`) only if the *replacement* proofs
-    /// expire in turn — the first expiry is handled here (`:278`) and never
+    /// expire in turn — the first expiry is handled here (`:288`) and never
     /// reaches the caller; plus the
     /// storage, journal and anchor classes.
     pub async fn resume(&self, seal_id: &SealId) -> Result<SealOutcome, SealError> {
@@ -177,11 +177,16 @@ where
         // already paid for. The receipt is therefore the authority and the
         // tag is repaired from it (S11's "`pay` is never invoked when a
         // receipt is journaled", read strictly). Found by S16's matrix.
+        // The receipt answers only by what it maps (D203 M1, M6): a capture
+        // that maps no quote — the one builds before S50 journaled for a
+        // first sub-batch that reverted — records no payment, so its work
+        // takes the pre-pay path, and the payment made there replaces that
+        // capture (`prior: None`), as a vault written after S50 never held it.
         let journaled_receipt = self.journal.receipt(seal_id)?;
         let mut paid_here = false;
         let mut paid_atto = 0_u128;
         let mut anchors = None;
-        if journaled_receipt.is_none() && !state.is_post_pay() {
+        if !super::journal::payment_recorded(journaled_receipt.as_ref()) && !state.is_post_pay() {
             let anchor = if state == SealState::Staged {
                 let manifest = plan
                     .manifest_bytes
@@ -200,14 +205,6 @@ where
             paid_atto = receipt.storage_cost_atto;
             paid_here = true;
         } else {
-            if !state.is_post_pay() {
-                // The repair: a durable receipt on a pre-pay tag. Advancing
-                // it is what lets `finalize` run at all (`Anchored →
-                // Finalizing` is not a legal edge, and widening the machine
-                // to allow it would erase the distinction the repair exists
-                // to record).
-                self.journal.set_state(seal_id, SealState::Paid)?;
-            }
             // **The unpaid remainder** (D37 Decision 5, extended by S31).
             // D37's sink journals each sub-batch receipt from inside `pay`,
             // so a crash between sub-batch txs leaves a receipt that covers
@@ -264,6 +261,19 @@ where
                         );
                     }
                 }
+            }
+            // The repair: a recorded payment on a pre-pay tag. Advancing it
+            // is what lets `finalize` run at all (`Anchored → Finalizing` is
+            // not a legal edge, and widening the machine to allow it would
+            // erase the distinction the repair exists to record). It runs
+            // only once nothing remains to buy (D203 M5): a remainder that
+            // was paid has already moved the tag (`consent_anchor_pay`), and
+            // one whose consent was declined returned above with the tag
+            // still pre-pay. So `Paid` keeps meaning "fully paid", and a
+            // declined remainder is never followed by a plan that says no
+            // further payment is needed.
+            if !self.journal.state(seal_id)?.is_post_pay() {
+                self.journal.set_state(seal_id, SealState::Paid)?;
             }
         }
         let state = self.journal.state(seal_id)?;
@@ -578,7 +588,24 @@ where
         Ok(addresses)
     }
 
-    /// The D43 reclassification plus the outcome fields.
+    /// The D43 reclassification plus the outcome fields — the outcome
+    /// written FIRST (**D203 R7**, S48 + S52).
+    ///
+    /// The work id and the cost are recorded before the `Complete`
+    /// transition, so a kill or a failed write between the two leaves a
+    /// `Finalizing` work whose meta already carries both — the next resume
+    /// finishes it and records the same outcome — rather than a complete
+    /// work with no cost recorded.
+    ///
+    /// The cost is the journaled receipt's `storage_cost_atto` whenever a
+    /// receipt is journaled, however many runs the work took: the receipt is
+    /// the money authority, and a remainder's rounds are merged into it
+    /// (`merge_receipts`). Recording a cost only `if paid_here` lost it for
+    /// every work paid in one run and finished by a resume (S52). An
+    /// expired-proof re-payment replaces the receipt instead of extending it
+    /// (`prior: None`, D179), so after one the cost is the replacement's.
+    /// With no receipt journaled, this run's own payment stands, or nothing
+    /// is recorded. `paid_here` keeps its one job: the run report.
     pub(super) fn complete(
         &self,
         seal_id: &SealId,
@@ -594,12 +621,12 @@ where
         // bytes, which the envelope carries verbatim.
         let envelope = Manifest::decode(manifest)?;
         let id = work_id(envelope.body_bytes()).into_bytes();
+        let cost = match self.journal.receipt(seal_id)? {
+            Some(receipt) => Some(receipt.storage_cost_atto),
+            None => paid_here.then_some(paid_atto),
+        };
+        self.journal.record_outcome(seal_id, Some(id), cost)?;
         self.journal.set_state(seal_id, SealState::Complete)?;
-        self.journal.record_outcome(
-            seal_id,
-            Some(id),
-            if paid_here { Some(paid_atto) } else { None },
-        )?;
         Ok(id)
     }
 }

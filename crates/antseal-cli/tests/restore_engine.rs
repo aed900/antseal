@@ -609,6 +609,10 @@ fn an_incomplete_work_is_refused_with_its_state_named() {
     let seal_id = seal_fixture(&mock, &vault, 0x1B);
     let store = WorkStore::new(&vault);
 
+    // An UNTAGGED work: the mirror is its only state (D203 R1).
+    store
+        .delete_journal_entry(&seal_id, STATE_ENTRY)
+        .expect("drop the tag");
     let mut record = store.load_meta(&seal_id).expect("meta");
     record.state = antseal_cli::vault::store::WorkState::IncompletePostPay;
     store
@@ -794,4 +798,55 @@ where
     store
         .store_meta(&record, &mut ChaCha20Rng::from_seed([0xCE; 32]))
         .expect("re-store meta");
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D203 R2: the tag-present branch of the state gate
+// ─────────────────────────────────────────────────────────────────────
+
+/// **D203 R2, the tag-present branch**: a work interrupted for real after
+/// its payment — the upload aborted after one stored blob, so its fine tag
+/// is `Finalizing` and its mirror, written by the same transition,
+/// `incomplete-post-pay` — is refused with that state named.
+/// `an_incomplete_work_is_refused_with_its_state_named` covers the untagged
+/// branch, where the mirror is the only state.
+#[test]
+fn a_work_whose_tag_is_post_pay_is_refused_with_its_state_named() {
+    let mock = MockBackend::new();
+    mock.arm_fault(Fault::AfterStoringK(1));
+    let isolated = IsolatedVault::create("d203-restore-tagged");
+    let vault = isolated.unlock();
+    let files = files();
+    let mut journal_rng = ChaCha20Rng::from_seed([0xD3; 32]);
+    let journal =
+        antseal_cli::pipeline::VaultJournal::new(WorkStore::new(&vault), &mut journal_rng);
+    let gate = RecordingGate::new();
+    let consent = ScriptedConsent::always_yes();
+    let pipeline = Pipeline::new(&mock, &gate, &journal, &consent, &NoBarriers);
+    let interrupted =
+        block_on(pipeline.seal(&request(&files), &mut ChaCha20Rng::from_seed([0xD3; 32])));
+    assert!(
+        interrupted.is_err(),
+        "the upload aborts after one stored blob"
+    );
+
+    let store = WorkStore::new(&vault);
+    let works = store.list_works().expect("list");
+    assert_eq!(works.len(), 1, "one work in this vault");
+    let seal_id = works[0];
+    assert_eq!(
+        antseal_cli::pipeline::journal::recorded_state(&store, &seal_id).expect("tag"),
+        Some(antseal_cli::pipeline::SealState::Finalizing),
+        "control: the fine tag is genuinely post-pay"
+    );
+    assert_eq!(
+        store.load_meta(&seal_id).expect("meta").state,
+        WorkState::IncompletePostPay,
+        "control: the mirror agrees with the tag"
+    );
+    match restore(&mock, &vault, &seal_id) {
+        Err(RestoreError::NotRestorable { state }) => assert_eq!(state, "incomplete-post-pay"),
+        Err(other) => panic!("expected NotRestorable, got {other:?}"),
+        Ok(_) => panic!("an interrupted work is never restorable"),
+    }
 }

@@ -663,7 +663,8 @@ impl StorageBackend for AntCoreBackend {
         let mut txs: Vec<TxRecord> = Vec::new();
 
         // Blobs with no non-zero transfer (theoretical zero-price quote)
-        // are proof-ready immediately, with no tx hashes.
+        // are proof-ready immediately, with no tx hashes. This runs before
+        // any sub-batch is submitted, so a proof failure here moved no ANT.
         finalize_ready_blobs(
             &mut remaining,
             &ready_after,
@@ -671,7 +672,8 @@ impl StorageBackend for AntCoreBackend {
             &tx_map,
             &mut records,
             &mut lock_staged(&self.staged).paid,
-        )?;
+        )
+        .map_err(pre_pass_proof_failure)?;
 
         for (batch_index, batch) in sub_batches.iter().enumerate() {
             // Build this sub-batch's payForQuotes calldata (offline ABI
@@ -768,68 +770,40 @@ impl StorageBackend for AntCoreBackend {
                 quote_hashes: batch.iter().map(|(_, qh, ..)| *qh).collect(),
             });
 
-            if !confirmed {
-                // A reverted payForQuotes moved no ANT: its quotes are NOT
-                // mapped (they are unpaid), the record is journaled as
-                // evidence of the gas spend, and the stranded state names
-                // only the confirmed landings.
-                emit_capture(
-                    self.capture_hook.as_ref(),
-                    &records,
+            // A reverted payForQuotes moved no ANT: its quotes are NOT mapped
+            // (they are unpaid). A confirmed one maps its quotes and builds
+            // the proofs that became complete with this landing (per-blob
+            // `finalize_batch_payment` — pure, `batch.rs:337-343`); a proof
+            // failure is data here, because after a landing it is not a
+            // payment that moved nothing (S49).
+            let outcome = if confirmed {
+                for (_, quote_hash, ..) in *batch {
+                    tx_map.insert(*quote_hash, landed_hash);
+                }
+                let finalized = finalize_ready_blobs(
+                    &mut remaining,
+                    &ready_after,
+                    batch_index,
                     &tx_map,
-                    &txs,
-                    gas_cost_wei,
+                    &mut records,
+                    &mut lock_staged(&self.staged).paid,
                 );
-                return Err(StorageError::StrandedPayment {
-                    landed_tx_count: txs
-                        .iter()
-                        .filter(|t| t.status == TxStatus::Confirmed)
-                        .count(),
-                    reason: "a payment sub-batch transaction reverted on-chain".into(),
-                });
-            }
-
-            for (_, quote_hash, ..) in *batch {
-                tx_map.insert(*quote_hash, landed_hash);
-            }
-
-            // Build the proofs that became complete with this landing
-            // (per-blob `finalize_batch_payment` — pure, `batch.rs:337-343`)
-            // and journal via the hook BEFORE the next submission.
-            finalize_ready_blobs(
-                &mut remaining,
-                &ready_after,
-                batch_index,
-                &tx_map,
-                &mut records,
-                &mut lock_staged(&self.staged).paid,
-            )?;
-            let captured = emit_capture(
+                SubBatchOutcome::Confirmed { finalized }
+            } else {
+                SubBatchOutcome::Reverted
+            };
+            // Journal via the hook BEFORE the next submission, and decide
+            // whether the payment goes on (S46, S49, S50 — D204).
+            settle_sub_batch(
+                outcome,
                 self.capture_hook.as_ref(),
                 &records,
                 &tx_map,
                 &txs,
                 gas_cost_wei,
-            );
-            // S46: a capture the hook reports not durable ends the payment
-            // here while sub-batches remain, so at most this one sub-batch is
-            // paid without a durable record (D37 Decision 2's bound). After
-            // the last sub-batch it stops nothing: the caller's post-`pay`
-            // write is the second chance (D186 R3). No hook is no verdict.
-            if captured == Some(CaptureOutcome::NotDurable) && batch_index + 1 < sub_batches.len() {
-                return Err(StorageError::StrandedPayment {
-                    landed_tx_count: txs
-                        .iter()
-                        .filter(|t| t.status == TxStatus::Confirmed)
-                        .count(),
-                    reason: format!(
-                        "the receipt-so-far could not be journaled after sub-batch {} of {} \
-                         landed, so no further sub-batch was submitted (D37 Decision 2)",
-                        batch_index + 1,
-                        sub_batches.len()
-                    ),
-                });
-            }
+                batch_index,
+                sub_batches.len(),
+            )?;
         }
 
         let blobs: Vec<BlobPaymentRecord> = records.into_iter().flatten().collect();
@@ -1551,6 +1525,13 @@ fn payment_lines_match(lines: &[QuotePaymentEntry], prepared: &PreparedChunk) ->
 /// pure `finalize_batch_payment` (`batch.rs:337-343`), stages the PUT
 /// targets + proof for `finalize_batch`'s fast path, and fills the
 /// blob's record slot.
+///
+/// It stops at the first blob whose proof cannot be built — the blobs
+/// before it keep their records — and returns that failure's redacted
+/// detail as DATA, not as a [`StorageError`]: the class depends on when it
+/// happened (S49, D204). The pre-pass maps it to [`StorageError::Payment`]
+/// ([`pre_pass_proof_failure`]); after a landing, [`settle_sub_batch`]
+/// captures what exists and strands.
 fn finalize_ready_blobs(
     remaining: &mut [Option<PricedBlobSlot>],
     ready_after: &[usize],
@@ -1558,7 +1539,7 @@ fn finalize_ready_blobs(
     tx_map: &BTreeMap<QuoteHash, TxHash>,
     records: &mut [Option<BlobPaymentRecord>],
     staged_paid: &mut HashMap<Address, StagedPaid>,
-) -> Result<(), StorageError> {
+) -> Result<(), String> {
     let upstream_map: HashMap<ant_protocol::evm::QuoteHash, ant_protocol::evm::TxHash> = tx_map
         .iter()
         .map(|(qh, th)| {
@@ -1578,20 +1559,12 @@ fn finalize_ready_blobs(
         let Some(blob) = slot_entry.take() else {
             continue;
         };
-        let mut paid = finalize_batch_payment(vec![blob.prepared], &upstream_map).map_err(|e| {
-            StorageError::Payment {
-                reason: format!(
-                    "proof construction failed: {}",
-                    redact_evm_error(&e.to_string())
-                ),
-            }
-        })?;
+        let mut paid = finalize_batch_payment(vec![blob.prepared], &upstream_map)
+            .map_err(|e| redact_evm_error(&e.to_string()))?;
         let Some(paid_chunk) = paid.pop() else {
-            return Err(StorageError::Payment {
-                reason: "upstream returned no paid chunk for one prepared chunk (invariant \
-                         breach)"
-                    .into(),
-            });
+            return Err(
+                "upstream returned no paid chunk for one prepared chunk (invariant breach)".into(),
+            );
         };
         let PaidChunk {
             address: _,
@@ -1656,6 +1629,117 @@ fn emit_capture(
         gas: GasSummary { gas_cost_wei },
     };
     Some(hook(&receipt))
+}
+
+/// What one awaited sub-batch receipt reported, as [`settle_sub_batch`]
+/// takes it (D204).
+#[derive(Debug)]
+enum SubBatchOutcome {
+    /// Mined but reverted: no ANT moved, and the sub-batch's quotes are not
+    /// mapped (they are unpaid).
+    Reverted,
+    /// Mined successfully: the sub-batch's quotes are mapped, and
+    /// `finalized` is what building the proofs that became complete with
+    /// it returned — [`finalize_ready_blobs`]'s failure as data, so the
+    /// class of a failure after this landing is chosen here (S49).
+    Confirmed {
+        /// `Err` carries the redacted detail of the first proof that
+        /// could not be built.
+        finalized: Result<(), String>,
+    },
+}
+
+/// Decide what `pay`'s loop does after one awaited sub-batch receipt — the one
+/// place S46, S49 and S50 are ruled (D204). Pure: everything it reads is passed
+/// in, and its only effect is the capture it may deliver. The count it reports
+/// is THIS call's confirmed landings (`txs` is this call's).
+///
+/// - **Confirmed, proofs built:** capture the receipt-so-far and go on —
+///   unless the capture was not durable and sub-batches remain: then stop with
+///   [`StorageError::StrandedPayment`], so at most this one sub-batch is paid
+///   without a durable record (S46, D198 R2). After the last sub-batch a
+///   not-durable capture stops nothing: the caller's post-`pay` write is the
+///   second chance (D186 R3). No hook is no verdict.
+/// - **Confirmed, a proof failed (S49):** money moved, so capture what exists
+///   — the landed quote→tx map, the tx, the gas, and the records of the blobs
+///   finalized before the failing one — and THEN strand with the confirmed
+///   count, whatever the capture's verdict (the pipeline reads that verdict
+///   for its 28/37 split). Capturing before EVERY finalize instead would
+///   journal a landing's map without its records, and a resume would re-buy
+///   that sub-batch. The failing blob, and every ready blob after it, get no
+///   record, so a resume re-buys them (D37 Decision 5's caveat; D204 R2).
+/// - **Reverted after a confirmed landing:** capture — the reverted tx is gas
+///   evidence beside the landed ones — then strand with the confirmed count.
+/// - **Reverted with no confirmed landing in this call (S50):** no ANT moved,
+///   so [`StorageError::Payment`] and NO capture: a receipt that maps no quote
+///   would read as a payment to every money reader downstream. In a remainder
+///   round, the prior round's journaled receipt is left as it was.
+#[allow(clippy::too_many_arguments)] // R1's inputs: the outcome, the hook, the receipt-so-far
+// `emit_capture` takes, and the loop position; bundling them would move the
+// same fields behind a name that explains nothing.
+fn settle_sub_batch(
+    outcome: SubBatchOutcome,
+    hook: Option<&CaptureHook>,
+    records: &[Option<BlobPaymentRecord>],
+    tx_map: &BTreeMap<QuoteHash, TxHash>,
+    txs: &[TxRecord],
+    gas_cost_wei: u128,
+    batch_index: usize,
+    sub_batch_count: usize,
+) -> Result<(), StorageError> {
+    let landed = txs
+        .iter()
+        .filter(|t| t.status == TxStatus::Confirmed)
+        .count();
+    let finalized = match outcome {
+        SubBatchOutcome::Reverted if landed == 0 => {
+            return Err(StorageError::Payment {
+                reason: "the first payment sub-batch transaction reverted on-chain: it moved no \
+                         ANT, and the gas it used is spent"
+                    .into(),
+            });
+        }
+        SubBatchOutcome::Reverted => {
+            emit_capture(hook, records, tx_map, txs, gas_cost_wei);
+            return Err(StorageError::StrandedPayment {
+                landed_tx_count: landed,
+                reason: "a payment sub-batch transaction reverted on-chain".into(),
+            });
+        }
+        SubBatchOutcome::Confirmed { finalized } => finalized,
+    };
+    let captured = emit_capture(hook, records, tx_map, txs, gas_cost_wei);
+    if let Err(detail) = finalized {
+        return Err(stranded_or_payment(
+            landed,
+            format!(
+                "proof construction failed after sub-batch {} of {} landed: {detail}",
+                batch_index + 1,
+                sub_batch_count
+            ),
+        ));
+    }
+    if captured == Some(CaptureOutcome::NotDurable) && batch_index + 1 < sub_batch_count {
+        return Err(StorageError::StrandedPayment {
+            landed_tx_count: landed,
+            reason: format!(
+                "the receipt-so-far could not be journaled after sub-batch {} of {} landed, so \
+                 no further sub-batch was submitted (D37 Decision 2)",
+                batch_index + 1,
+                sub_batch_count
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// The zero-transfer pre-pass's proof failure: the pre-pass runs before any
+/// sub-batch is submitted, so no ANT moved — [`StorageError::Payment`], the
+/// class it had before S49 (D204 R2).
+fn pre_pass_proof_failure(detail: String) -> StorageError {
+    StorageError::Payment {
+        reason: format!("proof construction failed: {detail}"),
+    }
 }
 
 /// `Payment` before any landing, `StrandedPayment` after (the split the
@@ -2997,6 +3081,449 @@ mod tests {
                 "{case}: payment detail leaked: {mapped}"
             );
             assert_eq!(mapped, expected, "{case}: byte-unchanged by S47");
+        }
+    }
+
+    // ── S49 + S50 (D204): what the loop does after each awaited receipt ────
+
+    /// **D204's seam, driven directly.** No in-crate test can reach `pay()`'s
+    /// loop — an [`AntCoreBackend`] needs a live `Client` — so the decision
+    /// taken after each awaited sub-batch receipt is the pure
+    /// [`settle_sub_batch`], and these rows drive it. The S49 rows also drive
+    /// the real [`finalize_ready_blobs`] over upstream's own
+    /// `finalize_batch_payment`. The devnet S46 rows
+    /// (`tests/devnet_backend.rs`) are the witness that the loop calls it.
+    mod s49_s50_settle {
+        use std::collections::{BTreeMap, HashMap};
+        use std::sync::{Arc, Mutex};
+
+        use super::super::*;
+
+        /// The gas the receipt-so-far carries (any non-zero figure).
+        const GAS_WEI: u128 = 21_000_000;
+        /// Each fixture blob's one non-zero line: the median quote's price,
+        /// paid 3× (upstream's single-node rule).
+        const AMOUNT_ATTO: u128 = 300;
+        const PRICE_ATTO: u128 = 100;
+
+        type Seen = Arc<Mutex<Vec<PaymentReceipt>>>;
+
+        /// A capture hook that keeps every receipt it is handed and answers
+        /// `verdict`.
+        fn recording_hook(verdict: CaptureOutcome) -> (CaptureHook, Seen) {
+            let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+            let sink = Arc::clone(&seen);
+            let hook: CaptureHook = Arc::new(move |receipt: &PaymentReceipt| {
+                sink.lock()
+                    .expect("capture sink lock")
+                    .push(receipt.clone());
+                verdict
+            });
+            (hook, seen)
+        }
+
+        fn captures(seen: &Seen) -> Vec<PaymentReceipt> {
+            seen.lock().expect("capture sink lock").clone()
+        }
+
+        fn quote(byte: u8) -> QuoteHash {
+            QuoteHash::from_bytes([byte; 32])
+        }
+
+        /// One sub-batch tx record, paying quote `paid`.
+        fn tx(byte: u8, paid: u8, status: TxStatus) -> TxRecord {
+            TxRecord {
+                tx_hash: TxHash::from_bytes([byte; 32]),
+                block_number: Some(u64::from(byte)),
+                status,
+                quote_hashes: vec![quote(paid)],
+            }
+        }
+
+        /// A priced blob whose one non-zero line pays quote `byte`, staged the
+        /// way `pay` holds it: our line beside upstream's `PreparedChunk`, in
+        /// the shape upstream's own `batch.rs` tests build (no peers).
+        fn priced(slot: usize, byte: u8) -> PricedBlobSlot {
+            let entry = QuotePaymentEntry {
+                quote_hash: quote(byte),
+                rewards_address: RewardsAddress::from_bytes([byte; 20]),
+                amount_atto: AMOUNT_ATTO,
+                price_atto: PRICE_ATTO,
+            };
+            let prepared = PreparedChunk {
+                content: Bytes::from(vec![byte; 32]),
+                address: [byte; 32],
+                quoted_peers: Vec::new(),
+                payment: ant_core::data::client::batch::SingleNodeQuotePayment {
+                    quotes: vec![ant_protocol::payment::QuotePaymentInfo {
+                        quote_hash: ant_protocol::evm::QuoteHash::from(
+                            *entry.quote_hash.as_bytes(),
+                        ),
+                        rewards_address: ant_protocol::evm::RewardsAddress::from(
+                            *entry.rewards_address.as_bytes(),
+                        ),
+                        amount: Amount::from(AMOUNT_ATTO),
+                        price: Amount::from(PRICE_ATTO),
+                    }],
+                },
+                peer_quotes: Vec::new(),
+                commitment_sidecars: Vec::new(),
+            };
+            assert!(
+                payment_lines_match(std::slice::from_ref(&entry), &prepared),
+                "fixture: the line is its staged quote's (D36)"
+            );
+            PricedBlobSlot {
+                slot,
+                address: Address::from_bytes([byte; 32]),
+                prepared,
+                entries: vec![entry],
+                peer_quotes: Vec::new(),
+                commitment_sidecars: Vec::new(),
+            }
+        }
+
+        /// What `pay` holds when it calls the seam.
+        struct SoFar {
+            records: Vec<Option<BlobPaymentRecord>>,
+            tx_map: BTreeMap<QuoteHash, TxHash>,
+            txs: Vec<TxRecord>,
+        }
+
+        /// `pay`'s state after the first `landed` of `blobs` one-blob
+        /// sub-batches landed (blob i: quote `0xA0 + i`, paid by tx
+        /// `0x70 + i`), each proof built by the real [`finalize_ready_blobs`].
+        fn after_landings(blobs: usize, landed: usize) -> SoFar {
+            let byte = |i: usize| u8::try_from(i).expect("a handful of fixture blobs");
+            let mut remaining: Vec<Option<PricedBlobSlot>> = (0..blobs)
+                .map(|i| Some(priced(i, 0xA0 + byte(i))))
+                .collect();
+            let ready_after: Vec<usize> = (0..blobs).collect();
+            let mut records: Vec<Option<BlobPaymentRecord>> = vec![None; blobs];
+            let mut tx_map = BTreeMap::new();
+            let mut txs = Vec::new();
+            let mut staged = HashMap::new();
+            for i in 0..landed {
+                txs.push(tx(0x70 + byte(i), 0xA0 + byte(i), TxStatus::Confirmed));
+                tx_map.insert(
+                    quote(0xA0 + byte(i)),
+                    TxHash::from_bytes([0x70 + byte(i); 32]),
+                );
+                finalize_ready_blobs(
+                    &mut remaining,
+                    &ready_after,
+                    i,
+                    &tx_map,
+                    &mut records,
+                    &mut staged,
+                )
+                .expect("fixture: a landed blob's proof builds");
+            }
+            assert_eq!(
+                records.iter().flatten().count(),
+                landed,
+                "fixture: one record per landed blob"
+            );
+            SoFar {
+                records,
+                tx_map,
+                txs,
+            }
+        }
+
+        /// Sub-batch 1 of 2 landed, paying blob A (quote 0xA0) — and blob B,
+        /// ready after the same landing, holds a staged quote (0xB0) the
+        /// landing did not map: the gap upstream's `build_paid_chunks` refuses
+        /// ("Missing tx hash for quote …"). At the pinned ant-core the gap
+        /// cannot occur right after a landing; it is the injected fault S49
+        /// guards an ant-core bump against. The real [`finalize_ready_blobs`]
+        /// builds A's proof, fails on B, and returns the failure as data.
+        fn first_landing_then_a_proof_gap() -> (SoFar, Result<(), String>) {
+            let mut remaining = vec![Some(priced(0, 0xA0)), Some(priced(1, 0xB0))];
+            let tx_map = BTreeMap::from([(quote(0xA0), TxHash::from_bytes([0x70; 32]))]);
+            let txs = vec![tx(0x70, 0xA0, TxStatus::Confirmed)];
+            let mut records = vec![None, None];
+            let mut staged = HashMap::new();
+            let finalized = finalize_ready_blobs(
+                &mut remaining,
+                &[0, 0],
+                0,
+                &tx_map,
+                &mut records,
+                &mut staged,
+            );
+            (
+                SoFar {
+                    records,
+                    tx_map,
+                    txs,
+                },
+                finalized,
+            )
+        }
+
+        /// **S49 (G49-1, D204 R2).** A proof that cannot be built after a
+        /// confirmed landing: the capture of what exists is delivered — the
+        /// landed quote→tx map, the tx, the gas, and the record of the blob
+        /// finalized before the failing one — and THEN the payment strands
+        /// with the confirmed count, so the class and the journal agree that
+        /// money moved. The blob whose proof failed has no record, so a resume
+        /// re-buys that one blob (D37 Decision 5's granularity caveat).
+        #[test]
+        fn s49_a_proof_failure_after_a_landing_delivers_the_capture_and_strands() {
+            let (so_far, finalized) = first_landing_then_a_proof_gap();
+            let detail = finalized
+                .clone()
+                .expect_err("fixture: blob B's proof cannot be built");
+            assert!(
+                detail.contains("Missing tx hash for quote <hex redacted>"),
+                "fixture: upstream's own gap error, redacted: {detail}"
+            );
+            assert!(
+                so_far.records[0].is_some() && so_far.records[1].is_none(),
+                "fixture: blob A finalized before blob B failed"
+            );
+
+            let (hook, seen) = recording_hook(CaptureOutcome::Durable);
+            let result = settle_sub_batch(
+                SubBatchOutcome::Confirmed { finalized },
+                Some(&hook),
+                &so_far.records,
+                &so_far.tx_map,
+                &so_far.txs,
+                GAS_WEI,
+                0,
+                2,
+            );
+            let captured = captures(&seen);
+            let Err(StorageError::StrandedPayment {
+                landed_tx_count: 1,
+                reason,
+            }) = &result
+            else {
+                panic!(
+                    "S49: a proof failure after a landing must strand with the landed count — \
+                     expected StrandedPayment {{ landed_tx_count: 1 }}, got {result:?}; \
+                     captures: {}",
+                    captured.len()
+                );
+            };
+            assert_eq!(
+                reason,
+                &format!("proof construction failed after sub-batch 1 of 2 landed: {detail}")
+            );
+            assert!(
+                !reason.contains(&"b0".repeat(8)),
+                "the unmapped quote's hash stays out of the reason: {reason}"
+            );
+            assert_eq!(
+                captured.len(),
+                1,
+                "exactly one capture, delivered before the class"
+            );
+            let receipt = &captured[0];
+            assert_eq!(
+                receipt.tx_map, so_far.tx_map,
+                "the capture maps the landed quote"
+            );
+            assert!(receipt.tx_map.contains_key(&quote(0xA0)));
+            assert_eq!(receipt.txs, so_far.txs, "the capture carries the landed tx");
+            assert_eq!(receipt.txs.len(), 1);
+            assert_eq!(receipt.gas.gas_cost_wei, GAS_WEI);
+            assert_eq!(
+                receipt.blobs.len(),
+                1,
+                "the blob finalized before the failing one keeps its record"
+            );
+            assert_eq!(receipt.blobs[0].address, Address::from_bytes([0xA0; 32]));
+            assert_eq!(receipt.storage_cost_atto, AMOUNT_ATTO);
+        }
+
+        /// **S49's unchanged half (G49-2).** The zero-transfer pre-pass runs
+        /// before any sub-batch, so its proof failure moved no ANT: it stays
+        /// [`StorageError::Payment`] with the words it had before S49, and
+        /// nothing is recorded or staged for the blob. Nothing can be captured
+        /// there: neither [`finalize_ready_blobs`] nor
+        /// [`pre_pass_proof_failure`] is handed the hook.
+        #[test]
+        fn s49_the_pre_pass_failure_stays_payment() {
+            // A blob the pre-pass holds as ready at once (`usize::MAX`) whose
+            // staged quote nothing paid: the pre-pass's own failure.
+            let mut remaining = vec![Some(priced(0, 0xC0))];
+            let mut records = vec![None];
+            let mut staged = HashMap::new();
+            let detail = finalize_ready_blobs(
+                &mut remaining,
+                &[usize::MAX],
+                usize::MAX,
+                &BTreeMap::new(),
+                &mut records,
+                &mut staged,
+            )
+            .expect_err("fixture: an unpaid staged quote has no proof");
+            assert!(
+                detail.contains("Missing tx hash for quote <hex redacted>"),
+                "fixture: upstream's own gap error, redacted: {detail}"
+            );
+
+            assert_eq!(
+                pre_pass_proof_failure(detail.clone()),
+                StorageError::Payment {
+                    reason: format!("proof construction failed: {detail}"),
+                },
+                "the pre-pass keeps its class and its words"
+            );
+            assert!(
+                records.iter().all(Option::is_none) && staged.is_empty(),
+                "nothing is recorded or staged for a blob whose proof failed"
+            );
+        }
+
+        /// **S46 in the seam (G46-u, D198 R2).** A not-durable capture
+        /// mid-sequence stops the payment with D198's words, after that one
+        /// capture; the same verdict after the LAST sub-batch stops nothing —
+        /// the caller's post-`pay` write is the second chance (D186 R3).
+        /// Controls: a durable capture, and no hook at all (no verdict), go
+        /// on.
+        #[test]
+        fn s46_a_not_durable_capture_stops_mid_sequence_but_not_after_the_last() {
+            let stop = StorageError::StrandedPayment {
+                landed_tx_count: 1,
+                reason: "the receipt-so-far could not be journaled after sub-batch 1 of 2 landed, \
+                         so no further sub-batch was submitted (D37 Decision 2)"
+                    .into(),
+            };
+            let rows = [
+                (
+                    "not durable, sub-batch 1 of 2",
+                    Some(CaptureOutcome::NotDurable),
+                    1,
+                    Err(stop),
+                ),
+                (
+                    "not durable, sub-batch 2 of 2",
+                    Some(CaptureOutcome::NotDurable),
+                    2,
+                    Ok(()),
+                ),
+                (
+                    "durable, sub-batch 1 of 2",
+                    Some(CaptureOutcome::Durable),
+                    1,
+                    Ok(()),
+                ),
+                ("no hook, sub-batch 1 of 2", None, 1, Ok(())),
+            ];
+            assert_eq!(rows.len(), 4, "two verdicts at two positions, plus no hook");
+            for (case, verdict, landed, expected) in rows {
+                let so_far = after_landings(2, landed);
+                let hooked = verdict.map(recording_hook);
+                let result = settle_sub_batch(
+                    SubBatchOutcome::Confirmed { finalized: Ok(()) },
+                    hooked.as_ref().map(|(hook, _)| hook),
+                    &so_far.records,
+                    &so_far.tx_map,
+                    &so_far.txs,
+                    GAS_WEI,
+                    landed - 1,
+                    2,
+                );
+                assert_eq!(result, expected, "{case}");
+                if let Some((_, seen)) = &hooked {
+                    let captured = captures(seen);
+                    assert_eq!(captured.len(), 1, "{case}: the landing's one capture");
+                    assert_eq!(captured[0].txs.len(), landed, "{case}");
+                    assert_eq!(
+                        captured[0].blobs.len(),
+                        landed,
+                        "{case}: the capture carries every landed record"
+                    );
+                }
+            }
+        }
+
+        /// **S50 (G50-1, D204 R3-R4).** The FIRST sub-batch of this call
+        /// reverts: no ANT moved and no quote is paid, so the class is
+        /// [`StorageError::Payment`] — "before any ANT moved" — and NOTHING is
+        /// journaled. A receipt that maps no quote reads as a payment to every
+        /// money reader in the CLI: `abandon` refused the work as "already
+        /// been paid for", and a declined resume tagged it `Paid`.
+        #[test]
+        fn s50_a_first_sub_batch_revert_is_a_payment_failure_and_journals_nothing() {
+            let records: Vec<Option<BlobPaymentRecord>> = vec![None, None];
+            let txs = vec![tx(0x70, 0xA0, TxStatus::Reverted)];
+            let (hook, seen) = recording_hook(CaptureOutcome::Durable);
+            let result = settle_sub_batch(
+                SubBatchOutcome::Reverted,
+                Some(&hook),
+                &records,
+                &BTreeMap::new(),
+                &txs,
+                GAS_WEI,
+                0,
+                2,
+            );
+            let captured = captures(&seen).len();
+            let Err(error @ StorageError::Payment { .. }) = &result else {
+                panic!(
+                    "S50: a first-sub-batch revert moved no ANT — expected Payment, got \
+                     {result:?}; captures: {captured}"
+                );
+            };
+            assert_eq!(
+                error.to_string(),
+                "payment failed before any ANT moved: the first payment sub-batch transaction \
+                 reverted on-chain: it moved no ANT, and the gas it used is spent"
+            );
+            assert_eq!(
+                captured, 0,
+                "a zero-ANT revert journals nothing: {captured} capture(s)"
+            );
+        }
+
+        /// **S50's unchanged half (G50-2).** A revert AFTER a confirmed
+        /// landing keeps the stranded class, its unchanged reason, and its
+        /// capture: the landed sub-batch's map and record, plus the reverted
+        /// tx as evidence of the gas.
+        #[test]
+        fn s50_a_later_revert_keeps_the_stranded_class_and_its_capture() {
+            let mut so_far = after_landings(2, 1);
+            so_far.txs.push(tx(0x71, 0xA1, TxStatus::Reverted));
+            let (hook, seen) = recording_hook(CaptureOutcome::Durable);
+            let result = settle_sub_batch(
+                SubBatchOutcome::Reverted,
+                Some(&hook),
+                &so_far.records,
+                &so_far.tx_map,
+                &so_far.txs,
+                GAS_WEI,
+                1,
+                2,
+            );
+            let captured = captures(&seen);
+            assert_eq!(
+                result,
+                Err(StorageError::StrandedPayment {
+                    landed_tx_count: 1,
+                    reason: "a payment sub-batch transaction reverted on-chain".into(),
+                }),
+                "captures: {}",
+                captured.len()
+            );
+            assert_eq!(captured.len(), 1, "a revert after a landing is captured");
+            let receipt = &captured[0];
+            assert_eq!(receipt.txs.len(), 2, "the landed tx and the reverted one");
+            assert_eq!(receipt.txs[1].status, TxStatus::Reverted);
+            assert_eq!(
+                receipt.tx_map, so_far.tx_map,
+                "only the landed quote is mapped"
+            );
+            assert_eq!(receipt.tx_map.len(), 1);
+            assert!(
+                !receipt.tx_map.contains_key(&quote(0xA1)),
+                "the reverted sub-batch's quote is unpaid"
+            );
+            assert_eq!(receipt.blobs.len(), 1, "the landed blob's record");
         }
     }
 }

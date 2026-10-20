@@ -697,8 +697,8 @@ fn a_kill_between_sub_batch_txs_pays_each_sub_batch_exactly_once() {
 /// A backend whose `finalize_batch` **always** reports expired proofs.
 ///
 /// D147 §1.10's reachable path to the class: `resume` intercepts the first
-/// expiry once (`resume.rs:278`) to re-quote, re-consent and re-pay, and a
-/// second expiry after that re-payment propagates through `:295`'s `?`.
+/// expiry once (`resume.rs:288`) to re-quote, re-consent and re-pay, and a
+/// second expiry after that re-payment propagates through `:305`'s `?`.
 /// `MockBackend` has no fault for this — its `Fault` enum is `AfterQuote`,
 /// `AfterPayBeforeStore`, `AfterSubBatches(k)`, `AfterStoringK(k)`,
 /// `DuringGetData`, `NetworkOn(Method)` — and a mock cannot age a quote 24 h

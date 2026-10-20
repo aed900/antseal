@@ -98,7 +98,7 @@ use crate::pipeline::anchors::{
     AnchorArtifact, ArtifactKind, DamageReason, DamagedSlot, StoredAnchors, apply_upgrade,
     damaged_slot_json,
 };
-use crate::pipeline::journal::{JournalError, recorded_plan};
+use crate::pipeline::journal::{JournalError, effective_work_state, recorded_plan, recorded_state};
 use crate::pipeline::receipt_sink::recorded_receipt;
 use crate::vault::store::{WorkState, WorkStore};
 
@@ -269,7 +269,8 @@ pub struct WorkStatus {
     pub title: Option<String>,
     /// The work's network, canonical CLI spelling.
     pub network: String,
-    /// The coarse completion state.
+    /// The coarse completion state — the effective one (D203 R1): the fine
+    /// tag's whenever the journal carries a tag, the mirror only when not.
     pub state: WorkState,
     /// Sealed with `--force-degraded`.
     pub degraded: bool,
@@ -402,12 +403,20 @@ impl WorkStatus {
                 }
             });
 
+        // The effective state (D203 R1–R2): the fine tag's, and the mirror
+        // only for a work with no tag — the mirror can trail the tag by one
+        // write (S48), so it never decides the badge where a tag exists.
+        let state = effective_work_state(
+            recorded_state(store, seal_id).map_err(CliError::from)?,
+            record.state,
+        );
+
         Ok(Self {
             work_id: record.work_id,
             seal_id: *seal_id,
             title: record.shaping.title.clone(),
             network: record.network.clone(),
-            state: record.state,
+            state,
             degraded: record.degraded,
             anchors,
             unclassifiable,

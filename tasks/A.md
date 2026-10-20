@@ -1688,3 +1688,15 @@
 - Do: fold the deadline into `confirm_header`'s own signature (updating the six test call sites) or demote it to `pub(crate)`; keep `ots/mod.rs`'s re-export list true.
 - Accept:
   - `confirm_header` either has a production caller or is not public, measured by a grep with its positive control; the anchor crate's suite and clippy stay green.
+- Notes: **[2026-10-20, wave 40 — TICKED (ruled without a new record, lane L-ANCHOR3).]** Captures on the `TODO.md` row; the lane report's deviations are summarised on the row.
+
+### A143 — Seven `pub fn`s in `antseal-anchor` have no production caller
+- Milestone: M4
+- Size: S
+- Deps: after A142 (same files: `ots/upgrade.rs`, `ots/mod.rs`)
+- Spec: D190 §2 R2 and D200 §2 R1 (a public method has a production caller or does not exist); D54 (rules `upgrade_uri_allowed`'s signature)
+- Discovered by: wave-40 planning lane P3, 2026-10-20, by a compiler-resolved census (a `#[deprecated]` attribute planted on each of the 94 ungated production `pub fn`s of the crate in a shadow, then `cargo check` of antseal-anchor and antseal-cli: 86 used, 8 not, A142 among them). Id assigned centrally.
+- Problem: `UpgradePoll::is_repollable` (`ots/upgrade.rs`), `upgrade_uri_allowed` (`ots/upgrade_uri.rs`; production uses `classify_upgrade_uri`), `AnchorEndpoints::defaults` (`submit.rs`; named in `crates/antseal-cli/tests/anchor_stage.rs`'s `DEFAULT_LIST_ROUTES` and its planted source), `HttpClient::policy` (`http.rs`; no caller of any kind), `AnchorSubmissionOutcome::is_empty` (`gate.rs`), `Agreement::failed` (`agree.rs`) and `ArbitrumConfirmation::failed` (`arbitrum/confirm.rs`) are called only by tests. The census is blind to `ant-backend` code; a textual grep of antseal-cli finds no `ant-backend` caller either.
+- Do: per item, delete it (test sites move to `matches!` or the reasoned form) or keep it with a recorded reason; retiring `upgrade_uri_allowed` takes a D54 addendum; edit `anchor_stage.rs`'s list if `defaults` goes. No standing checker (its textual recall is 4 of 8).
+- Accept:
+  - A re-run of the census shows no production `pub fn` without a production use except the `test-util` seams and items whose kept reason is recorded; the anchor suite and clippy stay green.

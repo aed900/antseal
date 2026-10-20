@@ -200,7 +200,7 @@ pub enum SealError {
     // `ProofsExpired` lived here from S11 until **D147/U81**. Nothing ever
     // constructed it — the reachable expiry is
     // `StorageError::ProofsExpired`, which `resume` intercepts once
-    // (`resume.rs:278`) and otherwise hands to `storage_to_cli` — and its
+    // (`resume.rs:288`) and otherwise hands to `storage_to_cli` — and its
     // sentence was borrowed by that mapping purely for its text, which is
     // how the one message in the product containing *"the already-spent ANT
     // is not recoverable"* came to exit 2. D147 R3 moved the sentence to
@@ -482,7 +482,7 @@ fn storage_to_cli(err: StorageError) -> CliError {
         err @ StorageError::Quote { .. } => CliError::NetworkFailure {
             detail: err.to_string(),
         },
-        // by its own definition, "before any transaction landed" — nothing moved.
+        // by its own definition, "before any ANT moved" — retry quotes and pays afresh.
         err @ StorageError::Payment { .. } => CliError::NetworkFailure {
             detail: err.to_string(),
         },
@@ -924,6 +924,31 @@ mod tests {
         assert_eq!(
             other.to_string(),
             "internal error: AEAD decryption failed (this is a bug in antseal — please report it)"
+        );
+    }
+
+    /// **S50 (D204 R3-R4)**: a first-sub-batch revert is `Payment` — no ANT
+    /// moved, no quote is paid, nothing is journaled — so it reaches the user
+    /// as the retry class, 23, in words true of a mined-and-reverted
+    /// transaction: "before any ANT moved", never "before any transaction
+    /// landed". Built through the real producer, `From<SealError>`, over the
+    /// adapter's own reason.
+    #[test]
+    fn a_first_sub_batch_revert_is_the_retry_class_in_true_words() {
+        let cli: CliError = SealError::Storage(StorageError::Payment {
+            reason: "the first payment sub-batch transaction reverted on-chain: it moved no ANT, \
+                     and the gas it used is spent"
+                .to_owned(),
+        })
+        .into();
+
+        assert_eq!(cli.class(), ErrorClass::NetworkFailure);
+        assert_eq!(cli.class().name(), "network-failure");
+        assert_eq!(cli.exit_code(), 23);
+        assert_eq!(
+            cli.to_string(),
+            "network failure: payment failed before any ANT moved: the first payment sub-batch \
+             transaction reverted on-chain: it moved no ANT, and the gas it used is spent"
         );
     }
 }

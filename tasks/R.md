@@ -1290,3 +1290,4 @@
 - Do: a native test (in-process or spawned through `tests/common/spawn.rs`) with two loopback stubs replaying the committed captures and a config pointing `[verify] bitcoin_endpoints` at them, asserting the three outcomes; the disagreement row is the control.
 - Accept:
   - The three outcomes asserted (exit codes, the promoted class and time); a plant that makes the stubs disagree turns the promotion row red by message.
+- Notes: **[2026-10-20, wave 40 — TICKED (ruled without a new record, lane L-VERIFY).]** Captures on the `TODO.md` row; the lane report's deviations are summarised on the row.

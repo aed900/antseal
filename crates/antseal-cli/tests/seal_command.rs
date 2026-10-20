@@ -1353,9 +1353,10 @@ fn a_paid_work_is_refused_and_the_receipt_is_the_authority_not_the_tag() {
     let rendered = err.to_string();
     assert!(rendered.contains("already been paid for"), "{rendered}");
     assert!(rendered.contains("forfeit that payment"), "{rendered}");
-    // It offers the real way forward: finish it, at no further cost.
+    // It offers the real way forward: finish it, buying no quote the receipt
+    // already maps — true of a partly paid work too (D203 M6c).
     assert!(
-        rendered.contains("no further payment is needed"),
+        rendered.contains("no quote the receipt already maps is paid again"),
         "{rendered}"
     );
     assert!(rendered.contains("antseal seal a.txt"), "{rendered}");
@@ -1686,8 +1687,8 @@ fn abandon_without_yes_in_machine_mode_is_consent_not_obtained_and_writes_nothin
         assert_eq!(
             asked,
             vec![format!(
-                "Abandon interrupted seal {}? Nothing was paid for it; the staged work can no \
-                 longer be used. [y/N] ",
+                "Abandon interrupted seal {}? No payment is recorded for it; the staged work \
+                 can no longer be used. [y/N] ",
                 seal_hex(&seal_id)
             )]
         );
@@ -1726,8 +1727,8 @@ fn the_anchors_clause_follows_the_recorded_anchors_not_the_tag() {
     assert_eq!(
         preview.question(),
         format!(
-            "Abandon interrupted seal {}? Nothing was paid for it; the staged work can no longer \
-             be used. [y/N] ",
+            "Abandon interrupted seal {}? No payment is recorded for it; the staged work can \
+             no longer be used. [y/N] ",
             seal_hex(&seal_id)
         )
     );
@@ -1750,8 +1751,8 @@ fn the_anchors_clause_follows_the_recorded_anchors_not_the_tag() {
     assert_eq!(
         preview.question(),
         format!(
-            "Abandon interrupted seal {}? Nothing was paid for it; the staged work, and the \
-             anchors already obtained for it, can no longer be used. [y/N] ",
+            "Abandon interrupted seal {}? No payment is recorded for it; the staged work, and \
+             the anchors already obtained for it, can no longer be used. [y/N] ",
             seal_hex(&seal_id)
         )
     );
@@ -2907,4 +2908,1896 @@ fn pre_staging_is_measured_and_each_clause_alone_rules_it_out() {
         "pre-staging mis-measured:\n{}",
         wrong.join("\n")
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D203 (wave 40): S48's two-write windows, S52's resume-completed cost,
+// and U109's money claims in `list`
+// ─────────────────────────────────────────────────────────────────────
+
+/// **D203**: a reader takes each fact from its authority — a work's STATE
+/// from its fine tag (R1–R2, S48), its MONEY from its receipt (M1–M3,
+/// U109) — and `complete()` writes its outcome before the `Complete` tag
+/// (R7, S48 + S52).
+///
+/// Every window here is planted with the suites' own seam: a real
+/// transition through the state machine, then the coarse mirror rewritten
+/// to the value it held before ([`roll_mirror`]). That is byte for byte
+/// what a kill between `VaultJournal::write_state`'s two writes leaves —
+/// the tag first, the mirror second, each atomic and fsync'd — so the
+/// mirror can only ever TRAIL the tag.
+mod d203 {
+    use super::*;
+
+    use antseal_anchor::ots::{PendingWork, UpgradeBudget, UpgradeReport};
+    use antseal_cli::error::CliError;
+    use antseal_cli::listing::{ResumeClock, WorkRow};
+    use antseal_cli::pipeline::journal::{
+        JournalError, RecordedIdentity, SealPlan as JournalPlan, WorkIdentity,
+        effective_work_state, payment_recorded, recorded_state,
+    };
+    use antseal_cli::pipeline::receipt_sink::{ReceiptSinkFault, recorded_receipt};
+    use antseal_cli::pipeline::{
+        BlobSlot, NoBarriers, Pipeline, RestoreEngine, RestoreError, RevealEngine, RevealError,
+        RevealRequest, SealError, SealState, StagedBlob, UnitSelection,
+    };
+    use antseal_cli::seal_resume::{AbandonPreview, AbandonReport, gather_candidates};
+    use antseal_cli::show::WorkUnits;
+    use antseal_cli::status::{StatusContext, WorkStatus};
+    use antseal_cli::upgrade_hook::{HookContext, run_with};
+    use antseal_cli::vault::session::UnlockedVault;
+    use antseal_cli::vault::store::{ConsentChannel, ConsentRecord, StoreError};
+    use antseal_core::crypto::secrets::MasterSecret;
+    use antseal_net::test_util::{Fault, Method};
+    use antseal_net::{
+        GasSummary, NetworkId, PaymentReceipt, QuoteHash, TxHash, TxRecord, TxStatus,
+    };
+
+    /// D203 M2's two clock notes, verbatim: no payment recorded, and a
+    /// payment recorded.
+    const RE_QUOTE_NOTE: &str = "no payment is recorded for it; the recorded quote is stale by \
+                                 design — resuming re-quotes at current prices and asks for \
+                                 consent again";
+    const TIME_BOXED_NOTE: &str = "RESUME PROMPTLY: a payment for this seal is recorded, and its \
+                                   payment proofs stay usable for uploading only about a day — \
+                                   after that, finishing it costs a second payment";
+    /// D203 M3's cost line where the vault records neither a cost nor a
+    /// payment.
+    const NO_COST_LINE: &str = "  cost: none (no payment recorded)";
+
+    fn rng(seed: u8) -> ChaCha20Rng {
+        ChaCha20Rng::from_seed([seed; 32])
+    }
+
+    fn hex(id: &SealId) -> String {
+        id.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Run `body` against a fresh [`VaultJournal`] over `vault`.
+    fn journal_do(vault: &UnlockedVault, body: impl FnOnce(&VaultJournal<'_, ChaCha20Rng>)) {
+        let mut r = rng(0x67);
+        let journal = VaultJournal::new(WorkStore::new(vault), &mut r);
+        body(&journal);
+    }
+
+    /// The window: rewrite ONLY the coarse mirror (and, for window B′, the
+    /// cost HEAD's order wrote after the tag) — the bytes a kill between
+    /// `write_state`'s two writes leaves behind.
+    fn roll_mirror(store: &WorkStore<'_>, seal_id: &SealId, mirror: WorkState, drop_cost: bool) {
+        let mut record = store.load_meta(seal_id).expect("meta");
+        record.state = mirror;
+        if drop_cost {
+            record.cost_atto = None;
+        }
+        store
+            .store_meta(&record, &mut rng(0xEE))
+            .expect("rewrite the mirror");
+    }
+
+    /// The positive control every window row starts from: the planted shape,
+    /// read back from where it landed.
+    fn assert_window(store: &WorkStore<'_>, seal_id: &SealId, tag: SealState, mirror: WorkState) {
+        assert_eq!(
+            recorded_state(store, seal_id).expect("tag read"),
+            Some(tag),
+            "the planted fine tag"
+        );
+        assert_eq!(
+            store.load_meta(seal_id).expect("meta").state,
+            mirror,
+            "the planted stale mirror"
+        );
+    }
+
+    fn decide(store: &WorkStore<'_>, plan: &SealPlan) -> Result<ResumeDecision, CliError> {
+        detect(
+            store,
+            NetworkId::Devnet,
+            &plan.absolute_paths(),
+            &plan.shaping,
+        )
+    }
+
+    fn abandon(vault: &UnlockedVault, seal_id: &SealId) -> Result<AbandonReport, CliError> {
+        let store = WorkStore::new(vault);
+        let mut r = rng(0x66);
+        let journal = VaultJournal::new(WorkStore::new(vault), &mut r);
+        abandon_pre_pay(&store, &journal, seal_id)
+    }
+
+    fn preview(vault: &UnlockedVault, seal_id: &SealId) -> Option<AbandonPreview> {
+        let store = WorkStore::new(vault);
+        let mut r = rng(0x68);
+        let journal = VaultJournal::new(WorkStore::new(vault), &mut r);
+        AbandonPreview::read(&store, &journal, seal_id).expect("the preview reads")
+    }
+
+    /// The only row of a one-work vault.
+    fn only_row(listing: &WorkListing) -> &WorkRow {
+        assert_eq!(listing.works.len(), 1, "one work in this vault");
+        &listing.works[0]
+    }
+
+    fn sealed(outcome: Result<SealCommandResult, CliError>, what: &str) -> SealReportFields {
+        match outcome {
+            Ok(SealCommandResult::Sealed(report)) => SealReportFields {
+                seal_id: report.seal_id,
+                work_id: report.work_id,
+                resumed: report.resumed,
+                paid_here: report.paid_here,
+            },
+            Ok(_) => panic!("{what}: a non-dry-run seal returns Sealed"),
+            Err(err) => panic!("{what}: {err}"),
+        }
+    }
+
+    /// The fields of a `Sealed` report these rows read.
+    struct SealReportFields {
+        seal_id: SealId,
+        work_id: [u8; 32],
+        resumed: bool,
+        paid_here: bool,
+    }
+
+    // ── State group (S48): one lag, four windows ─────────────────────
+
+    /// **S48's Accept — window A, exactly**: an abandon killed between its
+    /// two writes (fine tag `Abandoned`, mirror still `incomplete-pre-pay`)
+    /// is abandoned to every reader. The exact, overlapping and other-flags
+    /// invocations are fresh, `list` offers no resume, the abandon preview is
+    /// not shown, `antseal abandon` says nothing needed doing and writes
+    /// nothing, `restore`/`reveal` name the tag's state, and the exact re-run
+    /// seals afresh under a new seal id.
+    ///
+    /// Red at 6e1cab3 (P1's probe, re-run before the fix): `detect` →
+    /// `Resume`, the re-run exits 2 "this work is abandoned and cannot be
+    /// resumed", `list` offers the resume, and `abandon` reports
+    /// `already: false` beside `previous_state: "abandoned"`.
+    #[test]
+    fn s48_window_a_an_abandoned_tag_over_a_pre_pay_mirror_is_abandoned_to_every_reader() {
+        let (vault, work, seal_id) = vault_with_a_declined_work("d203-wa");
+        work.file("b.txt", b"another file\n");
+        let session = SealSession::open(Arc::new(vault.unlock()));
+        let store = WorkStore::new(session.vault());
+        journal_do(session.vault(), |j| {
+            j.set_state(&seal_id, SealState::Abandoned)
+                .expect("abandon");
+        });
+        roll_mirror(&store, &seal_id, WorkState::IncompletePrePay, false);
+        assert_window(
+            &store,
+            &seal_id,
+            SealState::Abandoned,
+            WorkState::IncompletePrePay,
+        );
+
+        // D45: no invocation resurrects the work.
+        let invocations = [
+            work.plan(&["a.txt", "--no-anchor"]).expect("exact"),
+            work.plan(&["a.txt", "b.txt", "--no-anchor"])
+                .expect("overlap"),
+            work.plan(&["a.txt", "--no-anchor", "--split", "blank-lines"])
+                .expect("other flags"),
+        ];
+        assert_eq!(invocations.len(), 3);
+        for plan in &invocations {
+            let decision = decide(&store, plan);
+            assert!(
+                matches!(
+                    decision,
+                    Ok(ResumeDecision::Fresh {
+                        incomplete_works: 0
+                    })
+                ),
+                "expected Fresh {{ incomplete_works: 0 }}, got {decision:?}"
+            );
+        }
+
+        // `list`: abandoned, nothing to resume.
+        let listing = WorkListing::gather(&store).expect("list");
+        let row = only_row(&listing);
+        assert_eq!(
+            row.state,
+            WorkState::Abandoned,
+            "list classifies by the tag"
+        );
+        assert!(row.resume.is_none(), "{:?}", row.resume);
+        assert!(row.resume_refusal.is_none());
+        let counts = listing.counts();
+        assert_eq!((counts.abandoned, counts.incomplete), (1, 0));
+
+        // D185's preview is not shown: the engine reports the work as done.
+        assert_eq!(preview(session.vault(), &seal_id), None);
+
+        // `antseal abandon`: nothing needed doing, and nothing is written.
+        let before = vault.fingerprint();
+        let report = abandon(session.vault(), &seal_id).expect("already abandoned is an outcome");
+        assert!(report.already, "{report:?}");
+        assert_eq!(report.previous_state, Some(SealState::Abandoned));
+        assert_eq!(report.json()["already"], true);
+        assert_eq!(report.json()["previous_state"], "abandoned");
+        assert_eq!(
+            report.render(),
+            vec![format!(
+                "Work {} was already abandoned; nothing changed.",
+                hex(&seal_id)
+            )]
+        );
+        assert_eq!(vault.fingerprint(), before, "the abandon wrote nothing");
+
+        // The engines that need a complete work name the state the tag holds.
+        let backend = MockBackend::new().with_balances(funded());
+        match block_on(RestoreEngine::new(&backend, &store).restore(&seal_id)) {
+            Err(RestoreError::NotRestorable { state }) => assert_eq!(state, "abandoned"),
+            Err(other) => panic!("expected NotRestorable, got: {other}"),
+            Ok(_) => panic!("an abandoned work is never restorable"),
+        }
+        match block_on(RevealEngine::new(&backend, &store).prepare(
+            &seal_id,
+            &RevealRequest {
+                selection: UnitSelection::All,
+                include_receipt: false,
+            },
+        )) {
+            Err(RevealError::NotRevealable { state }) => assert_eq!(state, "abandoned"),
+            Err(other) => panic!("expected NotRevealable, got: {other}"),
+            Ok(_) => panic!("an abandoned work is never revealable"),
+        }
+
+        // The exact re-run seals afresh, under a NEW seal id.
+        let rerun = work
+            .plan(&["a.txt", "--no-anchor", "--yes"])
+            .expect("plan validates");
+        let fresh = sealed(
+            block_on(run_seal(
+                &backend,
+                &session,
+                &rerun,
+                &mut NeverAsked,
+                &ctx(true),
+                &mut rng(0xD2),
+                &mut rng(0xD3),
+            )),
+            "the exact re-run must seal afresh",
+        );
+        assert!(!fresh.resumed);
+        assert_ne!(fresh.seal_id, seal_id, "a fresh seal draws a new seal id");
+        assert_eq!(store.list_works().expect("list").len(), 2);
+    }
+
+    /// **Window B′ (`Finalizing → Complete`), the commonest producer** —
+    /// every successful seal passes through it. Killed there (tag
+    /// `Complete`, mirror `incomplete-post-pay`, and under HEAD's order no
+    /// cost), the work is complete to every reader: no resume candidate,
+    /// `list` "complete", `status`/`show` complete, `restore`/`reveal` pass
+    /// their state gate, the upgrade hook visits it, and `abandon` gives the
+    /// complete refusal. The exact re-run is a fresh seal — D45 §2's rule for
+    /// every complete work (D203's stated residual).
+    ///
+    /// Red at 6e1cab3: a complete work listed incomplete with "RESUME
+    /// PROMPTLY", refused by `restore`/`reveal`, and abandon and the exact
+    /// re-run both exit 2 — a permanent dead end (P1 §2 S48 (a2)).
+    #[test]
+    fn s48_window_b_prime_a_complete_tag_over_a_post_pay_mirror_is_complete_to_every_reader() {
+        let work = Work::new("d203-wb");
+        work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+        let plan = work
+            .plan(&["a.txt", "--no-anchor", "--yes"])
+            .expect("plan validates");
+        let backend = MockBackend::new().with_balances(funded());
+        let vault = IsolatedVault::create("d203-wb");
+        let session = SealSession::open(Arc::new(vault.unlock()));
+        let first = sealed(
+            block_on(run_seal(
+                &backend,
+                &session,
+                &plan,
+                &mut NeverAsked,
+                &ctx(true),
+                &mut rng(0x71),
+                &mut rng(0x72),
+            )),
+            "the first seal completes",
+        );
+        let seal_id = first.seal_id;
+        let store = WorkStore::new(session.vault());
+        roll_mirror(&store, &seal_id, WorkState::IncompletePostPay, true);
+        assert_window(
+            &store,
+            &seal_id,
+            SealState::Complete,
+            WorkState::IncompletePostPay,
+        );
+        assert_eq!(
+            store.load_meta(&seal_id).expect("meta").work_id,
+            Some(first.work_id),
+            "staging recorded the work id (pipeline/seal.rs's record_outcome after put_plan)"
+        );
+
+        // D45: not a candidate, and the exact re-run is fresh.
+        assert!(
+            gather_candidates(&store, NetworkId::Devnet)
+                .expect("gather")
+                .is_empty()
+        );
+        let exact = work
+            .plan(&["a.txt", "--no-anchor"])
+            .expect("plan validates");
+        let decision = decide(&store, &exact);
+        assert!(
+            matches!(
+                decision,
+                Ok(ResumeDecision::Fresh {
+                    incomplete_works: 0
+                })
+            ),
+            "{decision:?}"
+        );
+
+        // `list`: complete, nothing to resume.
+        let listing = WorkListing::gather(&store).expect("list");
+        let row = only_row(&listing);
+        assert_eq!(row.state, WorkState::Complete);
+        assert!(row.resume.is_none(), "{:?}", row.resume);
+        let counts = listing.counts();
+        assert_eq!((counts.complete, counts.incomplete), (1, 0));
+
+        // `status` and `show` say complete.
+        let status = WorkStatus::gather(&store, &seal_id, StatusContext::new(1_800_000_000))
+            .expect("status");
+        assert_eq!(status.state, WorkState::Complete);
+        let units = WorkUnits::gather(&store, &seal_id).expect("show");
+        assert_eq!(units.state, WorkState::Complete);
+
+        // `restore` and `reveal` (the only `.sealproof` producer) pass their
+        // state gate.
+        if let Err(err) = block_on(RestoreEngine::new(&backend, &store).restore(&seal_id)) {
+            panic!("a complete work restores: {err}");
+        }
+        if let Err(err) = block_on(RevealEngine::new(&backend, &store).prepare(
+            &seal_id,
+            &RevealRequest {
+                selection: UnitSelection::All,
+                include_receipt: false,
+            },
+        )) {
+            panic!("a complete work reveals: {err}");
+        }
+
+        // The upgrade hook visits it: complete works are its candidates.
+        let pass = run_with(&HookContext::with_poll(
+            session.vault(),
+            UpgradeBudget::opportunistic(),
+            1_800_000_000,
+            Box::new(|_: &[PendingWork], _: UpgradeBudget| UpgradeReport::default()),
+        ));
+        assert_eq!(pass.excluded, 0, "{pass:?}");
+        assert_eq!(pass.order, vec![seal_id], "{pass:?}");
+
+        // `abandon` gives the complete refusal, not the paid one.
+        let err =
+            abandon(session.vault(), &seal_id).expect_err("a complete work is never abandoned");
+        assert_eq!(err.exit_code(), 2);
+        assert!(
+            err.to_string()
+                .contains("is complete: its ciphertexts are on the network permanently"),
+            "{err}"
+        );
+    }
+
+    /// **Window C (`Anchored → Paid`)**: tag `Paid`, mirror still pre-pay.
+    /// The candidate is classified post-pay (consent does not re-fire, D45
+    /// §4), `list` puts it on the time-boxed clock, and the abandon refusal —
+    /// the receipt first — was already right.
+    ///
+    /// Red at 6e1cab3: `list` says "re-quote … nothing was paid" for a paid
+    /// work, and the candidate carries the stale pre-pay class.
+    #[test]
+    fn s48_window_c_a_paid_tag_over_a_pre_pay_mirror_is_post_pay_to_every_reader() {
+        let (vault, _work, seal_id) = vault_with_a_declined_work("d203-wc");
+        let unlocked = vault.unlock();
+        let store = WorkStore::new(&unlocked);
+        journal_do(&unlocked, |j| {
+            j.set_state(&seal_id, SealState::Anchored)
+                .expect("anchored");
+            j.put_receipt(&seal_id, &fixture_receipt())
+                .expect("receipt");
+            j.set_state(&seal_id, SealState::Paid).expect("paid");
+        });
+        roll_mirror(&store, &seal_id, WorkState::IncompletePrePay, false);
+        assert_window(
+            &store,
+            &seal_id,
+            SealState::Paid,
+            WorkState::IncompletePrePay,
+        );
+
+        let candidates = gather_candidates(&store, NetworkId::Devnet).expect("gather");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].state,
+            WorkState::IncompletePostPay,
+            "the candidate's class is the tag's"
+        );
+        assert_eq!(candidates[0].journal_state, Some(SealState::Paid));
+
+        let listing = WorkListing::gather(&store).expect("list");
+        let row = only_row(&listing);
+        assert_eq!(row.state, WorkState::IncompletePostPay);
+        assert_eq!(
+            row.resume.as_ref().map(|hint| hint.clock),
+            Some(ResumeClock::TimeBoxed)
+        );
+
+        let err = abandon(&unlocked, &seal_id).expect_err("a paid work is never abandoned");
+        assert!(
+            err.to_string().contains("has already been paid for"),
+            "{err}"
+        );
+    }
+
+    /// **Window D (S11's post-pay abandon)**: tag `Abandoned` over a paid
+    /// work, mirror still post-pay. Excluded from D45, listed abandoned, and
+    /// `abandon` reports it already done.
+    ///
+    /// Red at 6e1cab3: "RESUME PROMPTLY" for an abandoned work; abandon exit
+    /// 2 "already been paid for … Finish it instead by re-running …", whose
+    /// re-run exits 2 "abandoned and cannot be resumed" — a dead end.
+    #[test]
+    fn s48_window_d_an_abandoned_tag_over_a_post_pay_mirror_is_abandoned_to_every_reader() {
+        let (vault, work, seal_id) = vault_with_a_declined_work("d203-wd");
+        let unlocked = vault.unlock();
+        let store = WorkStore::new(&unlocked);
+        journal_do(&unlocked, |j| {
+            j.set_state(&seal_id, SealState::Anchored)
+                .expect("anchored");
+            j.put_receipt(&seal_id, &fixture_receipt())
+                .expect("receipt");
+            j.set_state(&seal_id, SealState::Paid).expect("paid");
+            j.set_state(&seal_id, SealState::Abandoned)
+                .expect("S11's abandon");
+        });
+        roll_mirror(&store, &seal_id, WorkState::IncompletePostPay, false);
+        assert_window(
+            &store,
+            &seal_id,
+            SealState::Abandoned,
+            WorkState::IncompletePostPay,
+        );
+
+        assert!(
+            gather_candidates(&store, NetworkId::Devnet)
+                .expect("gather")
+                .is_empty()
+        );
+        let exact = work
+            .plan(&["a.txt", "--no-anchor"])
+            .expect("plan validates");
+        let decision = decide(&store, &exact);
+        assert!(
+            matches!(
+                decision,
+                Ok(ResumeDecision::Fresh {
+                    incomplete_works: 0
+                })
+            ),
+            "{decision:?}"
+        );
+
+        let listing = WorkListing::gather(&store).expect("list");
+        let row = only_row(&listing);
+        assert_eq!(row.state, WorkState::Abandoned);
+        assert!(row.resume.is_none(), "{:?}", row.resume);
+
+        let before = vault.fingerprint();
+        let report = abandon(&unlocked, &seal_id).expect("already abandoned is an outcome");
+        assert!(report.already, "{report:?}");
+        assert_eq!(report.previous_state, Some(SealState::Abandoned));
+        assert_eq!(vault.fingerprint(), before, "the abandon wrote nothing");
+    }
+
+    /// **Window E (D197's restart abandon, killed between its writes)**: a
+    /// work whose staging never finished (no plan), abandoned by the
+    /// restart, mirror still pre-pay. The exact re-run is `Fresh` — not
+    /// `Restart`, not exit 2 — and seals the files afresh.
+    ///
+    /// Red at 6e1cab3: `detect` → `Resume` (`staging_never_finished` clause
+    /// 3 needs the tag absent or `Staged`), then exit 2 on every run —
+    /// D197's promise defeated by its own abandon's window.
+    #[test]
+    fn s48_window_e_a_restart_abandon_killed_between_its_writes_seals_afresh() {
+        let work = Work::new("d203-we");
+        work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+        let exact = work
+            .plan(&["a.txt", "--no-anchor"])
+            .expect("plan validates");
+        let vault = IsolatedVault::create("d203-we");
+        let session = SealSession::open(Arc::new(vault.unlock()));
+        let store = WorkStore::new(session.vault());
+        let seal_id = SealId::from_bytes([0x5E; 16]);
+        journal_do(session.vault(), |j| {
+            let w = MasterSecret::from_bytes([0x5E; 32]);
+            j.begin(&WorkIdentity {
+                w: w.secret_ref(),
+                seal_id,
+                network: exact.network.as_str().to_owned(),
+                unanchored: exact.shaping.no_anchor,
+                degraded: false,
+                input_paths_as_given: exact.as_given_paths(),
+                input_paths_absolute: exact.absolute_paths(),
+                shaping: exact.shaping.clone(),
+            })
+            .expect("begin");
+            let ciphertext = vec![0x5A_u8; 48];
+            j.put_staged(
+                &seal_id,
+                &StagedBlob {
+                    slot: BlobSlot::Unit { unit_id: 0 },
+                    nonce: [0x5B; 24],
+                    address: antseal_core::storage::compute_storage_address(&ciphertext)
+                        .expect("under the chunk cap"),
+                    ciphertext,
+                },
+            )
+            .expect("stage one unit");
+            j.set_state(&seal_id, SealState::Abandoned)
+                .expect("the restart's abandon");
+        });
+        roll_mirror(&store, &seal_id, WorkState::IncompletePrePay, false);
+        assert_window(
+            &store,
+            &seal_id,
+            SealState::Abandoned,
+            WorkState::IncompletePrePay,
+        );
+
+        let decision = decide(&store, &exact);
+        assert!(
+            matches!(
+                decision,
+                Ok(ResumeDecision::Fresh {
+                    incomplete_works: 0
+                })
+            ),
+            "{decision:?}"
+        );
+
+        let rerun = work
+            .plan(&["a.txt", "--no-anchor", "--yes"])
+            .expect("plan validates");
+        let backend = MockBackend::new().with_balances(funded());
+        let fresh = sealed(
+            block_on(run_seal(
+                &backend,
+                &session,
+                &rerun,
+                &mut NeverAsked,
+                &ctx(true),
+                &mut rng(0x77),
+                &mut rng(0x78),
+            )),
+            "the exact re-run must seal afresh",
+        );
+        assert!(!fresh.resumed);
+        assert_ne!(fresh.seal_id, seal_id);
+        assert_eq!(store.list_works().expect("list").len(), 2);
+    }
+
+    // ── R7 (S48 + S52): `complete()` writes its outcome first ────────
+
+    /// A journal whose `Complete` transition fails, as a full disk would
+    /// make it fail. Every other call reaches the real journal underneath.
+    struct FailsTheCompleteTransition<'j, J> {
+        inner: &'j J,
+    }
+
+    impl<J: SealJournal> SealJournal for FailsTheCompleteTransition<'_, J> {
+        fn begin(&self, identity: &WorkIdentity<'_>) -> Result<(), JournalError> {
+            self.inner.begin(identity)
+        }
+        fn put_staged(&self, seal_id: &SealId, blob: &StagedBlob) -> Result<(), JournalError> {
+            self.inner.put_staged(seal_id, blob)
+        }
+        fn staged(&self, seal_id: &SealId, slot: BlobSlot) -> Result<StagedBlob, JournalError> {
+            self.inner.staged(seal_id, slot)
+        }
+        fn staged_slots(&self, seal_id: &SealId) -> Result<Vec<BlobSlot>, JournalError> {
+            self.inner.staged_slots(seal_id)
+        }
+        fn put_plan(&self, seal_id: &SealId, plan: &JournalPlan) -> Result<(), JournalError> {
+            self.inner.put_plan(seal_id, plan)
+        }
+        fn plan(&self, seal_id: &SealId) -> Result<Option<JournalPlan>, JournalError> {
+            self.inner.plan(seal_id)
+        }
+        fn set_state(&self, seal_id: &SealId, state: SealState) -> Result<(), JournalError> {
+            if state == SealState::Complete {
+                return Err(JournalError::Store(Box::new(StoreError::Io {
+                    path: std::path::PathBuf::from("/test/vault/store/works/w/state"),
+                    source: std::io::Error::new(std::io::ErrorKind::StorageFull, "test: disk full"),
+                })));
+            }
+            self.inner.set_state(seal_id, state)
+        }
+        fn state(&self, seal_id: &SealId) -> Result<SealState, JournalError> {
+            self.inner.state(seal_id)
+        }
+        fn put_receipt(
+            &self,
+            seal_id: &SealId,
+            receipt: &PaymentReceipt,
+        ) -> Result<(), JournalError> {
+            self.inner.put_receipt(seal_id, receipt)
+        }
+        fn receipt(&self, seal_id: &SealId) -> Result<Option<PaymentReceipt>, JournalError> {
+            self.inner.receipt(seal_id)
+        }
+        fn arm_receipts(&self, seal_id: &SealId, prior: Option<&PaymentReceipt>) {
+            self.inner.arm_receipts(seal_id, prior);
+        }
+        fn receipts_unrecorded(&self) -> Option<ReceiptSinkFault> {
+            self.inner.receipts_unrecorded()
+        }
+        fn put_consent(
+            &self,
+            seal_id: &SealId,
+            consent: ConsentRecord,
+        ) -> Result<(), JournalError> {
+            self.inner.put_consent(seal_id, consent)
+        }
+        fn consent(&self, seal_id: &SealId) -> Result<Option<ConsentRecord>, JournalError> {
+            self.inner.consent(seal_id)
+        }
+        fn recorded_identity(&self, seal_id: &SealId) -> Result<RecordedIdentity, JournalError> {
+            self.inner.recorded_identity(seal_id)
+        }
+        /// Refuses rather than forwards: these rows seal with `--no-anchor`,
+        /// so the gate is never run and no anchor slot is ever written.
+        fn put_anchor(
+            &self,
+            _seal_id: &SealId,
+            _slot: &str,
+            _bytes: &[u8],
+        ) -> Result<(), JournalError> {
+            Err(JournalError::IllegalAnchorWrite {
+                detail: "these rows never anchor, so this double refuses anchor writes",
+            })
+        }
+        fn mark_degraded(&self, seal_id: &SealId) -> Result<(), JournalError> {
+            self.inner.mark_degraded(seal_id)
+        }
+        fn record_outcome(
+            &self,
+            seal_id: &SealId,
+            work_id: Option<[u8; 32]>,
+            cost_atto: Option<u128>,
+        ) -> Result<(), JournalError> {
+            self.inner.record_outcome(seal_id, work_id, cost_atto)
+        }
+        fn incomplete_works(&self) -> Result<Vec<(SealId, Option<SealState>)>, JournalError> {
+            self.inner.incomplete_works()
+        }
+    }
+
+    /// **R7 (G-R7a)**: `complete()` writes its outcome — the work id AND the
+    /// cost — before the `Complete` transition, so a failure (or a kill) at
+    /// that transition leaves a `Finalizing` work whose meta already carries
+    /// both, which the next resume finishes.
+    ///
+    /// Red at 6e1cab3: the tag was written first, so a failed transition
+    /// left `cost_atto: None` (P1 §7.3's B2′ shape, one write earlier).
+    #[test]
+    fn s52_complete_records_its_outcome_before_the_complete_transition() {
+        let (vault, _work, seal_id) = vault_with_a_declined_work("d203-r7a");
+        let unlocked = vault.unlock();
+        let store = WorkStore::new(&unlocked);
+        assert_eq!(
+            store.load_meta(&seal_id).expect("meta").cost_atto,
+            None,
+            "control: no cost is recorded before the payment"
+        );
+
+        let mock = MockBackend::new().with_balances(funded());
+        let gate = crate::common::RecordingGate::new();
+        let consent = crate::common::ScriptedConsent::always_yes();
+        let mut r = rng(0xD7);
+        let inner = VaultJournal::new(WorkStore::new(&unlocked), &mut r);
+        let journal = FailsTheCompleteTransition { inner: &inner };
+        let pipeline = Pipeline::new(&mock, &gate, &journal, &consent, &NoBarriers);
+        let err = match block_on(pipeline.resume(&seal_id)) {
+            Err(err) => err,
+            Ok(_) => panic!("the Complete transition must fail"),
+        };
+        assert!(
+            matches!(err, SealError::Journal(JournalError::Store(_))),
+            "{err:?}"
+        );
+        // Control: everything up to the transition ran — paid and finalized.
+        assert_eq!(
+            recorded_state(&store, &seal_id).expect("tag"),
+            Some(SealState::Finalizing)
+        );
+        let receipt = recorded_receipt(&store, &seal_id)
+            .expect("receipt read")
+            .expect("the payment is journaled");
+        assert!(
+            receipt.storage_cost_atto > 0,
+            "the mock quotes a nonzero cost"
+        );
+
+        let meta = store.load_meta(&seal_id).expect("meta");
+        assert!(
+            meta.work_id.is_some(),
+            "work id None after a failed Complete transition"
+        );
+        assert_eq!(
+            meta.cost_atto,
+            Some(receipt.storage_cost_atto),
+            "cost None after a failed Complete transition: complete() must write its outcome \
+             BEFORE the Complete tag (D203 R7)"
+        );
+    }
+
+    /// One ordinary failure after the payment — run 1 pays, then the upload
+    /// aborts after one stored blob (exit 23) — leaving a paid, incomplete
+    /// work: P1 §7.4's CC sequence, run 1.
+    fn paid_then_upload_failed(
+        tag: &str,
+        work: &Work,
+    ) -> (
+        IsolatedVault,
+        SealSession,
+        MockBackend,
+        SealId,
+        PaymentReceipt,
+    ) {
+        let plan = work
+            .plan(&["a.txt", "--no-anchor", "--yes"])
+            .expect("plan validates");
+        let backend = MockBackend::new().with_balances(funded());
+        backend.arm_fault(Fault::AfterStoringK(1));
+        let vault = IsolatedVault::create(tag);
+        let session = SealSession::open(Arc::new(vault.unlock()));
+        match block_on(run_seal(
+            &backend,
+            &session,
+            &plan,
+            &mut NeverAsked,
+            &ctx(true),
+            &mut rng(0xC1),
+            &mut rng(0xC2),
+        )) {
+            Err(err) => assert_eq!(err.exit_code(), 23, "an ordinary upload failure: {err}"),
+            Ok(_) => panic!("run 1 must fail mid-upload"),
+        }
+        let (seal_id, receipt) = {
+            let store = WorkStore::new(session.vault());
+            let seal_id = store.list_works().expect("list")[0];
+            let receipt = recorded_receipt(&store, &seal_id)
+                .expect("receipt read")
+                .expect("run 1's payment is journaled");
+            assert!(
+                receipt.storage_cost_atto > 0,
+                "the mock quotes a nonzero cost"
+            );
+            assert!(
+                !receipt.tx_map.is_empty(),
+                "the receipt maps the quotes it paid"
+            );
+            assert_eq!(
+                store.load_meta(&seal_id).expect("meta").cost_atto,
+                None,
+                "control: run 1 never completed, so nothing recorded a cost"
+            );
+            (seal_id, receipt)
+        };
+        (vault, session, backend, seal_id, receipt)
+    }
+
+    /// **S52 (G-R7b)**: the CC sequence finished by a resume that pays
+    /// nothing records its cost from the journaled receipt, and `list`
+    /// prints it as the work's cost.
+    ///
+    /// Red at 6e1cab3: `complete()` recorded a cost only `if paid_here`, so
+    /// the work stayed "cost: not recorded (nothing paid)" for good
+    /// (`[CC-after-run2] cost=None`).
+    #[test]
+    fn s52_a_work_paid_in_one_run_and_finished_by_a_resume_records_its_cost() {
+        let work = Work::new("d203-r7b");
+        work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+        let (_vault, session, backend, seal_id, receipt) =
+            paid_then_upload_failed("d203-r7b", &work);
+        let plan = work
+            .plan(&["a.txt", "--no-anchor", "--yes"])
+            .expect("plan validates");
+        let finished = sealed(
+            block_on(run_seal(
+                &backend,
+                &session,
+                &plan,
+                &mut NeverAsked,
+                &ctx(true),
+                &mut rng(0xC3),
+                &mut rng(0xC4),
+            )),
+            "run 2 resumes and finishes",
+        );
+        assert!(finished.resumed);
+        assert!(!finished.paid_here, "the resume paid nothing");
+        assert_eq!(finished.seal_id, seal_id);
+
+        let store = WorkStore::new(session.vault());
+        assert_eq!(
+            recorded_state(&store, &seal_id).expect("tag"),
+            Some(SealState::Complete)
+        );
+        let after = recorded_receipt(&store, &seal_id)
+            .expect("receipt read")
+            .expect("present");
+        assert_eq!(
+            after.storage_cost_atto, receipt.storage_cost_atto,
+            "control: the resume bought nothing"
+        );
+        assert_eq!(
+            store.load_meta(&seal_id).expect("meta").cost_atto,
+            Some(receipt.storage_cost_atto),
+            "cost=None: a work paid in one run and finished by a resume must record its cost \
+             (D203 R7)"
+        );
+        let text = WorkListing::gather(&store)
+            .expect("list")
+            .render()
+            .join("\n");
+        assert!(
+            text.contains(&format!("  cost: {} atto-ANT\n", receipt.storage_cost_atto)),
+            "{text}"
+        );
+    }
+
+    // ── Money group (U109): `list` takes money from the receipt ──────
+
+    /// **U109, D203 M3 (GM2)**: after run 1 of the CC sequence the meta
+    /// records no cost, and `list` takes it from the money authority — the
+    /// journaled receipt — "so far". `--json`'s `cost_atto` keeps the meta's
+    /// value this wave (no JSON semantics move before U32).
+    ///
+    /// Red at 6e1cab3: "cost: not recorded (nothing paid)" two lines above
+    /// "RESUME PROMPTLY: this seal is paid for" (`[CC-after-run1]`).
+    #[test]
+    fn u109_list_reads_the_cost_of_a_paid_incomplete_work_from_its_receipt() {
+        let work = Work::new("d203-gm2");
+        work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+        let (_vault, session, _backend, seal_id, receipt) =
+            paid_then_upload_failed("d203-gm2", &work);
+        let store = WorkStore::new(session.vault());
+        let listing = WorkListing::gather(&store).expect("list");
+        let row = only_row(&listing);
+        assert_eq!(row.seal_id, seal_id);
+        assert_eq!(
+            row.resume.as_ref().map(|hint| hint.clock),
+            Some(ResumeClock::TimeBoxed)
+        );
+        let text = listing.render().join("\n");
+        let cost_line = format!(
+            "  cost: {} atto-ANT so far (from the payment receipt)",
+            receipt.storage_cost_atto
+        );
+        assert_eq!(text.matches(&cost_line).count(), 1, "{text}");
+        assert!(!text.contains("nothing paid"), "{text}");
+        assert!(!text.contains("nothing was paid"), "{text}");
+        assert!(
+            listing.json()["works"][0]["cost_atto"].is_null(),
+            "--json keeps the meta's value: {}",
+            listing.json()
+        );
+    }
+
+    /// A pre-S50 first-sub-batch revert's capture: a receipt that maps no
+    /// quote and moved no ANT (P1's window F). NON-SECRET synthetic bytes.
+    fn revert_only_receipt() -> PaymentReceipt {
+        PaymentReceipt {
+            blobs: Vec::new(),
+            tx_map: std::collections::BTreeMap::new(),
+            txs: vec![TxRecord {
+                tx_hash: TxHash::from_bytes([0xB3; 32]),
+                block_number: Some(43),
+                status: TxStatus::Reverted,
+                quote_hashes: vec![QuoteHash::from_bytes([0xB1; 32])],
+            }],
+            storage_cost_atto: 0,
+            gas: GasSummary {
+                gas_cost_wei: 21_000,
+            },
+        }
+    }
+
+    /// What `list` must say about one shape of D203 M1's money table.
+    struct MoneyCase {
+        label: &'static str,
+        listing: WorkListing,
+        clock: ResumeClock,
+        note: &'static str,
+        cost_line: String,
+    }
+
+    /// **U109, D203 M1–M3 (GM1)**: `list` takes its money claims from the
+    /// receipt — `time-boxed` iff the vault holds a receipt mapping at least
+    /// one quote to a transaction — and says "no payment is recorded", never
+    /// "nothing was paid", where it holds none. The five shapes are P1
+    /// §7.7's (a)–(e).
+    ///
+    /// Red at 6e1cab3: (a) — the vault after an exit 37 with no durable
+    /// capture — says "nothing was paid", which the vault cannot know; (c) —
+    /// a stranded payment — is on the re-quote clock, "nothing was paid".
+    #[test]
+    fn u109_list_states_money_from_the_receipt_in_every_case() {
+        let mut cases = Vec::new();
+
+        // (a) consent recorded, tag `Anchored`, no receipt: exit 37 with no
+        // durable capture — and equally a pre-landing `Payment` failure.
+        {
+            let (vault, _work, seal_id) = vault_with_a_declined_work("d203-ma");
+            let unlocked = vault.unlock();
+            journal_do(&unlocked, |j| {
+                j.put_consent(
+                    &seal_id,
+                    ConsentRecord {
+                        total_ant_atto: 18_498,
+                        gas_estimate_wei: 23_000,
+                        consent_time_unix_secs: 1_800_000_000,
+                        channel: ConsentChannel::YesFlag,
+                    },
+                )
+                .expect("consent");
+                j.set_state(&seal_id, SealState::Anchored)
+                    .expect("anchored");
+            });
+            cases.push(MoneyCase {
+                label: "(a) consent, anchored, no receipt",
+                listing: WorkListing::gather(&WorkStore::new(&unlocked)).expect("list"),
+                clock: ResumeClock::ReQuote,
+                note: RE_QUOTE_NOTE,
+                cost_line: NO_COST_LINE.to_owned(),
+            });
+        }
+        // (b) a pre-S50 revert-only receipt (maps no quote) on `Anchored`.
+        {
+            let (vault, _work, seal_id) = vault_with_a_declined_work("d203-mb");
+            let unlocked = vault.unlock();
+            journal_do(&unlocked, |j| {
+                j.set_state(&seal_id, SealState::Anchored)
+                    .expect("anchored");
+                j.put_receipt(&seal_id, &revert_only_receipt())
+                    .expect("revert capture");
+            });
+            cases.push(MoneyCase {
+                label: "(b) revert-only receipt",
+                listing: WorkListing::gather(&WorkStore::new(&unlocked)).expect("list"),
+                clock: ResumeClock::ReQuote,
+                note: RE_QUOTE_NOTE,
+                cost_line: NO_COST_LINE.to_owned(),
+            });
+        }
+        // (c) stranded: `Anchored` + a receipt mapping a quote (exit 28).
+        {
+            let (vault, _work, seal_id) = vault_with_a_declined_work("d203-mc");
+            let unlocked = vault.unlock();
+            journal_do(&unlocked, |j| {
+                j.set_state(&seal_id, SealState::Anchored)
+                    .expect("anchored");
+                j.put_receipt(&seal_id, &fixture_receipt())
+                    .expect("capture");
+            });
+            cases.push(MoneyCase {
+                label: "(c) stranded",
+                listing: WorkListing::gather(&WorkStore::new(&unlocked)).expect("list"),
+                clock: ResumeClock::TimeBoxed,
+                note: TIME_BOXED_NOTE,
+                cost_line: "  cost: 4200 atto-ANT so far (from the payment receipt)".to_owned(),
+            });
+        }
+        // (d) a normal `Paid` work: receipt, then the `Paid` tag.
+        {
+            let (vault, _work, seal_id) = vault_with_a_declined_work("d203-md");
+            let unlocked = vault.unlock();
+            journal_do(&unlocked, |j| {
+                j.set_state(&seal_id, SealState::Anchored)
+                    .expect("anchored");
+                j.put_receipt(&seal_id, &fixture_receipt())
+                    .expect("receipt");
+                j.set_state(&seal_id, SealState::Paid).expect("paid");
+            });
+            cases.push(MoneyCase {
+                label: "(d) paid",
+                listing: WorkListing::gather(&WorkStore::new(&unlocked)).expect("list"),
+                clock: ResumeClock::TimeBoxed,
+                note: TIME_BOXED_NOTE,
+                cost_line: "  cost: 4200 atto-ANT so far (from the payment receipt)".to_owned(),
+            });
+        }
+        // (e) D197's pre-staging work: `begin` only, no plan.
+        {
+            let work = Work::new("d203-me");
+            work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+            let plan = work
+                .plan(&["a.txt", "--no-anchor"])
+                .expect("plan validates");
+            let vault = IsolatedVault::create("d203-me");
+            let unlocked = vault.unlock();
+            journal_do(&unlocked, |j| {
+                let w = MasterSecret::from_bytes([0x6E; 32]);
+                j.begin(&WorkIdentity {
+                    w: w.secret_ref(),
+                    seal_id: SealId::from_bytes([0x6E; 16]),
+                    network: plan.network.as_str().to_owned(),
+                    unanchored: plan.shaping.no_anchor,
+                    degraded: false,
+                    input_paths_as_given: plan.as_given_paths(),
+                    input_paths_absolute: plan.absolute_paths(),
+                    shaping: plan.shaping.clone(),
+                })
+                .expect("begin");
+            });
+            cases.push(MoneyCase {
+                label: "(e) pre-staging",
+                listing: WorkListing::gather(&WorkStore::new(&unlocked)).expect("list"),
+                clock: ResumeClock::ReQuote,
+                note: RE_QUOTE_NOTE,
+                cost_line: NO_COST_LINE.to_owned(),
+            });
+        }
+
+        assert_eq!(cases.len(), 5, "P1 §7.7's five shapes");
+        let mut wrong = Vec::new();
+        for case in &cases {
+            let row = only_row(&case.listing);
+            let clock = row.resume.as_ref().map(|hint| hint.clock);
+            if clock != Some(case.clock) {
+                wrong.push(format!(
+                    "{}: clock {clock:?}, expected {:?}",
+                    case.label, case.clock
+                ));
+            }
+            let text = case.listing.render().join("\n");
+            let note_line = format!("  {}\n", case.note);
+            if !text.contains(&note_line) {
+                wrong.push(format!("{}: note missing, rendered:\n{text}", case.label));
+            }
+            if text.lines().filter(|line| *line == case.cost_line).count() != 1 {
+                wrong.push(format!(
+                    "{}: cost line {:?} missing, rendered:\n{text}",
+                    case.label, case.cost_line
+                ));
+            }
+            if text.contains("nothing was paid") || text.contains("nothing paid") {
+                wrong.push(format!(
+                    "{}: claims nothing was paid, rendered:\n{text}",
+                    case.label
+                ));
+            }
+        }
+        assert!(wrong.is_empty(), "money claims:\n{}", wrong.join("\n"));
+    }
+
+    // ── The two predicates, as truth tables ──────────────────────────
+
+    /// **D203 R1**: the fine tag decides wherever one exists, whatever the
+    /// mirror says; the mirror answers only for an absent tag.
+    #[test]
+    fn d203_r1_the_effective_state_is_the_tags_and_the_mirrors_only_without_one() {
+        let mirrors = [
+            WorkState::IncompletePrePay,
+            WorkState::IncompletePostPay,
+            WorkState::Complete,
+            WorkState::Abandoned,
+        ];
+        let mut rows = 0;
+        for mirror in mirrors {
+            for tag in SealState::ALL {
+                assert_eq!(
+                    effective_work_state(Some(tag), mirror),
+                    tag.work_state(),
+                    "{tag:?} over a {mirror:?} mirror"
+                );
+                rows += 1;
+            }
+            assert_eq!(effective_work_state(None, mirror), mirror);
+            rows += 1;
+        }
+        assert_eq!(rows, 4 * 6 + 4, "every tag over every mirror, and no tag");
+    }
+
+    /// **D203 M1**: a payment is recorded exactly when a journaled receipt
+    /// maps at least one quote to a transaction — a `Submitted` mapping
+    /// included (money may have moved), a revert-only receipt excluded.
+    #[test]
+    fn d203_m1_a_payment_is_recorded_iff_a_receipt_maps_a_quote() {
+        let mut submitted = fixture_receipt();
+        submitted.txs[0].status = TxStatus::Submitted;
+        submitted.txs[0].block_number = None;
+        let cases = [
+            ("no receipt", None, false),
+            ("a revert-only receipt", Some(revert_only_receipt()), false),
+            ("a confirmed mapping", Some(fixture_receipt()), true),
+            ("a submitted mapping", Some(submitted), true),
+        ];
+        assert_eq!(cases.len(), 4);
+        for (label, receipt, expected) in &cases {
+            assert_eq!(payment_recorded(receipt.as_ref()), *expected, "{label}");
+        }
+    }
+
+    /// **D203 M1's edge (the orchestrator's question): a zero-payment seal.**
+    /// Sealing identical ciphertexts twice (same seeds, same files) makes
+    /// the second seal's quote price nothing — every chunk is already stored.
+    /// Its `pay` moves no ANT and journals a receipt that maps no quote, so
+    /// `payment_recorded` is false and `list` says "no payment is recorded"
+    /// — literally true. Its upload refused (exit 23), the work is tagged
+    /// post-pay (`Finalizing`) yet on the re-quote clock, by the receipt;
+    /// finished by a resume that buys nothing, its recorded cost is the
+    /// receipt's: 0.
+    #[test]
+    fn u109_a_zero_payment_seal_records_no_payment_and_says_so() {
+        let work = Work::new("d203-zero");
+        work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+        let plan = work
+            .plan(&["a.txt", "--no-anchor", "--yes"])
+            .expect("plan validates");
+        let backend = MockBackend::new().with_balances(funded());
+
+        // Seal once into vault A: the backend now holds every chunk.
+        let first_vault = IsolatedVault::create("d203-zero-a");
+        let first = SealSession::open(Arc::new(first_vault.unlock()));
+        let sealed_once = sealed(
+            block_on(run_seal(
+                &backend,
+                &first,
+                &plan,
+                &mut NeverAsked,
+                &ctx(true),
+                &mut rng(0xE1),
+                &mut rng(0xE2),
+            )),
+            "the first seal completes",
+        );
+        assert!(sealed_once.paid_here);
+
+        // The same seal into vault B, its upload refused once (exit 23).
+        let vault = IsolatedVault::create("d203-zero-b");
+        let session = SealSession::open(Arc::new(vault.unlock()));
+        backend.arm_fault(Fault::NetworkOn(Method::FinalizeBatch));
+        match block_on(run_seal(
+            &backend,
+            &session,
+            &plan,
+            &mut NeverAsked,
+            &ctx(true),
+            &mut rng(0xE1),
+            &mut rng(0xE2),
+        )) {
+            Err(err) => assert_eq!(err.exit_code(), 23, "{err}"),
+            Ok(_) => panic!("the upload must fail once"),
+        }
+        let store = WorkStore::new(session.vault());
+        let seal_id = store.list_works().expect("list")[0];
+        let receipt = recorded_receipt(&store, &seal_id)
+            .expect("receipt read")
+            .expect("pay journals a receipt even when it buys nothing");
+        // What a zero-payment `pay` journals: no transaction, no mapping.
+        assert!(receipt.txs.is_empty(), "{:?}", receipt.txs);
+        assert!(receipt.tx_map.is_empty());
+        assert_eq!(receipt.storage_cost_atto, 0);
+        assert!(!payment_recorded(Some(&receipt)));
+        // `finalize` writes `Finalizing` before it calls `finalize_batch`.
+        assert_eq!(
+            recorded_state(&store, &seal_id).expect("tag"),
+            Some(SealState::Finalizing)
+        );
+
+        let listing = WorkListing::gather(&store).expect("list");
+        let row = only_row(&listing);
+        assert_eq!(
+            row.resume.as_ref().map(|hint| hint.clock),
+            Some(ResumeClock::ReQuote),
+            "the clock is the receipt's, not the post-pay tag's"
+        );
+        let text = listing.render().join("\n");
+        assert!(text.contains(&format!("  {RE_QUOTE_NOTE}\n")), "{text}");
+        assert_eq!(
+            text.lines().filter(|line| *line == NO_COST_LINE).count(),
+            1,
+            "{text}"
+        );
+
+        // The resume buys nothing and records the receipt's cost: 0.
+        let finished = sealed(
+            block_on(run_seal(
+                &backend,
+                &session,
+                &plan,
+                &mut NeverAsked,
+                &ctx(true),
+                &mut rng(0xE3),
+                &mut rng(0xE4),
+            )),
+            "the resume finishes",
+        );
+        assert!(finished.resumed);
+        assert!(!finished.paid_here);
+        assert_eq!(store.load_meta(&seal_id).expect("meta").cost_atto, Some(0));
+        let text = WorkListing::gather(&store)
+            .expect("list")
+            .render()
+            .join("\n");
+        assert!(text.contains("  cost: 0 atto-ANT\n"), "{text}");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D203's money group, second half (wave 40, U110): the resume plan, the
+// `Paid` tag and the abandon screens take money from the receipt
+// ─────────────────────────────────────────────────────────────────────
+
+/// **U110** (D203 M4–M6, M6a–M6c): the resume plan's money lines, the
+/// `Paid` tag and the abandon screens follow the money authority — a
+/// journaled receipt that maps at least one quote to a transaction
+/// (`payment_recorded`, D203 M1) — never the state tag or a receipt's mere
+/// existence. Every row starts from a real declined seal
+/// ([`vault_with_a_declined_work`]) and plants its shape with the journal's
+/// own writers. NON-SECRET values only.
+mod u110 {
+    use super::*;
+
+    use antseal_cli::error::CliError;
+    use antseal_cli::pipeline::journal::{WorkIdentity, recorded_state};
+    use antseal_cli::pipeline::receipt_sink::recorded_receipt;
+    use antseal_cli::pipeline::{NoBarriers, Pipeline, SealState};
+    use antseal_cli::seal_resume::AbandonPreview;
+    use antseal_cli::vault::session::UnlockedVault;
+    use antseal_cli::vault::store::{ConsentChannel, ConsentRecord};
+    use antseal_core::crypto::secrets::MasterSecret;
+    use antseal_net::{GasSummary, PaymentReceipt, QuoteHash, TxHash, TxRecord, TxStatus};
+
+    /// D203 M4's two lines for an `Anchored` work whose vault records a
+    /// payment: true of a receipt that covers every blob (a kill between
+    /// the receipt and the `Paid` tag) and of one that covers some.
+    const PLAN_PAYMENT_RECORDED: [&str; 2] = [
+        "    staged:    staged and past its anchor step; a payment is recorded",
+        "    remaining: pay the rest, if any, then upload",
+    ];
+    /// D203 M4's two lines for an `Anchored` work whose vault records none.
+    const PLAN_NO_PAYMENT: [&str; 2] = [
+        "    staged:    staged and past its anchor step; no payment recorded",
+        "    remaining: pay, upload",
+    ];
+    /// Money claims the vault cannot back where it records no payment
+    /// (D203 M1's wording rule).
+    const UNBACKED: [&str; 4] = [
+        "not paid",
+        "nothing paid",
+        "Nothing was paid",
+        "nothing was paid",
+    ];
+
+    fn rng(seed: u8) -> ChaCha20Rng {
+        ChaCha20Rng::from_seed([seed; 32])
+    }
+
+    /// Run `body` against a fresh [`VaultJournal`] over `vault`.
+    fn journal_do(vault: &UnlockedVault, body: impl FnOnce(&VaultJournal<'_, ChaCha20Rng>)) {
+        let mut r = rng(0x77);
+        let journal = VaultJournal::new(WorkStore::new(vault), &mut r);
+        body(&journal);
+    }
+
+    /// The record a granted consent writes (`consent_anchor_pay`): every
+    /// work the pipeline anchored or paid for carries one.
+    fn consent_record() -> ConsentRecord {
+        ConsentRecord {
+            total_ant_atto: 18_498,
+            gas_estimate_wei: 23_000,
+            consent_time_unix_secs: 1_800_000_000,
+            channel: ConsentChannel::YesFlag,
+        }
+    }
+
+    /// A first-sub-batch revert's capture as builds before S50 journaled it:
+    /// a receipt that maps no quote and moved no ANT (P1's window F).
+    fn revert_only_receipt() -> PaymentReceipt {
+        PaymentReceipt {
+            blobs: Vec::new(),
+            tx_map: std::collections::BTreeMap::new(),
+            txs: vec![TxRecord {
+                tx_hash: TxHash::from_bytes([0xB3; 32]),
+                block_number: Some(43),
+                status: TxStatus::Reverted,
+                quote_hashes: vec![QuoteHash::from_bytes([0xB1; 32])],
+            }],
+            storage_cost_atto: 0,
+            gas: GasSummary {
+                gas_cost_wei: 21_000,
+            },
+        }
+    }
+
+    /// A declined seal planted into shape (c): consent recorded, the tag
+    /// `Anchored`, and `receipt` journaled as a stranded payment leaves it.
+    fn anchored_with(tag: &str, receipt: Option<&PaymentReceipt>) -> (IsolatedVault, Work, SealId) {
+        let (vault, work, seal_id) = vault_with_a_declined_work(tag);
+        let unlocked = vault.unlock();
+        journal_do(&unlocked, |j| {
+            j.put_consent(&seal_id, consent_record()).expect("consent");
+            j.set_state(&seal_id, SealState::Anchored)
+                .expect("Staged → Anchored");
+            if let Some(receipt) = receipt {
+                j.put_receipt(&seal_id, receipt).expect("the capture");
+            }
+        });
+        drop(unlocked);
+        (vault, work, seal_id)
+    }
+
+    fn tag(session: &SealSession, seal_id: &SealId) -> Option<SealState> {
+        recorded_state(&WorkStore::new(session.vault()), seal_id).expect("tag read")
+    }
+
+    /// The resume plan `seal --dry-run` prints for an exact match (D45 §5):
+    /// the production renderer, through its one caller.
+    fn dry_run_plan(session: &SealSession, work: &Work) -> Result<Vec<String>, CliError> {
+        let plan = work
+            .plan(&["a.txt", "--no-anchor", "--dry-run"])
+            .expect("plan validates");
+        let backend = MockBackend::new().with_balances(funded());
+        let outcome = block_on(run_seal(
+            &backend,
+            session,
+            &plan,
+            &mut NeverAsked,
+            &ctx(true),
+            &mut rng(0x91),
+            &mut rng(0x92),
+        ));
+        for method in [Method::Balances, Method::QuoteBatch, Method::Pay] {
+            assert_eq!(
+                backend.calls(method),
+                0,
+                "a resume rehearsal calls {method:?}"
+            );
+        }
+        match outcome {
+            Ok(SealCommandResult::ResumePlan(lines)) => Ok(lines),
+            Ok(_) => panic!("an exact match rehearses the resume plan"),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// The exact re-run, interactive with no `--yes`: `prompt` answers the
+    /// consent question if one is asked. `Ok` only for `Sealed`.
+    fn rerun_asking<P: ConsentPrompt>(
+        session: &SealSession,
+        work: &Work,
+        backend: &MockBackend,
+        prompt: &mut P,
+        seed: u8,
+    ) -> Result<antseal_cli::seal_run::SealReport, CliError> {
+        let plan = work
+            .plan(&["a.txt", "--no-anchor"])
+            .expect("plan validates");
+        sealed_report(block_on(run_seal(
+            backend,
+            session,
+            &plan,
+            prompt,
+            &ctx(false),
+            &mut rng(seed),
+            &mut rng(seed.wrapping_add(1)),
+        )))
+    }
+
+    /// The exact re-run as a script runs it: `--yes`, machine mode.
+    fn rerun_yes(
+        session: &SealSession,
+        work: &Work,
+        backend: &MockBackend,
+        seed: u8,
+    ) -> Result<antseal_cli::seal_run::SealReport, CliError> {
+        let plan = work
+            .plan(&["a.txt", "--no-anchor", "--yes"])
+            .expect("plan validates");
+        sealed_report(block_on(run_seal(
+            backend,
+            session,
+            &plan,
+            &mut NeverAsked,
+            &ctx(true),
+            &mut rng(seed),
+            &mut rng(seed.wrapping_add(1)),
+        )))
+    }
+
+    fn sealed_report(
+        outcome: Result<SealCommandResult, CliError>,
+    ) -> Result<antseal_cli::seal_run::SealReport, CliError> {
+        match outcome {
+            Ok(SealCommandResult::Sealed(report)) => Ok(report),
+            Ok(_) => panic!("a non-dry-run seal returns Sealed"),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// **U110, D203 M4 + M5 (GM3)** — cases (c) and (c2). A stranded
+    /// payment (tag `Anchored`, a receipt mapping one quote and recording
+    /// no blob, so every staged blob is still owed) says so in its plan;
+    /// DECLINING the remainder's consent leaves the tag `Anchored`, so the
+    /// next plan says the same thing again rather than "PAID … upload only
+    /// (no further payment)"; and the consenting re-run pays the rest once
+    /// and finishes — M5's proof that `finalize` still runs on the path
+    /// that pays a remainder.
+    ///
+    /// Red at L-RESUME2's tree: the plan said "staged and anchored; nothing
+    /// paid" / "pay, upload", and the early repair tagged the work `Paid`
+    /// before the remainder's consent (P1's `[c2-after] fine=Some(Paid)`).
+    #[test]
+    fn u110_a_declined_remainder_leaves_the_tag_pre_pay_and_the_plan_says_the_rest_is_owed() {
+        let (vault, work, seal_id) = anchored_with("u110-gm3", Some(&fixture_receipt()));
+        let session = SealSession::open(Arc::new(vault.unlock()));
+        let partial = recorded_receipt(&WorkStore::new(session.vault()), &seal_id)
+            .expect("receipt read")
+            .expect("the stranded capture is journaled");
+        assert!(
+            !partial.tx_map.is_empty() && partial.blobs.is_empty(),
+            "control: a payment is recorded and it covers no blob"
+        );
+        assert_eq!(tag(&session, &seal_id), Some(SealState::Anchored));
+
+        let plan_c = dry_run_plan(&session, &work).expect("(c) rehearses");
+        assert_eq!(plan_c.len(), 3, "(c): {plan_c:?}");
+        assert_eq!(&plan_c[1..], &PLAN_PAYMENT_RECORDED[..], "(c)");
+
+        // (c2): the exact re-run, DECLINED at the remainder's consent.
+        let backend = MockBackend::new().with_balances(funded());
+        let declined = rerun_asking(&session, &work, &backend, &mut SaysNo, 0xD1)
+            .expect_err("the remainder's consent is declined");
+        assert_eq!(
+            declined.class(),
+            ErrorClass::ConsentNotObtained,
+            "{declined}"
+        );
+        assert_eq!(
+            backend.calls(Method::QuoteBatch),
+            1,
+            "control: the remainder was quoted, and priced, before the question"
+        );
+        assert_eq!(
+            backend.calls(Method::Pay),
+            0,
+            "a declined remainder pays nothing"
+        );
+        assert_eq!(
+            tag(&session, &seal_id),
+            Some(SealState::Anchored),
+            "fine=Some(Paid) after a declined remainder: the early repair ran before the \
+             remainder's consent, so the tag claims a payment the user just declined (D203 M5)"
+        );
+        let plan_c2 = dry_run_plan(&session, &work).expect("(c2) rehearses");
+        assert_eq!(
+            plan_c2, plan_c,
+            "(c2): the plan still says the rest is owed"
+        );
+
+        // The consenting re-run pays the rest exactly once and finishes.
+        let backend = MockBackend::new().with_balances(funded());
+        let report = match rerun_yes(&session, &work, &backend, 0xD3) {
+            Ok(report) => report,
+            Err(err) => panic!("the consenting re-run finishes: {err}"),
+        };
+        assert!(report.resumed);
+        assert!(report.paid_here, "the remainder was paid by this run");
+        assert_eq!(report.seal_id, seal_id);
+        assert_eq!(backend.calls(Method::Pay), 1);
+        assert_eq!(tag(&session, &seal_id), Some(SealState::Complete));
+        let merged = recorded_receipt(&WorkStore::new(session.vault()), &seal_id)
+            .expect("receipt read")
+            .expect("present");
+        assert!(
+            merged
+                .tx_map
+                .contains_key(&QuoteHash::from_bytes([0xB1; 32])),
+            "the merge kept the stranded mapping"
+        );
+    }
+
+    /// **D203 M5, the nothing-to-buy path.** A recorded payment on a
+    /// pre-pay tag whose remainder quote prices nothing — every uncovered
+    /// blob is already on the network — is repaired to `Paid` with no
+    /// question asked, and `finalize` runs. (A full receipt, the other
+    /// repair path, is `seal_matrix.rs`'s
+    /// `barrier_post_pay_is_atomic_only_because_of_the_capture_hook`.)
+    #[test]
+    fn u110_a_remainder_that_prices_nothing_is_repaired_to_paid_and_finalized() {
+        let (vault, work, seal_id) = anchored_with("u110-m5-nothing", Some(&fixture_receipt()));
+        let session = SealSession::open(Arc::new(vault.unlock()));
+        let backend = MockBackend::new().with_balances(funded());
+        let mut preloaded = 0;
+        journal_do(session.vault(), |j| {
+            for slot in j.staged_slots(&seal_id).expect("staged slots") {
+                let blob = j.staged(&seal_id, slot).expect("staged blob");
+                backend.preload_third_party(&blob.ciphertext);
+                preloaded += 1;
+            }
+        });
+        assert!(
+            preloaded >= 2,
+            "control: units and the manifest are staged ({preloaded})"
+        );
+
+        // Interactive with no `--yes`, and a prompt that panics if asked:
+        // nothing remains to buy, so nothing may be asked.
+        let report = match rerun_asking(&session, &work, &backend, &mut NeverAsked, 0xD5) {
+            Ok(report) => report,
+            Err(err) => panic!("a remainder that prices nothing finishes: {err}"),
+        };
+        assert!(report.resumed);
+        assert!(!report.paid_here, "nothing was bought");
+        assert_eq!(
+            backend.calls(Method::QuoteBatch),
+            1,
+            "the remainder was quoted"
+        );
+        assert_eq!(backend.calls(Method::Pay), 0);
+        assert_eq!(tag(&session, &seal_id), Some(SealState::Complete));
+        assert_eq!(
+            WorkStore::new(session.vault())
+                .load_meta(&seal_id)
+                .expect("meta")
+                .cost_atto,
+            Some(fixture_receipt().storage_cost_atto),
+            "the cost is the journaled receipt's (D203 R7)"
+        );
+    }
+
+    /// **U110, D203 M4 + M6 + M6a (GM4)** — case (a): the vault after an
+    /// exit 37 with no durable capture, or a `Payment` failure before any
+    /// landing (consent recorded, tag `Anchored`, no receipt). Nothing in
+    /// it says whether money moved, so the plan, the preview, the question
+    /// and the report each say no payment is recorded — never that nothing
+    /// was paid.
+    ///
+    /// Red at L-RESUME2's tree: "staged and anchored; nothing paid",
+    /// "staged and past its anchor step; not paid", "Nothing was paid for
+    /// it" (question and report).
+    #[test]
+    fn u110_with_no_payment_recorded_the_plan_and_the_abandon_screens_say_so() {
+        let (vault, work, seal_id) = anchored_with("u110-gm4", None);
+        let session = SealSession::open(Arc::new(vault.unlock()));
+        let store = WorkStore::new(session.vault());
+        assert!(
+            recorded_receipt(&store, &seal_id).expect("read").is_none(),
+            "control: no receipt"
+        );
+        assert!(
+            store.load_meta(&seal_id).expect("meta").consent.is_some(),
+            "control: the consent record exists"
+        );
+
+        let plan = dry_run_plan(&session, &work).expect("rehearses");
+        assert_eq!(plan.len(), 3, "{plan:?}");
+        assert_eq!(&plan[1..], &PLAN_NO_PAYMENT[..]);
+
+        let mut r = rng(0x68);
+        let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut r);
+        let preview = AbandonPreview::read(&store, &journal, &seal_id)
+            .expect("the preview reads")
+            .expect("no payment recorded: the preview is shown");
+        let lines = preview.render();
+        assert_eq!(lines.len(), 6, "{lines:?}");
+        assert_eq!(
+            lines[4],
+            "  progress: staged and past its anchor step; no payment recorded"
+        );
+        let question = preview.question();
+        assert_eq!(
+            question,
+            format!(
+                "Abandon interrupted seal {}? No payment is recorded for it; the staged work can \
+                 no longer be used. [y/N] ",
+                seal_hex(&seal_id)
+            )
+        );
+        let report = abandon_pre_pay(&store, &journal, &seal_id).expect("abandoned");
+        assert!(!report.already);
+        let rendered = report.render();
+        assert_eq!(rendered.len(), 3, "{rendered:?}");
+        assert!(
+            rendered[1].starts_with("  No payment is recorded for it and nothing was uploaded. "),
+            "{rendered:?}"
+        );
+
+        let screens = [
+            plan.join("\n"),
+            lines.join("\n"),
+            question,
+            rendered.join("\n"),
+        ];
+        assert_eq!(screens.len(), 4);
+        for screen in &screens {
+            for claim in UNBACKED {
+                assert!(
+                    !screen.contains(claim),
+                    "a claim the vault cannot back ({claim:?}):\n{screen}"
+                );
+            }
+        }
+    }
+
+    /// One work in each progress arm of the preview that carries a money
+    /// word: 0 — `begin` only (no plan, the tag `Staged`: D197's shape);
+    /// 1 — a declined seal (plan journaled, the tag `Staged`); 2 — the same,
+    /// past its anchor step (the tag `Anchored`).
+    fn preview_arm(index: usize, label: &str) -> (IsolatedVault, SealId) {
+        if index == 0 {
+            let vault = IsolatedVault::create(label);
+            let work = Work::new(label);
+            work.file("a.txt", b"paragraph one\n\nparagraph two\n");
+            let plan = work
+                .plan(&["a.txt", "--no-anchor"])
+                .expect("plan validates");
+            let seal_id = SealId::from_bytes([0x6B; 16]);
+            let unlocked = vault.unlock();
+            journal_do(&unlocked, |j| {
+                let w = MasterSecret::from_bytes([0x6B; 32]);
+                j.begin(&WorkIdentity {
+                    w: w.secret_ref(),
+                    seal_id,
+                    network: plan.network.as_str().to_owned(),
+                    unanchored: plan.shaping.no_anchor,
+                    degraded: false,
+                    input_paths_as_given: plan.as_given_paths(),
+                    input_paths_absolute: plan.absolute_paths(),
+                    shaping: plan.shaping.clone(),
+                })
+                .expect("begin");
+            });
+            drop(unlocked);
+            return (vault, seal_id);
+        }
+        let (vault, _work, seal_id) = vault_with_a_declined_work(label);
+        if index == 2 {
+            let unlocked = vault.unlock();
+            journal_do(&unlocked, |j| {
+                j.set_state(&seal_id, SealState::Anchored)
+                    .expect("Staged → Anchored");
+            });
+        }
+        (vault, seal_id)
+    }
+
+    /// **D203 M6b**: the preview says "not paid" only where the vault itself
+    /// proves no payment could have started — it holds no consent record,
+    /// and the pipeline's one `pay` call comes after that record's write —
+    /// and "no payment recorded" wherever a consent exists. The rule holds in
+    /// each of the three progress arms that carry a money word.
+    #[test]
+    fn u110_the_previews_money_word_is_the_consent_records() {
+        let arms = [
+            "staging was interrupted before it finished",
+            "staged",
+            "staged and past its anchor step",
+        ];
+        let mut rows = 0;
+        for consented in [false, true] {
+            for (index, progress) in arms.iter().enumerate() {
+                let label = format!("u110-m6b-{index}-{consented}");
+                let (vault, seal_id) = preview_arm(index, &label);
+                let unlocked = vault.unlock();
+                if consented {
+                    journal_do(&unlocked, |j| {
+                        j.put_consent(&seal_id, consent_record()).expect("consent");
+                    });
+                }
+                let money = if consented {
+                    "no payment recorded"
+                } else {
+                    "not paid"
+                };
+                assert_eq!(
+                    preview_progress(&unlocked, &seal_id),
+                    format!("  progress: {progress}; {money}"),
+                    "{label}"
+                );
+                rows += 1;
+            }
+        }
+        assert_eq!(rows, 6, "three arms, with and without a consent record");
+    }
+
+    /// The preview's progress line for `seal_id`.
+    fn preview_progress(vault: &UnlockedVault, seal_id: &SealId) -> String {
+        let store = WorkStore::new(vault);
+        let mut r = rng(0x6A);
+        let journal = VaultJournal::new(WorkStore::new(vault), &mut r);
+        let preview = AbandonPreview::read(&store, &journal, seal_id)
+            .expect("the preview reads")
+            .expect("no payment recorded: the preview is shown");
+        let lines = preview.render();
+        assert_eq!(lines.len(), 6, "{lines:?}");
+        lines[4].clone()
+    }
+
+    /// **U110, D203 M6 (GM5)** — case (b): a revert-only receipt written
+    /// before S50 records no payment, so it blocks neither `antseal
+    /// abandon` (the preview is shown and the engine abandons) nor the
+    /// pre-pay resume — which re-quotes, re-consents and pays once, and
+    /// whose receipt REPLACES the legacy capture (the pre-pay path carries
+    /// no prior; the receipt branch would have merged the reverted tx in).
+    ///
+    /// Red at L-RESUME2's tree: the preview was suppressed and abandon
+    /// refused "already been paid for", both keyed on `receipt.is_some()`.
+    #[test]
+    fn u110_a_revert_only_receipt_blocks_neither_abandon_nor_the_pre_pay_resume() {
+        // Abandon.
+        {
+            let (vault, _work, seal_id) =
+                anchored_with("u110-gm5-abandon", Some(&revert_only_receipt()));
+            let unlocked = vault.unlock();
+            let store = WorkStore::new(&unlocked);
+            let mut r = rng(0x69);
+            let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut r);
+            let preview =
+                AbandonPreview::read(&store, &journal, &seal_id).expect("the preview reads");
+            let Some(preview) = preview else {
+                panic!("the preview was suppressed for a work whose only receipt maps no quote");
+            };
+            assert_eq!(
+                preview.render()[4],
+                "  progress: staged and past its anchor step; no payment recorded"
+            );
+            let report = match abandon_pre_pay(&store, &journal, &seal_id) {
+                Ok(report) => report,
+                Err(err) => {
+                    panic!("abandon refused a work whose only receipt maps no quote: {err}")
+                }
+            };
+            assert!(!report.already);
+            assert_eq!(
+                recorded_state(&store, &seal_id).expect("tag"),
+                Some(SealState::Abandoned)
+            );
+        }
+        // The pre-pay resume.
+        {
+            let (vault, work, seal_id) =
+                anchored_with("u110-gm5-resume", Some(&revert_only_receipt()));
+            let session = SealSession::open(Arc::new(vault.unlock()));
+            let plan = dry_run_plan(&session, &work).expect("rehearses");
+            assert_eq!(&plan[1..], &PLAN_NO_PAYMENT[..]);
+            let backend = MockBackend::new().with_balances(funded());
+            let report = match rerun_yes(&session, &work, &backend, 0xB5) {
+                Ok(report) => report,
+                Err(err) => panic!("the consenting re-run finishes: {err}"),
+            };
+            assert!(report.resumed);
+            assert!(report.paid_here);
+            assert_eq!(backend.calls(Method::Pay), 1);
+            assert_eq!(tag(&session, &seal_id), Some(SealState::Complete));
+            let receipt = recorded_receipt(&WorkStore::new(session.vault()), &seal_id)
+                .expect("receipt read")
+                .expect("present");
+            assert!(
+                !receipt.tx_map.is_empty(),
+                "control: the new payment is recorded"
+            );
+            let legacy = TxHash::from_bytes([0xB3; 32]);
+            assert!(
+                receipt.txs.iter().all(|tx| tx.tx_hash != legacy),
+                "the legacy revert-only capture survived into the final receipt: the resume took \
+                 the receipt branch, not the pre-pay path (D203 M6)"
+            );
+        }
+    }
+
+    /// **D203 M6c**: abandon's rule-2 refusal offers a way forward that is
+    /// true of a PARTLY paid work — whose re-run is asked to pay the rest —
+    /// as well as of a fully paid one. It used to promise "no further
+    /// payment is needed".
+    #[test]
+    fn u110_the_paid_refusal_offers_a_way_forward_true_of_a_partly_paid_work() {
+        let (vault, work, seal_id) = anchored_with("u110-m6c", Some(&fixture_receipt()));
+        let session = SealSession::open(Arc::new(vault.unlock()));
+        // Control: partly paid — the exact re-run's consent is asked over a
+        // priced remainder (declined here, so nothing moves).
+        let backend = MockBackend::new().with_balances(funded());
+        let declined = rerun_asking(&session, &work, &backend, &mut SaysNo, 0x6C)
+            .expect_err("the remainder's consent is declined");
+        assert_eq!(
+            declined.class(),
+            ErrorClass::ConsentNotObtained,
+            "{declined}"
+        );
+        assert_eq!(backend.calls(Method::QuoteBatch), 1);
+        assert_eq!(backend.calls(Method::Pay), 0);
+
+        let store = WorkStore::new(session.vault());
+        let mut r = rng(0x6D);
+        let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut r);
+        let err = abandon_pre_pay(&store, &journal, &seal_id)
+            .expect_err("a paid work is never abandoned on request");
+        assert_eq!(err.class(), ErrorClass::Usage);
+        let text = err.to_string();
+        assert!(
+            !text.contains("no further payment is needed"),
+            "the refusal tells a partly paid work's owner that finishing it needs no further \
+             payment, while the rest is owed (D203 M6c):\n{text}"
+        );
+        assert!(text.contains("already been paid for"), "{text}");
+        assert!(
+            text.contains("Finish it instead by re-running `antseal seal a.txt"),
+            "{text}"
+        );
+        assert!(
+            text.contains("no quote the receipt already maps is paid again"),
+            "{text}"
+        );
+    }
+
+    /// The resume plan reads the matched work's receipt (D203 M4), so
+    /// `seal --dry-run` over a receipt that will not decode fails — in the
+    /// class, exit code and words a real resume reports at its own receipt
+    /// read (`Pipeline::resume`, `resume.rs:185`) — rather than printing a
+    /// plan that guesses the money. The rehearsal still calls no backend
+    /// method.
+    #[test]
+    fn u110_a_dry_run_over_an_undecodable_receipt_fails_in_the_resumes_own_class() {
+        let (vault, work, seal_id) = anchored_with("u110-dry-undecodable", None);
+        let session = SealSession::open(Arc::new(vault.unlock()));
+        // The store's own writer: a genuine AEAD over plaintext the receipt
+        // decoder refuses.
+        WorkStore::new(session.vault())
+            .put_receipt(&seal_id, b"not a journaled receipt", &mut rng(0x5D))
+            .expect("plant an undecodable receipt");
+
+        let dry = dry_run_plan(&session, &work)
+            .expect_err("the rehearsal printed a resume plan over a receipt it cannot read");
+
+        let mock = MockBackend::new().with_balances(funded());
+        let gate = crate::common::RecordingGate::new();
+        let consent = crate::common::ScriptedConsent::always_yes();
+        let mut r = rng(0x5E);
+        let journal = VaultJournal::new(WorkStore::new(session.vault()), &mut r);
+        let pipeline = Pipeline::new(&mock, &gate, &journal, &consent, &NoBarriers);
+        let real = match block_on(pipeline.resume(&seal_id)) {
+            Ok(_) => panic!("a resume over an undecodable receipt must fail"),
+            Err(err) => CliError::from(err),
+        };
+        assert_eq!(
+            mock.calls(Method::QuoteBatch),
+            0,
+            "the resume failed at its receipt read"
+        );
+        assert_eq!(dry.class(), ErrorClass::VaultAuthFailure, "{dry}");
+        assert_eq!(
+            (dry.class(), dry.exit_code(), dry.to_string()),
+            (real.class(), real.exit_code(), real.to_string())
+        );
+    }
 }

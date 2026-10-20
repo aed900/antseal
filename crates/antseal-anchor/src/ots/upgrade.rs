@@ -523,30 +523,12 @@ pub enum HeaderError {
     },
 }
 
-/// Fetch and check the header for an added Bitcoin attestation.
+/// Fetch and check the header for an added Bitcoin attestation, starting none
+/// of the confirmation's requests once `deadline` has passed (A141; D202 R2).
+/// `None` is no deadline.
 ///
 /// `fetch_date` is supplied by the caller (POSIX seconds UTC) rather than read
 /// from the clock here, so the whole path is testable without one.
-///
-/// Every request may start: this is the no-deadline form. The upgrade engine,
-/// which has a time budget to honour, confirms through a deadline-taking
-/// sibling inside this crate (A141; D202 R2).
-///
-/// # Errors
-///
-/// [`HeaderError`]. The caller must discard the merged artifact on every one
-/// of them — the transition is atomic.
-pub fn confirm_header(
-    client: &HttpClient,
-    pair: &EndpointPair,
-    attestation: &OtsAttestation,
-    fetch_date: u64,
-) -> Result<OtsUpgrade, HeaderError> {
-    confirm_header_by(client, pair, attestation, fetch_date, None)
-}
-
-/// [`confirm_header`], starting none of the confirmation's requests once
-/// `deadline` has passed (A141; D202 R2). `None` is no deadline.
 ///
 /// The deadline reaches each esplora endpoint's two GETs; a refused one makes
 /// the pair unavailable, which is [`HeaderError::NotAgreed`] — advisory, and
@@ -554,8 +536,9 @@ pub fn confirm_header(
 ///
 /// # Errors
 ///
-/// As [`confirm_header`].
-pub(crate) fn confirm_header_by(
+/// [`HeaderError`]. The caller must discard the merged artifact on every one
+/// of them — the transition is atomic.
+pub fn confirm_header(
     client: &HttpClient,
     pair: &EndpointPair,
     attestation: &OtsAttestation,

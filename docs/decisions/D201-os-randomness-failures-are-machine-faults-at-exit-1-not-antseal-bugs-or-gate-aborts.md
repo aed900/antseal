@@ -495,3 +495,34 @@ touched the tree. The lane's ten files still hash as its report lists, and
 
 It changes code, tests, a frozen error snapshot and a document in the tree. Nothing in it
 authorises a push, a dispatch, a deploy or any other outward act, and its tests open no socket.
+
+## Addendum — 2026-10-20 (wave 40, D206 §2 R1–R2): §4's `KeyGenerationFailed` sentence and §2 R2's *"only `EntropySource`"* are answered
+
+§4 (`:327-329`) left `WalletOpsError::KeyGenerationFailed` out: *"It names the entropy source but
+is not an unavailable one; §2 R2 maps only `EntropySource`."* §2 R2 (`:216-217`) accordingly
+mapped the wallet-key site for `EntropySource` **only**. So after this record, a
+`KeyGenerationFailed` at `init` still read *"internal error: wallet key generation failed
+repeatedly; the system entropy source appears to be returning invalid data (this is a bug in
+antseal — please report it)"*: two claims about whose fault it is, in one message. That is
+`U106`, minted from L-ERR3's proposal (§6).
+
+**D206** rules on it:
+- **What the variant means.** `WalletKey::generate()` returns it only after the OS source has
+  answered `Ok` 64 times with values the secp256k1 scalar check rejects (zero, or at least the
+  group order). A working source does that with log10 P = −2459.4, and the check is green in
+  every test that calls `generate()`. So at any tested build the machine is the only cause.
+- **The reading.** This record's *"unavailable"* means *"cannot supply usable randomness"*, in
+  §1.4's own words: *"an operating system that cannot supply randomness is a fault of the
+  machine"*. Under it, §4's sentence is **overturned**, and §2 R2's *"only"* is **widened** for
+  the wallet-key site.
+- **The mapping.** `init` maps `EntropySource | KeyGenerationFailed` to
+  `RandomSourceUnavailable { what: "the wallet key", consequence: "no vault was created" }`. A
+  remainder arm gated on `ant-backend` keeps today's mapping for the two variants that build
+  adds, neither of which `generate()` produces.
+- **§2 R2's own test is met.** Every clause of the shared message is true by measurement at
+  this site (D206 §2 R2).
+
+Nothing else here moves: the variant, its words, its class (`internal`, exit 1) and the other six
+sites are unchanged, and no exemplar or snapshot block is added. §6's note that the match's
+*"`other =>` arm covers the gated variants"* stays true of that arm, which now compiles only
+under `ant-backend`. The decisions above are not rewritten.

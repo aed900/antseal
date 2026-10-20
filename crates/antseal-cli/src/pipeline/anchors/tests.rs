@@ -500,7 +500,7 @@ fn twelve_captures_in_directory_order() -> Vec<(String, AnchorArtifact)> {
 
 /// **The bug the ≥11-token fixture exists to see.**
 ///
-/// `list_anchors` sorts lexically (`vault/store.rs:744`), so `tsa-10` and
+/// `list_anchors` sorts lexically (`vault/store.rs:793`), so `tsa-10` and
 /// `tsa-11` come back between `tsa-1` and `tsa-2`. The engine indexes anchors
 /// **positionally** — `AppliedUpgrade::anchor_index` is an offset into
 /// `PendingWork::ots` — so a reader that passed the directory order through

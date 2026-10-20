@@ -149,8 +149,8 @@ which prints those constants.
    is reproducible with no network at all. Its CLI half is
    **`antseal verify --online <bundle>`** (U30), in every build:
    `crates/antseal-cli/src/run.rs:92-96` hands `Command::Verify` to
-   `commands::verify` (`crates/antseal-cli/src/commands.rs:968`), whose
-   `--online` arm (`crates/antseal-cli/src/commands.rs:1012-1024`) takes the
+   `commands::verify` (`crates/antseal-cli/src/commands.rs:973`), whose
+   `--online` arm (`crates/antseal-cli/src/commands.rs:1017-1029`) takes the
    esplora pair from `[verify] bitcoin_endpoints`, or from
    `DEFAULT_ESPLORA_ENDPOINTS` when the config sets none
    (`crates/antseal-cli/src/verify_host.rs:332-342`), and asks both endpoints
@@ -181,8 +181,12 @@ which prints those constants.
    `ots-1: the two endpoints disagreed about block 960767 — no promotion; the offline state stands`
    and the run exits 43. Both outcomes were measured on 2026-10-19 against
    two loopback servers replaying the committed captures, not against the
-   endpoints. A real run contacts both endpoints, so §1's consent and §6's
-   rule on `ANTSEAL_NO_REAL_ANCHOR_NETWORK` apply to it.
+   endpoints. `crates/antseal-cli/tests/verify_online_promotion.rs` (R100)
+   now asserts both outcomes and the offline 43 under `cargo test`, running
+   the `antseal` binary on the same bundle, assembled in the test, against
+   loopback stubs that serve the same captures. A real run contacts both
+   endpoints, so §1's consent and §6's rule on
+   `ANTSEAL_NO_REAL_ANCHOR_NETWORK` apply to it.
 
 Three calendar behaviours the bootstrap measured, all of which the capture
 must preserve because A14's classifier is graded on them:

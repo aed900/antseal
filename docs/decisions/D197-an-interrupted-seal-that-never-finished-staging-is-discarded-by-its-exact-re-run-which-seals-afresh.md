@@ -563,3 +563,27 @@ It changes what an exact re-run does with a pre-staging work, adds one journal t
 retires one usage message, inside the wave's own commits. Nothing in it authorises a push, a
 workflow dispatch, a deploy or any other outward act; each of those needs the maintainer's
 express consent naming the action, the destination and the account.
+
+## Addendum — 2026-10-20 (D203 §2 R2, R6): §6's `S48` entry is answered, and the restart's own abandon window is closed
+
+- **§6's *"Found, minted as a row: `S48`"*** recorded that a kill between an abandon's two writes
+  leaves the fine tag `Abandoned` over an `IncompletePrePay` mirror, that `write_state`'s comment
+  calling that lag one *"which no safety rule reads"* is false because *"D45's candidate scan
+  filters on the mirror"*, and that this record's restart is the window's third producer. D203
+  (`S48`) rules it. Every classifying reader, the candidate scan among them, takes the effective
+  state: the fine tag's coarse value when a tag exists, the mirror only when it is absent (D203
+  §2 R1, R2). The comment is corrected (R6). Once D203 lands, the candidate scan no longer
+  filters on the mirror.
+- **Window E: the restart killed inside its own abandon.** D203's planning lane executed it
+  (D203 §1.2). `detect` returned `Resume`, not `Restart`, because §2 R1's last clause needs the
+  fine tag absent or `Staged`, and the exact re-run then exited 2 on every run — so §2 R2's
+  *"the run seals fresh"* did not hold in that window. Under D203 §2 R2 the work is no longer a
+  candidate, and the exact re-run seals afresh.
+- **§2 R1's predicate is unchanged.** Its clause on the coarse state still reads the mirror
+  (`staging_never_finished`, D203 §1.3 row 6). For every shape its fine-tag clause admits, absent
+  or `Staged`, the mirror and the effective state agree.
+- **§6's quote of the preview's pre-staging arm**, *"staging was interrupted before it finished;
+  not paid"*, stays true unless the implementing lane rewrites that arm under D203 §2 M6, which
+  leaves it to the lane; D203 §6 records what was built.
+
+The text above this addendum is not edited.

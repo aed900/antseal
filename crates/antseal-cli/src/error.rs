@@ -56,10 +56,10 @@
 //! Of the classes the storage boundary produces
 //! ([`crate::pipeline::error`]'s `storage_to_cli`), 20 and 21 are
 //! shortfalls found *before* anything is paid and 23 is the transient
-//! class a caller is **right** to retry: all three leave the wallet
-//! untouched by the failed attempt. 28, 29 and 37 are the three where ANT
-//! has already left it, and they are separate codes because the remedies
-//! differ:
+//! class a caller is **right** to retry: in all three the failed attempt
+//! moved no ANT (gas at most — D204). 28, 29 and 37 are the three where
+//! ANT has already left the wallet, and they are separate codes because
+//! the remedies differ:
 //!
 //! - 28 is finished by re-running `antseal seal` on the same inputs: the
 //!   journaled partial receipt is authoritative, so no mapped quote is

@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! resolve layout
-//!   → existing-vault refusal        (absolute; before any prompt)
+//!   → existing-vault / stray-file refusal  (absolute; before any prompt)
 //!   → unimplementable flag answers  (refused before a secret is asked for)
 //!   → wizard: passphrase → wallet source → wrap → KDF   (D39 Decision 1)
 //!   → create vault → store wallet key → write config
@@ -393,13 +393,13 @@ pub fn standing_warnings(wrapped: bool) -> Vec<String> {
 ///
 /// # Errors
 ///
-/// [`CliError::Usage`] for an existing vault (absolute — D39 Decision 4),
-/// a missing non-interactive input, or an unusable wallet-key channel;
-/// [`CliError::NotImplemented`] for a wrap mode whose engine has not
-/// landed; [`CliError::PassphraseUnavailable`] per D41/D51;
-/// [`CliError::VaultKdfMemory`] when the KDF arena cannot be allocated
-/// (typed hard error, **no fallback** — D40 §2); I/O errors from the
-/// atomic writes.
+/// [`CliError::Usage`] for an existing vault (absolute — D39 Decision 4), a
+/// non-empty directory without one (D205), a missing non-interactive input,
+/// or an unusable wallet-key channel; [`CliError::NotImplemented`] for a wrap
+/// mode whose engine has not landed; [`CliError::PassphraseUnavailable`] per
+/// D41/D51; [`CliError::VaultKdfMemory`] when the KDF arena cannot be
+/// allocated (typed hard error, **no fallback** — D40 §2); I/O errors from
+/// the directory walk and the atomic writes.
 pub fn run_init<P: InitPrompt, R: TryCryptoRng + ?Sized>(
     layout: &VaultLayout,
     args: &InitArgs,
@@ -417,6 +417,13 @@ pub fn run_init<P: InitPrompt, R: TryCryptoRng + ?Sized>(
     let header = layout.beside_path(BesideFile::Header);
     if header.exists() {
         return Err(existing_vault_refusal(layout.root()));
+    }
+    // No header, but files (D205): `init` writes config.toml and the store's
+    // records over whatever is there, so a hand-written config, or a vault
+    // whose header was moved aside, is refused too, and still before any
+    // secret is asked for. Directories alone and the lockfile do not count.
+    if let Some(found) = first_file_without_a_vault(layout)? {
+        return Err(non_empty_directory_refusal(layout, &found));
     }
 
     // ── 2. Answers we cannot honour, refused before any secret ──
@@ -603,9 +610,10 @@ pub fn run_init<P: InitPrompt, R: TryCryptoRng + ?Sized>(
     })
 }
 
-/// The effective network for this invocation, resolved before the vault
-/// exists (so `config::load` cannot be consulted — there is no config
-/// yet): the flag, else the built-in default.
+/// The effective network for this invocation: the flag, else the built-in
+/// default. `config.toml` is not consulted because an `init` that goes ahead
+/// has none to read: [`run_init`] refuses a directory that holds one without
+/// a vault header (D205), and one with a header is an existing vault (D39).
 #[must_use]
 pub fn init_network(globals: &GlobalArgs) -> NetworkId {
     crate::config::effective_network(globals.network, &crate::config::Config::default())
@@ -632,6 +640,108 @@ pub fn existing_vault_refusal(root: &std::path::Path) -> CliError {
             root = root.display(),
         ),
     }
+}
+
+/// **D205 (`U105`)**: D39's absolute refusal, reached by a directory that
+/// holds no vault header but is not empty.
+///
+/// `init` writes `config.toml` and the store's key-check and wallet records
+/// whether or not they exist, so running over such a directory destroys
+/// what it holds: a hand-written `config.toml`, or the records of a vault
+/// whose header was moved aside — its wallet key, and the check record the
+/// old header unlocks against (both executed for D205). D155 §4.4's "safe
+/// direction" is true of an EMPTY directory only, and that one is still
+/// allowed (see [`first_file_without_a_vault`]).
+///
+/// The text names paths only, never contents: a `[verify]` endpoint URL in
+/// `config.toml` may carry a provider's API key (D195). The advice to copy
+/// `config.toml` back is given only when there is one to copy, which is
+/// exactly when `found` is that file, because the walk looks at it first.
+fn non_empty_directory_refusal(layout: &VaultLayout, found: &std::path::Path) -> CliError {
+    let copy_back = if found == layout.beside_path(BesideFile::Config).as_path() {
+        ", and copy config.toml back afterwards if you want its settings"
+    } else {
+        ""
+    };
+    CliError::Usage {
+        message: format!(
+            "{root} holds no vault (there is no vault.header) but is not empty — {found} is \
+             in it — and `antseal init` writes its own config.toml and store records there, \
+             replacing any it finds. Move {root} aside instead of deleting it — a moved \
+             directory keeps everything — then run `antseal init` again{copy_back}.",
+            root = layout.root().display(),
+            found = found.display(),
+        ),
+    }
+}
+
+/// **D205 (`U105`)**: the first file in the vault directory other than its
+/// lockfile, if there is one; `None` is what "empty" means to `init`.
+///
+/// `config.toml` is looked at first, so a hand-written one (the row's case)
+/// is the file named; then a walk in name order, each directory's own files
+/// before its subdirectories, that stops at the first file it meets.
+///
+/// What does not count, and why:
+/// - **Directories.** `scripts/stage0.sh` makes an empty vault directory
+///   before `init`, and a KDF failure leaves an empty `store/works/` behind
+///   (`create_vault` makes the directories before it runs the KDF).
+/// - **The lockfile**, `vault.lock` beside the AEAD (that path only). The
+///   handler creates it before `run_init` runs and a refused `init` leaves it
+///   behind, so counting it would refuse every `init` after a refused one.
+///
+/// Everything else that is not a directory counts: a file, a socket, and a
+/// symbolic link, which is never followed (so a link loop cannot spin the
+/// walk, and a link to a directory elsewhere is refused, not written
+/// through).
+///
+/// # Errors
+///
+/// [`CliError::Io`] when a directory cannot be read, other than one that
+/// does not exist (it holds nothing; the in-process callers pass a directory
+/// `create_vault` will make): a directory that cannot be read cannot be shown
+/// to be empty.
+fn first_file_without_a_vault(layout: &VaultLayout) -> Result<Option<PathBuf>, CliError> {
+    let config = layout.beside_path(BesideFile::Config);
+    if std::fs::symlink_metadata(&config).is_ok_and(|meta| !meta.is_dir()) {
+        return Ok(Some(config));
+    }
+    let lockfile = layout.beside_path(BesideFile::Lockfile);
+    let unreadable = |dir: &std::path::Path, source: std::io::Error| CliError::Io {
+        context: format!(
+            "reading {} to check that it holds no files before `antseal init` writes there",
+            dir.display()
+        ),
+        source,
+    };
+    // An explicit stack, not recursion: nothing bounds the directory's depth.
+    let mut pending = vec![layout.root().to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let mut entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|source| unreadable(&dir, source))?,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => return Err(unreadable(&dir, source)),
+        };
+        entries.sort_by_key(std::fs::DirEntry::file_name);
+        let mut subdirs = Vec::new();
+        for entry in entries {
+            let path = entry.path();
+            if entry
+                .file_type()
+                .map_err(|source| unreadable(&dir, source))?
+                .is_dir()
+            {
+                subdirs.push(path);
+            } else if path != lockfile {
+                return Ok(Some(path));
+            }
+        }
+        // Reversed, so the stack pops them in name order.
+        pending.extend(subdirs.into_iter().rev());
+    }
+    Ok(None)
 }
 
 /// The keyfile path from the environment, if set (a path, never a
@@ -669,20 +779,31 @@ fn import_error(err: WalletImportError) -> CliError {
     }
 }
 
-/// `WalletKey::generate`'s failure as `init` reports it. Only an OS random
-/// source that cannot supply the key is the machine's fault (D201, `U104`):
-/// the key is drawn before the vault is created (step 5 of [`run_init`]), so
-/// no vault was. Every other arm keeps its own text in the bug class,
-/// `KeyGenerationFailed` included, which D201 §4 leaves undecided.
+/// `WalletKey::generate`'s failure as `init` reports it. Both of its
+/// failures are the machine's fault, rendered through D201's random-source
+/// variant (`U104`; D206, `U106`). `EntropySource` is an OS source that
+/// answered with an error. `KeyGenerationFailed` is one that answered `Ok` 64
+/// times with values no working source produces (zero or at least the group
+/// order every time: p ≈ 10⁻²⁴⁵⁹ from a working source), so it cannot supply
+/// usable randomness either, which is what D206 reads D201's "unavailable"
+/// to mean. The key is drawn before the vault is created (step 5 of
+/// [`run_init`]), so no vault was.
+///
+/// The classification is `WalletOpsError::is_random_source_failure`, not a
+/// `match` here: the `ant-backend` build adds two variants (both from
+/// `evm_wallet`, so never seen here, and still the bug class), and a `match`
+/// would need a `cfg`-gated arm for them in this file, which the heavy tier's
+/// trigger list does not cover (D206 as amended).
 fn wallet_generation_error(err: WalletOpsError) -> CliError {
-    match err {
-        WalletOpsError::EntropySource => CliError::RandomSourceUnavailable {
+    if err.is_random_source_failure() {
+        CliError::RandomSourceUnavailable {
             what: "the wallet key",
             consequence: "no vault was created",
-        },
-        other => CliError::Internal {
-            detail: other.to_string(),
-        },
+        }
+    } else {
+        CliError::Internal {
+            detail: err.to_string(),
+        }
     }
 }
 
@@ -887,36 +1008,52 @@ mod tests {
         );
     }
 
-    /// **D201 R2 (`U104`)** at `init`'s wallet seam. `WalletKey::generate`
-    /// draws from the OS itself, so the mapping is the seam. Only
-    /// `EntropySource` is the machine's fault; `KeyGenerationFailed` keeps the
-    /// bug-class text, which D201 §4 leaves undecided.
+    /// **D201 R2 (`U104`) as D206 (`U106`) reads it**, at `init`'s wallet
+    /// seam. `WalletKey::generate` draws from the OS itself, so the mapping is
+    /// the seam. Both of its default-build failures are an unavailable random
+    /// source in D206's sense, a source that cannot supply usable randomness:
+    /// `EntropySource` answered with an error, and `KeyGenerationFailed`
+    /// answered 64 times with values no working source produces. Each renders
+    /// ONE claim, the machine's: neither the `Internal` suffix "this is a bug
+    /// in antseal" nor the wallet's own "returning invalid data" survives.
+    ///
+    /// The name is older than D206 and stays true under its reading; it is
+    /// kept because U104's tick note in TODO.md cites it.
     #[test]
     fn only_an_unavailable_random_source_blames_the_machine_for_the_wallet_key() {
-        let entropy = wallet_generation_error(WalletOpsError::EntropySource);
-        assert_eq!(entropy.class(), crate::error::ErrorClass::Internal);
-        assert_eq!(entropy.exit_code(), 1);
-        let message = entropy.to_string();
-        assert!(
-            message.contains(
-                "the operating system's random source is unavailable, so the wallet key could \
-                 not be generated: no vault was created."
-            ),
-            "{message}"
+        let variants = [
+            ("EntropySource", WalletOpsError::EntropySource),
+            ("KeyGenerationFailed", WalletOpsError::KeyGenerationFailed),
+        ];
+        assert_eq!(
+            variants.len(),
+            2,
+            "both default-build failures of generate()"
         );
-        assert!(
-            message.contains("This is a fault of this machine, not a bug in antseal"),
-            "{message}"
-        );
-        assert!(!message.contains("this is a bug in antseal"), "{message}");
-
-        let other = wallet_generation_error(WalletOpsError::KeyGenerationFailed);
-        assert_eq!(other.class(), crate::error::ErrorClass::Internal);
-        assert!(
-            other
-                .to_string()
-                .ends_with("(this is a bug in antseal — please report it)"),
-            "{other}"
-        );
+        for (name, variant) in variants {
+            let err = wallet_generation_error(variant);
+            assert_eq!(err.class(), crate::error::ErrorClass::Internal, "{name}");
+            assert_eq!(err.exit_code(), 1, "{name}");
+            let message = err.to_string();
+            assert!(
+                message.contains(
+                    "the operating system's random source is unavailable, so the wallet key \
+                     could not be generated: no vault was created."
+                ),
+                "{name}: {message}"
+            );
+            assert!(
+                message.contains("This is a fault of this machine, not a bug in antseal"),
+                "{name}: {message}"
+            );
+            assert!(
+                !message.contains("this is a bug in antseal"),
+                "{name}: {message}"
+            );
+            assert!(
+                !message.contains("returning invalid data"),
+                "{name}: {message}"
+            );
+        }
     }
 }

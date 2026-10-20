@@ -231,6 +231,8 @@ fn row_in(state: WorkState) -> WorkRow {
         unanchored: false,
         degraded: false,
         cost_atto: None,
+        receipt_cost_atto: None,
+        damaged_receipt: None,
         resume: None,
         // U85/D152 R4: irrelevant to the word this suite is about, and a
         // work with no resume hint can never carry one.

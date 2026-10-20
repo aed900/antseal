@@ -68,7 +68,7 @@ use zeroize::Zeroize;
 use crate::network::EvmAddress20;
 
 /// Retry budget for OS-CSPRNG keygen. A draw is rejected only when it is
-/// zero or ≥ the secp256k1 group order (probability < 2⁻¹²⁸ per draw);
+/// zero or ≥ the secp256k1 group order (probability < 2⁻¹²⁷ per draw);
 /// the budget exists so a broken entropy source becomes a typed error
 /// instead of a spin.
 const GENERATE_ATTEMPTS: u32 = 64;
@@ -409,6 +409,28 @@ pub enum WalletOpsError {
     KeyRejectedByStack,
 }
 
+impl WalletOpsError {
+    /// Whether this failure means the operating system's random source could
+    /// not supply usable randomness, so the fault is the machine's, not
+    /// antseal's (D201, as D206 reads it). Exactly two variants say so:
+    /// [`Self::EntropySource`], a source that answered with an error, and
+    /// [`Self::KeyGenerationFailed`], one that answered `Ok` 64 times with
+    /// values no working source produces (zero or at least the group order
+    /// every time). The `ant-backend` variants come from
+    /// `WalletKey::evm_wallet`, never from [`WalletKey::generate`], and are
+    /// not.
+    ///
+    /// A predicate here rather than a `match` at the caller: `antseal init`
+    /// builds with and without `ant-backend`, and `matches!` needs no arm for
+    /// the variants only one of those builds has, so the caller carries no
+    /// `cfg` of its own (D206; the heavy tier compiles every change under
+    /// `crates/antseal-net/`, which is where the `cfg` lives).
+    #[must_use]
+    pub fn is_random_source_failure(&self) -> bool {
+        matches!(self, Self::EntropySource | Self::KeyGenerationFailed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -657,5 +679,51 @@ mod tests {
             decode_hex32(b"AbCdEf0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e"),
             decode_hex32(b"abcdef0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e")
         );
+    }
+
+    /// **D206 (`U106`).** `is_random_source_failure` is true for exactly the
+    /// two variants that mean the OS random source could not supply usable
+    /// randomness, and false for the rest.
+    ///
+    /// `side_of_d201_line` restates the classification as an exhaustive
+    /// `match` over every variant of THIS build, written independently of the
+    /// predicate: a variant added later does not compile here until someone
+    /// decides which side of D201's line it falls on. In the default build the
+    /// match has no arm beyond the two, so `matches!` meets no default-feature
+    /// variant it does not name.
+    #[test]
+    fn random_source_failures_are_exactly_the_two_generate_variants() {
+        fn side_of_d201_line(err: WalletOpsError) -> bool {
+            match err {
+                WalletOpsError::EntropySource | WalletOpsError::KeyGenerationFailed => true,
+                #[cfg(feature = "ant-backend")]
+                WalletOpsError::Config(_) | WalletOpsError::KeyRejectedByStack => false,
+            }
+        }
+        let machine = [
+            WalletOpsError::EntropySource,
+            WalletOpsError::KeyGenerationFailed,
+        ];
+        assert_eq!(machine.len(), 2, "both failures `generate()` can return");
+        for err in machine {
+            assert!(side_of_d201_line(err), "{err:?}");
+            assert!(
+                err.is_random_source_failure(),
+                "{err:?} is the machine's fault (D206)"
+            );
+        }
+        #[cfg(feature = "ant-backend")]
+        for err in [
+            WalletOpsError::Config(crate::evm::EvmConfigError::InvalidRpcUrl {
+                network: crate::network::NetworkId::Devnet,
+            }),
+            WalletOpsError::KeyRejectedByStack,
+        ] {
+            assert!(!side_of_d201_line(err), "{err:?}");
+            assert!(
+                !err.is_random_source_failure(),
+                "{err:?} never comes from the random source"
+            );
+        }
     }
 }

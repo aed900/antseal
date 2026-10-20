@@ -26,7 +26,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use antseal_cli::pipeline::journal::{
-    BlobSlot, MANIFEST_BLOB_ENTRY, PLAN_ENTRY, StagedBlob, UNIT_ENTRY_BASE,
+    BlobSlot, MANIFEST_BLOB_ENTRY, PLAN_ENTRY, STATE_ENTRY, StagedBlob, UNIT_ENTRY_BASE,
 };
 use antseal_cli::pipeline::receipt_sink::recorded_receipt;
 use antseal_cli::pipeline::{
@@ -813,6 +813,10 @@ fn incomplete_and_unknown_works_are_refused_with_the_state_named() {
     let seal_id = seal_fixture(&mock, &vault, 0x6F);
     let store = WorkStore::new(&vault);
 
+    // An UNTAGGED work: the mirror is its only state (D203 R1).
+    store
+        .delete_journal_entry(&seal_id, STATE_ENTRY)
+        .expect("drop the tag");
     let mut record = store.load_meta(&seal_id).expect("meta");
     record.state = WorkState::IncompletePostPay;
     store
@@ -1144,5 +1148,68 @@ fn repoint_manifest<F>(
         store
             .store_meta(&record, &mut ChaCha20Rng::from_seed([0xCE; 32]))
             .expect("re-store meta");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D203 R2: the tag-present branch of the state gate
+// ─────────────────────────────────────────────────────────────────────
+
+/// **D203 R2, the tag-present branch**: a work interrupted for real after
+/// its payment — the upload aborted after one stored blob, so its fine tag
+/// is `Finalizing` and its mirror, written by the same transition,
+/// `incomplete-post-pay` — is refused by the reveal engine (the only
+/// `.sealproof` producer) with that state named.
+/// `incomplete_and_unknown_works_are_refused_with_the_state_named` covers the
+/// untagged branch, where the mirror is the only state.
+#[test]
+fn a_work_whose_tag_is_post_pay_is_refused_with_its_state_named() {
+    let mock = MockBackend::new();
+    mock.arm_fault(antseal_net::test_util::Fault::AfterStoringK(1));
+    let isolated = common::IsolatedVault::create("d203-reveal-tagged");
+    let vault = isolated.unlock();
+    let files = files();
+    let request = SealRequest {
+        files: &files,
+        title: "reveal fixture".to_owned(),
+        claimed_time_unix_secs: 1_800_000_000,
+        app_version: "antseal-test/1".to_owned(),
+        network: NetworkId::Devnet,
+        no_anchor: false,
+        degraded: false,
+        dry_run: false,
+        sig_policy: SigPolicy::hybrid(),
+        shaping: SealShapingFlags::default(),
+    };
+    let mut journal_rng = ChaCha20Rng::from_seed([0xD4; 32]);
+    let journal =
+        antseal_cli::pipeline::VaultJournal::new(WorkStore::new(&vault), &mut journal_rng);
+    let gate = RecordingGate::new();
+    let consent = ScriptedConsent::always_yes();
+    let pipeline = Pipeline::new(&mock, &gate, &journal, &consent, &NoBarriers);
+    let interrupted = block_on(pipeline.seal(&request, &mut ChaCha20Rng::from_seed([0xD4; 32])));
+    assert!(
+        interrupted.is_err(),
+        "the upload aborts after one stored blob"
+    );
+
+    let store = WorkStore::new(&vault);
+    let works = store.list_works().expect("list");
+    assert_eq!(works.len(), 1, "one work in this vault");
+    let seal_id = works[0];
+    assert_eq!(
+        antseal_cli::pipeline::journal::recorded_state(&store, &seal_id).expect("tag"),
+        Some(antseal_cli::pipeline::SealState::Finalizing),
+        "control: the fine tag is genuinely post-pay"
+    );
+    assert_eq!(
+        store.load_meta(&seal_id).expect("meta").state,
+        WorkState::IncompletePostPay,
+        "control: the mirror agrees with the tag"
+    );
+    match prepare(&mock, &vault, &seal_id, &all()) {
+        Err(RevealError::NotRevealable { state }) => assert_eq!(state, "incomplete-post-pay"),
+        Err(other) => panic!("expected NotRevealable, got {other:?}"),
+        Ok(_) => panic!("an interrupted work is never revealable"),
     }
 }

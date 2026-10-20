@@ -1251,7 +1251,7 @@ fn the_record_and_the_bytes_it_wraps_are_reported_at_the_same_severity() {
 // ─────────────────────────────────────────────────────────────────────
 
 /// **D106 §1.5**: `status <work-id>` walks `list_works` → `load_meta` in
-/// `resolve_work_id` (`pipeline/restore.rs:520-531`), lock-free, exactly as
+/// `resolve_work_id` (`pipeline/restore.rs:522-533`), lock-free, exactly as
 /// `list` does — so a directory that is not yet a work broke it too, and
 /// broke it worse: the user typed a valid 64-hex work id of their own and
 /// was told *"no work with this id exists in the vault (see `antseal

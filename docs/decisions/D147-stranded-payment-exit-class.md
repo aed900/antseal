@@ -899,3 +899,33 @@ show as paid, so 28's promise is false for that case.
   qualified.
 
 The text above, including every *"pair"*, is history and stays as written.
+
+## Addendum — 2026-10-20 (D204 §2 R3, R4): `Payment` means "before any ANT moved", and a first sub-batch that reverts is `Payment` and journals nothing
+
+D204 (`S49`, `S50`) changes three things this record ruled or measured.
+
+- **`Payment`'s definition, and R11 for its Display.** This record took `Payment` as its own doc
+  defines it, *"before any transaction landed"* (Status, `:58`; R5's comment, `:511`; R6's row,
+  `:536`), and R11 (`:672-673`) froze `StorageError`'s own Display strings because *"the storage
+  taxonomy is correct"*. D204 §2 R3 makes a mined revert of the first sub-batch a `Payment`
+  producer, and a user reads "landed" as "mined", so the old sentence would read false for it.
+  D204 §2 R4 therefore defines `Payment` as *"before any ANT moved"* — true of every producer, the
+  token approval included — and rewords its Display to *"payment failed before any ANT moved:
+  {reason}"*. **R11 is superseded for that one Display.** Every other `StorageError` Display,
+  `StrandedPayment`'s included, stays as R11 froze it. The pipeline comment R5 wrote
+  (`crates/antseal-cli/src/pipeline/error.rs:485`) becomes *"by its own definition, "before any
+  ANT moved" — retry quotes and pays afresh."* D204 §4 records the one producer for which the new
+  sentence can still be false until `S51` is ruled — a submission the node accepted before the
+  transport failed — and the old sentence had the same gap.
+- **The revert site.** §1.2 lists a reverted `payForQuotes` sub-batch among `StrandedPayment`'s
+  production sites (`:154`). Under D204 §2 R3 that site returns `StrandedPayment` only when an
+  earlier sub-batch of the same `pay` call landed. A first sub-batch that reverts moved no ANT: it
+  returns `Payment` (23) and delivers no receipt capture, because the revert-only receipt it used
+  to journal was read as payment by every money reader in the CLI (D204 §1.5, executed).
+- **What does not move.** R6's classes stand: `Payment` stays `network-failure` (23) and
+  `StrandedPayment` stays `payment-stranded` (28). No code is minted or renumbered, and
+  `cli-errors.display.txt` does not change (its 23 entry is not built from a `Payment`, and its
+  28 entry uses n = 2). 28's *"money moved"* becomes true of every revert it carries.
+
+The text above, including every *"before any transaction landed"*, is history and stays as
+written.

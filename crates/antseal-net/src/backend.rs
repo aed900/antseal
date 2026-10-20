@@ -228,7 +228,7 @@ pub trait StorageBackend {
     ///
     /// # Errors
     ///
-    /// [`StorageError::Payment`] (nothing landed),
+    /// [`StorageError::Payment`] (no ANT moved),
     /// [`StorageError::InsufficientAnt`] /
     /// [`StorageError::InsufficientGas`] (distinct preflight shortfalls),
     /// [`StorageError::StrandedPayment`] (landed partially — the partial

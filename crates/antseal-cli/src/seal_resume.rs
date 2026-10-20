@@ -56,11 +56,13 @@
 //! the internal class rather than as a question (D45 §2's closing note).
 
 use antseal_core::crypto::secrets::SealId;
-use antseal_net::NetworkId;
+use antseal_net::{NetworkId, PaymentReceipt};
 
 use crate::error::{CliError, ConsentOutcome};
 use crate::pipeline::SealJournal;
-use crate::pipeline::journal::{SealState, recorded_plan, recorded_state};
+use crate::pipeline::journal::{
+    SealState, effective_work_state, payment_recorded, recorded_plan, recorded_state,
+};
 use crate::vault::store::{SealShapingFlags, WorkState, WorkStore};
 
 /// One incomplete work, reduced to what the matching rule reads.
@@ -78,7 +80,11 @@ pub struct ResumeCandidate {
     /// The recorded network (already filtered on, kept for the render).
     pub network: String,
     /// The coarse U9 state (pre-pay vs post-pay decides whether consent
-    /// re-fires — D45 §4).
+    /// re-fires — D45 §4), and the **effective** one: the fine tag's coarse
+    /// value whenever the journal carries a tag, the meta record's mirror
+    /// only when it does not (D203 R1,
+    /// [`effective_work_state`](crate::pipeline::journal::effective_work_state)).
+    /// The mirror can trail the tag by one write (S48), never lead it.
     pub state: WorkState,
     /// The fine S10 journal state, when the journal carries one. Absent
     /// is a state rather than a failure (U19's finding: an imported
@@ -210,15 +216,23 @@ pub fn gather_candidates(
     let mut out = Vec::new();
     for seal_id in store.list_works()? {
         let record = store.load_meta(&seal_id)?;
+        if record.network != network.as_str() {
+            continue;
+        }
         // D45 §2's candidate set, exactly: incomplete (either barrier),
         // same network. `Complete` and `Abandoned` are excluded, so
         // re-sealing the same files after a finished seal is a fresh
-        // seal, and an abandoned work never comes back.
+        // seal, and an abandoned work never comes back. Classified by the
+        // EFFECTIVE state (D203 R1–R2): a kill between a transition's two
+        // writes leaves the mirror one barrier behind the tag, and the
+        // mirror there would bring an abandoned work back (S48's window A)
+        // or keep a complete one a candidate forever (window B).
+        let journal_state = recorded_state(store, &seal_id).map_err(CliError::from)?;
+        let state = effective_work_state(journal_state, record.state);
         if !matches!(
-            record.state,
+            state,
             WorkState::IncompletePrePay | WorkState::IncompletePostPay
-        ) || record.network != network.as_str()
-        {
+        ) {
             continue;
         }
         out.push(ResumeCandidate {
@@ -227,8 +241,8 @@ pub fn gather_candidates(
             as_given_paths: record.input_paths_as_given,
             shaping: record.shaping,
             network: record.network,
-            state: record.state,
-            journal_state: recorded_state(store, &seal_id).map_err(CliError::from)?,
+            state,
+            journal_state,
         });
     }
     Ok(out)
@@ -375,12 +389,19 @@ impl AbandonReport {
         // written even when `--no-anchor` skipped the step — so it states
         // what is true of both, and the anchors are counted where it matters,
         // in the preview shown before the question.
+        //
+        // The money clause says what the vault records and no more (D203 M1,
+        // M6): an exit 37 with no durable capture leaves no record that money
+        // moved, so "nothing was paid" is a claim the engine cannot back —
+        // what it checked (rule 2) is that no payment is recorded. Nothing
+        // was uploaded is a fact of the state: `finalize` runs only on a
+        // post-pay tag, and rule 2 refuses every one of those.
         vec![
             format!(
                 "Abandoned the interrupted seal {}.",
                 hex_seal(&self.seal_id)
             ),
-            "  Nothing was paid for it and nothing was uploaded. Sealing these files again \
+            "  No payment is recorded for it and nothing was uploaded. Sealing these files again \
              starts a completely fresh work: a new seal_id, a new master secret, freshly drawn \
              nonces, and therefore a different work-id — none of this work's records, its \
              staged copy, its consent or any anchors, carries over to it."
@@ -450,12 +471,16 @@ impl AbandonReport {
 ///    D37's capture hook journals the receipt inside `pay()` and a crash
 ///    in that window leaves a durable receipt on a pre-pay tag. Reading
 ///    the receipt first means the money question is answered by the money
-///    evidence. S11 *does* abandon paid works, but only as a safety
+///    evidence — and the evidence is a receipt that maps at least one quote
+///    to a transaction ([`payment_recorded`], D203 M1 and M6), not a
+///    receipt's mere existence: the capture builds before S50 journaled for
+///    a first sub-batch that reverted maps nothing and moved no ANT, and it
+///    blocks nothing. S11 *does* abandon paid works, but only as a safety
 ///    outcome when the staged bytes are gone and the alternative is
 ///    re-encrypting under a journaled nonce; forfeiting a payment because
 ///    someone typed a flag is a different thing entirely.
-/// 3. Anything else — staged or anchored, no receipt, or killed inside
-///    `begin` with no fine tag at all (D197 R4) — is abandonable, and the
+/// 3. Anything else — staged or anchored, no payment recorded, or killed
+///    inside `begin` with no fine tag at all (D197 R4) — is abandonable, and the
 ///    transition is the S10 state machine's own [`SealJournal::set_state`],
 ///    never a hand-written tag write, so the coarse [`WorkState`] mirror
 ///    moves with it.
@@ -472,9 +497,16 @@ pub fn abandon_pre_pay<J: crate::pipeline::SealJournal>(
     seal_id: &SealId,
 ) -> Result<AbandonReport, CliError> {
     let meta = store.load_meta(seal_id)?;
+    // Both rules read the EFFECTIVE state (D203 R1–R2): the fine tag's,
+    // and the mirror only for a work with no tag. A kill between a
+    // transition's two writes leaves the mirror one barrier behind the tag,
+    // so an abandon interrupted there is reported already done (S48's
+    // window A), and a complete work gets the complete refusal (window B).
+    let previous_state = recorded_state(store, seal_id).map_err(CliError::from)?;
+    let state = effective_work_state(previous_state, meta.state);
 
     // Rule 1: terminal states.
-    match meta.state {
+    match state {
         WorkState::Complete => {
             return Err(CliError::Usage {
                 message: format!(
@@ -488,24 +520,30 @@ pub fn abandon_pre_pay<J: crate::pipeline::SealJournal>(
         WorkState::Abandoned => {
             return Ok(AbandonReport {
                 seal_id: *seal_id,
-                previous_state: recorded_state(store, seal_id).map_err(CliError::from)?,
+                previous_state,
                 already: true,
             });
         }
         WorkState::IncompletePrePay | WorkState::IncompletePostPay => {}
     }
 
-    // Rule 2: the receipt is the authority on whether money moved.
-    let paid = journal.receipt(seal_id).map_err(CliError::from)?.is_some()
-        || meta.state == WorkState::IncompletePostPay;
+    // Rule 2: the receipt is the authority on whether money moved — one that
+    // maps a quote to a transaction (D203 M1, M6).
+    let paid = payment_recorded(journal.receipt(seal_id).map_err(CliError::from)?.as_ref())
+        || state == WorkState::IncompletePostPay;
     if paid {
+        // The way forward is true of a partly paid work as of a fully paid
+        // one (D203 M6c): a payment that stranded part-way leaves a remainder
+        // the re-run asks to pay, so it cannot promise "no further payment";
+        // what it can promise is what the resume guarantees — no quote the
+        // receipt maps is bought again (D37 Decision 5).
         return Err(CliError::Usage {
             message: format!(
                 "work {} has already been paid for — a payment receipt is journaled for it. \
                  Abandoning it would forfeit that payment permanently, and antseal will not \
-                 do that on request. Finish it instead by re-running `{}`: no further \
-                 payment is needed, and the network's payment proofs stay usable for \
-                 uploading only about a day",
+                 do that on request. Finish it instead by re-running `{}`: no quote the \
+                 receipt already maps is paid again, and the network's payment proofs stay \
+                 usable for uploading only about a day",
                 hex_seal(seal_id),
                 crate::listing::seal_invocation(
                     &meta.input_paths_as_given,
@@ -516,7 +554,6 @@ pub fn abandon_pre_pay<J: crate::pipeline::SealJournal>(
         });
     }
 
-    let previous_state = recorded_state(store, seal_id).map_err(CliError::from)?;
     journal
         .set_state(seal_id, SealState::Abandoned)
         .map_err(CliError::from)?;
@@ -606,14 +643,16 @@ const fn hex_digit(byte: u8) -> u8 {
 ///
 /// # Read only for a work the engine would actually write
 ///
-/// A preview exists only for an incomplete work whose coarse tag is pre-pay
-/// and which has **no journaled receipt** — the two facts
+/// A preview exists only for an incomplete work whose effective state (the
+/// fine tag's, the mirror only when there is none — D203 R1) is pre-pay
+/// and for which **no payment is recorded** — no journaled receipt maps a
+/// quote to a transaction ([`payment_recorded`], D203 M1) — the two facts
 /// [`abandon_pre_pay`] decides by, read the same way. Every other work goes
 /// straight to the engine with nothing asked: it refuses a complete or a
 /// paid work, and reports an abandoned one as already done, each in its own
 /// sentence. Asking "abandon it?" first would put a question in front of a
-/// refusal, and the question says *"Nothing was paid for it"*, which would be
-/// false for a paid work.
+/// refusal, and the question says *"No payment is recorded for it"*, which
+/// would be false for a paid work (D203 M6a).
 ///
 /// The engine stays the authority. It reads both facts again after the
 /// confirmation — under the vault lock the handler holds for the whole run,
@@ -634,6 +673,14 @@ pub struct AbandonPreview {
     /// `Anchored` after the anchor step even when `--no-anchor` skipped it,
     /// so the tag alone would claim anchors an unanchored work never had.
     anchor_slots: usize,
+    /// Whether the vault holds a consent record for the work (D36). The
+    /// pipeline's one `pay` call comes after that record's write
+    /// (`consent_anchor_pay`), so its absence proves no payment could have
+    /// started — the only case in which the preview says "not paid"
+    /// (D203 M6b). With one, all the vault can say is that no payment is
+    /// recorded: an exit 37 with no durable capture leaves no record that
+    /// money moved (D203 M1).
+    consented: bool,
 }
 
 impl AbandonPreview {
@@ -649,8 +696,10 @@ impl AbandonPreview {
         seal_id: &SealId,
     ) -> Result<Option<Self>, CliError> {
         let meta = store.load_meta(seal_id)?;
-        if meta.state != WorkState::IncompletePrePay
-            || journal.receipt(seal_id).map_err(CliError::from)?.is_some()
+        // The state the engine's rules read: the effective one (D203 R1).
+        let tag = recorded_state(store, seal_id).map_err(CliError::from)?;
+        if effective_work_state(tag, meta.state) != WorkState::IncompletePrePay
+            || payment_recorded(journal.receipt(seal_id).map_err(CliError::from)?.as_ref())
         {
             return Ok(None);
         }
@@ -659,11 +708,12 @@ impl AbandonPreview {
             title: meta.shaping.title.clone(),
             paths: meta.input_paths_as_given.clone(),
             network: meta.network.clone(),
-            tag: recorded_state(store, seal_id).map_err(CliError::from)?,
+            tag,
             planned: recorded_plan(store, seal_id)
                 .map_err(CliError::from)?
                 .is_some(),
             anchor_slots: store.list_anchors(seal_id)?.len(),
+            consented: meta.consent.is_some(),
         }))
     }
 
@@ -680,15 +730,24 @@ impl AbandonPreview {
     /// machine mode too, where nothing is asked (D51 invariant 1).
     #[must_use]
     pub fn render(&self) -> Vec<String> {
+        // The money word is a measurement of this vault, never of the arm
+        // (D203 M6b): "not paid" only where no consent record exists, which
+        // proves no payment could have started; otherwise what the vault
+        // knows — no payment is recorded (the preview exists only then).
+        let money = if self.consented {
+            "no payment recorded"
+        } else {
+            "not paid"
+        };
         let progress = match (self.tag, self.planned) {
             // No tag and no plan is a kill inside `begin` (two writes), so it
             // reads as the same interrupted staging as a `Staged` tag (S45).
             (Some(SealState::Staged) | None, false) => {
-                "staging was interrupted before it finished; not paid".to_owned()
+                format!("staging was interrupted before it finished; {money}")
             }
-            (Some(SealState::Staged), true) => "staged; not paid".to_owned(),
+            (Some(SealState::Staged), true) => format!("staged; {money}"),
             (Some(SealState::Anchored), _) => {
-                "staged and past its anchor step; not paid".to_owned()
+                format!("staged and past its anchor step; {money}")
             }
             (Some(other), _) => format!("the journal records `{}`", other.name()),
             (None, true) => "the journal records no state for it".to_owned(),
@@ -710,8 +769,11 @@ impl AbandonPreview {
         ]
     }
 
-    /// The confirmation question, verbatim from D185 R4: default no, and the
-    /// anchors clause only when anchors were obtained.
+    /// The confirmation question — D185 R4's, with D203 M6a's money clause:
+    /// default no, and the anchors clause only when anchors were obtained.
+    /// It says what the vault records, which is true wherever a preview
+    /// exists; "nothing was paid" is a claim the vault cannot back after an
+    /// exit 37 with no durable capture (D203 M1).
     #[must_use]
     pub fn question(&self) -> String {
         let anchors = if self.anchored() {
@@ -720,8 +782,8 @@ impl AbandonPreview {
             ""
         };
         format!(
-            "Abandon interrupted seal {}? Nothing was paid for it; the staged work{anchors} can \
-             no longer be used. [y/N] ",
+            "Abandon interrupted seal {}? No payment is recorded for it; the staged \
+             work{anchors} can no longer be used. [y/N] ",
             hex_seal(&self.seal_id)
         )
     }
@@ -845,8 +907,32 @@ pub fn staging_never_finished(store: &WorkStore<'_>, seal_id: &SealId) -> bool {
 /// staged-bytes walk, which is the pipeline's own gate (S11 abandons
 /// rather than re-encrypts if those bytes are gone, and duplicating that
 /// judgement in a renderer would let the two disagree).
+///
+/// # Money comes from the receipt (D203 M4)
+///
+/// `receipt` is the matched work's journaled receipt, and the money lines
+/// of a work on its anchor tag follow [`payment_recorded`], never the tag:
+/// a payment that stranded part-way, or one killed between its receipt and
+/// the `Paid` tag, leaves `Anchored` over money already moved. Neither line
+/// presumes which: "a payment is recorded" is true of a receipt that covers
+/// every blob and of one that covers some, and "pay the rest, if any" is what
+/// the resume does in both (it quotes what the receipt does not cover and
+/// asks only if that prices something). Where no payment is recorded the
+/// line says exactly that — not "nothing paid", which an exit 37 with no
+/// durable capture leaves the vault unable to know (D203 M1). The step is
+/// "past its anchor step", not "anchored": the tag is written even when
+/// `--no-anchor` skipped the step.
+///
+/// The post-pay tags need no receipt: `Paid` is written only once nothing
+/// remains to buy (D203 M5). A vault written before M5 can hold the older
+/// early repair's `Paid` over a declined remainder; its resume still quotes
+/// and asks for that remainder, but this line cannot see it (D203's
+/// recorded residue).
 #[must_use]
-pub fn resume_plan_lines(candidate: &ResumeCandidate) -> Vec<String> {
+pub fn resume_plan_lines(
+    candidate: &ResumeCandidate,
+    receipt: Option<&PaymentReceipt>,
+) -> Vec<String> {
     let mut out = vec![format!(
         "  Resuming interrupted seal {}",
         hex_seal(&candidate.seal_id)
@@ -856,7 +942,14 @@ pub fn resume_plan_lines(candidate: &ResumeCandidate) -> Vec<String> {
             "encrypted units and manifest are staged in the vault",
             "anchor, pay, upload",
         ),
-        Some(SealState::Anchored) => ("staged and anchored; nothing paid", "pay, upload"),
+        Some(SealState::Anchored) if payment_recorded(receipt) => (
+            "staged and past its anchor step; a payment is recorded",
+            "pay the rest, if any, then upload",
+        ),
+        Some(SealState::Anchored) => (
+            "staged and past its anchor step; no payment recorded",
+            "pay, upload",
+        ),
         Some(SealState::Paid) => (
             "PAID — the payment receipt is journaled",
             "upload only (no further payment)",
@@ -1013,19 +1106,74 @@ mod tests {
         assert_eq!(err.class(), crate::error::ErrorClass::Internal);
     }
 
+    /// A NON-SECRET synthetic receipt: one quote mapped to one confirmed
+    /// transaction when `mapped`, else a reverted transaction mapping
+    /// nothing (the pre-S50 capture of a first sub-batch revert).
+    fn receipt(mapped: bool) -> PaymentReceipt {
+        use antseal_net::{GasSummary, QuoteHash, TxHash, TxRecord, TxStatus};
+        let quote = QuoteHash::from_bytes([0xB1; 32]);
+        let tx = TxHash::from_bytes([0xB2; 32]);
+        PaymentReceipt {
+            blobs: Vec::new(),
+            tx_map: if mapped {
+                [(quote, tx)].into_iter().collect()
+            } else {
+                std::collections::BTreeMap::new()
+            },
+            txs: vec![TxRecord {
+                tx_hash: tx,
+                block_number: Some(42),
+                status: if mapped {
+                    TxStatus::Confirmed
+                } else {
+                    TxStatus::Reverted
+                },
+                quote_hashes: vec![quote],
+            }],
+            storage_cost_atto: if mapped { 4_200 } else { 0 },
+            gas: GasSummary {
+                gas_cost_wei: 21_000,
+            },
+        }
+    }
+
     #[test]
     fn the_resume_plan_names_what_is_staged_and_whether_money_moved() {
         let mut pre_pay = candidate(0xB1, &["a.txt"], shaping(None));
         pre_pay.journal_state = Some(SealState::Anchored);
-        let lines = resume_plan_lines(&pre_pay).join("\n");
-        assert!(lines.contains("nothing paid"), "{lines}");
-        assert!(lines.contains("remaining: pay, upload"), "{lines}");
-        assert!(!lines.contains("already paid for"), "{lines}");
+        // No payment recorded: no receipt, or one that maps no quote
+        // (D203 M1) — said as exactly that, never "nothing paid".
+        let revert_only = receipt(false);
+        let unpaid = [None, Some(&revert_only)];
+        assert_eq!(unpaid.len(), 2);
+        for journaled in unpaid {
+            let lines = resume_plan_lines(&pre_pay, journaled).join("\n");
+            assert!(
+                lines.contains("staged:    staged and past its anchor step; no payment recorded"),
+                "{lines}"
+            );
+            assert!(lines.contains("remaining: pay, upload"), "{lines}");
+            assert!(!lines.contains("nothing paid"), "{lines}");
+            assert!(!lines.contains("already paid for"), "{lines}");
+        }
+        // A payment recorded on the anchor tag — stranded part-way, or killed
+        // before the `Paid` tag (D203 M4): true of both.
+        let stranded = receipt(true);
+        let lines = resume_plan_lines(&pre_pay, Some(&stranded)).join("\n");
+        assert!(
+            lines.contains("staged:    staged and past its anchor step; a payment is recorded"),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("remaining: pay the rest, if any, then upload"),
+            "{lines}"
+        );
+        assert!(!lines.contains("no further payment"), "{lines}");
 
         let mut post_pay = candidate(0xB2, &["a.txt"], shaping(None));
         post_pay.state = WorkState::IncompletePostPay;
         post_pay.journal_state = Some(SealState::Paid);
-        let lines = resume_plan_lines(&post_pay).join("\n");
+        let lines = resume_plan_lines(&post_pay, Some(&stranded)).join("\n");
         assert!(lines.contains("PAID"), "{lines}");
         assert!(lines.contains("no further payment"), "{lines}");
         assert!(lines.contains("about a day"), "{lines}");
@@ -1034,7 +1182,7 @@ mod tests {
         let mut untagged = candidate(0xB3, &["a.txt"], shaping(None));
         untagged.journal_state = None;
         assert!(
-            resume_plan_lines(&untagged)
+            resume_plan_lines(&untagged, None)
                 .join("\n")
                 .contains("not recorded")
         );

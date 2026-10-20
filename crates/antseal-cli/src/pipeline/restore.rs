@@ -88,7 +88,9 @@ use antseal_core::storage::compute_storage_address;
 use antseal_net::{Address, StorageBackend, StorageError};
 use thiserror::Error;
 
-use super::journal::{BlobSlot, PLAN_ENTRY, StagedBlob, decode_plan};
+use super::journal::{
+    BlobSlot, PLAN_ENTRY, STATE_ENTRY, StagedBlob, decode_plan, decode_state, effective_work_state,
+};
 use crate::error::CliError;
 use crate::vault::store::{StoreError, WorkState, WorkStore};
 
@@ -530,6 +532,39 @@ pub fn resolve_work_id(store: &WorkStore<'_>, work_id: &str) -> Result<SealId, R
     Err(RestoreError::WorkNotFound)
 }
 
+/// The state `restore` gates on: the **effective** one (D203 R1–R2) — the
+/// fine tag's coarse value, and `mirror` (the loaded meta record's) only for
+/// a work with no tag. The mirror can trail the tag by one write (S48), so a
+/// work killed between `Finalizing → Complete`'s two writes is complete
+/// here, not `incomplete-post-pay`.
+///
+/// Read the way these engines read their other journal records: a store
+/// failure keeps its own class, and a tag that will not decode is the
+/// caller's malformed-record class, built by `malformed` from the detail.
+/// One gate for three callers — this engine, the reveal engine (the only
+/// `.sealproof` producer) and the `ant-backend` `restore` handler's
+/// pre-check (`commands.rs`) — so none can refuse what another admits.
+///
+/// # Errors
+///
+/// Store-level failures, and `malformed(..)` for a state record that is
+/// present but unusable.
+pub(crate) fn effective_state<E: From<StoreError>>(
+    store: &WorkStore<'_>,
+    seal_id: &SealId,
+    mirror: WorkState,
+    malformed: impl FnOnce(String) -> E,
+) -> Result<WorkState, E> {
+    let fine =
+        match store.get_journal_entry(seal_id, STATE_ENTRY)? {
+            Some(bytes) => Some(decode_state(bytes.as_bytes()).map_err(|err| {
+                malformed(format!("the journaled state record is unusable: {err}"))
+            })?),
+            None => None,
+        };
+    Ok(effective_work_state(fine, mirror))
+}
+
 impl<'i, 'v, B: StorageBackend> RestoreEngine<'i, 'v, B> {
     /// Assemble the engine over a backend and an unlocked vault's store.
     pub fn new(backend: &'i B, store: &'i WorkStore<'v>) -> Self {
@@ -559,7 +594,10 @@ impl<'i, 'v, B: StorageBackend> RestoreEngine<'i, 'v, B> {
     /// the manifest-resolution classes, and store-level failures.
     pub async fn restore(&self, seal_id: &SealId) -> Result<RestoreReport, RestoreError> {
         let record = self.store.load_meta(seal_id)?;
-        if record.state != WorkState::Complete {
+        let state = effective_state(self.store, seal_id, record.state, |detail| {
+            RestoreError::MalformedRecord { detail }
+        })?;
+        if state != WorkState::Complete {
             // U70: the finer word, from the one production of it. This
             // refusal is exactly where the pre-pay/post-pay distinction is
             // actionable — "you owe nothing" and "you have paid and the
@@ -568,7 +606,7 @@ impl<'i, 'v, B: StorageBackend> RestoreEngine<'i, 'v, B> {
             // `detail_state`, rather than a fourth parenthetical spelling
             // of the coarse word.
             return Err(RestoreError::NotRestorable {
-                state: crate::status::detail_state_name(record.state),
+                state: crate::status::detail_state_name(state),
             });
         }
         let w = record.w.secret_ref();

@@ -554,3 +554,56 @@ It changes what antseal prints for two endpoint families and what its config ref
 inside the wave's own commits. Nothing in it authorises a push, a workflow dispatch, a deploy or
 any other outward act; each of those needs the maintainer's express consent naming the action,
 the destination and the account.
+
+## Addendum — 2026-10-20 (wave 40, `U108`): §6 deviation 1's "two lines" would not have made §2 R4 true in full; `U108` numbers every entry and carries the position through `rpc_endpoints_value`
+
+§6's deviation 1 records that the subset path names the key and not the entry's position, and
+that the lane proposed *"two lines in `parse_value`'s array branch, that would make §2 R4's
+sentence true in full"* (`:476-477`). The register carries that row as `U108` (`TODO.md:1103`).
+**As measured at `6e1cab3`, the two lines would not have made it true in full.** §2 R4 names
+four keys — `tsa_urls`, `ots_calendars`, `bitcoin_endpoints`, `rpc_endpoints` (`:265-267`) —
+and numbering inside `parse_value` reaches only those whose refusal carries `parse_value`'s
+reason through `apply()`'s `value` closure (`crates/antseal-cli/src/config.rs:985`): the first
+three, and `bootstrap`. `rpc_endpoints_value` (`config.rs:823-831`) maps every failure of
+`parse_value` to its own sentence (`_ => Err(format!(…))`) and discards the reason, so no number
+added inside `parse_value` could reach a user.
+
+Executed by wave 40's planning lane P2 (a copy of the `HEAD` binary, ten cases, the canary
+absent from both streams in all ten): an unquoted **second** entry of `tsa_urls`,
+`ots_calendars`, `bitcoin_endpoints` or `bootstrap` is refused (exit 17) with *"`<key>`: the
+value is not a quoted string, …; it is not repeated here"*, the word `entry` absent; boolean,
+nested-array and escape entries are equally unnumbered; and under `[verify.arbitrum-one]` an
+unquoted second `rpc_endpoints` entry reads *"`rpc_endpoints` under [verify.arbitrum-one] takes
+a one-line array of exactly two quoted endpoint URLs; the value is not repeated here, because an
+RPC URL often carries an API key"*. The shape check's control already says *"`tsa_urls` entry 1
+is not an http:// or https:// URL; …"*, counting from 0 as this record's §6 says.
+
+**`U108` is ruled under §2 R4, without a record of its own:**
+- **Every per-entry failure inside `parse_value`'s array branch is numbered**, from 0, in the
+  house form *"`{key}` entry {N}: …"* — for example *"`tsa_urls` entry 1: the value is not a
+  quoted string, a ["…"] array, or a bare true/false (integers, dates, and inline tables are
+  outside the antseal config subset); it is not repeated here"*. The boolean, nested-array,
+  escape, stray-quote and unterminated-quote reasons take the same prefix.
+- **The position is carried through `rpc_endpoints_value` too:** *"`rpc_endpoints` under
+  [verify.arbitrum-one] takes a one-line array of exactly two quoted endpoint URLs, and entry 1
+  is not one; the value is not repeated here, because an RPC URL often carries an API key"*.
+- **The carrier is the lane's choice**, stated in its report: a small typed
+  `SubsetError { entry: Option<usize>, reason }` reaching `parse_value`'s four call sites, all in
+  `config.rs` (preferred), or a `String` if that is smaller.
+- **An unquoted value that is not an array stays unnumbered:** it has no entry.
+- `docs/config.md:180-182` says that a list entry is named by its position.
+- **Tests and plants:** G108-1, `an_array_entry_outside_the_subset_is_named_by_its_position`
+  (each list key with an unquoted second entry → line 2, the key, *"entry 1"*, no canary; an
+  unquoted first entry → *"entry 0"*; boolean, nested and escape entries at index 1 →
+  *"entry 1"*; `rpc_endpoints` under both networks → *"entry 1"*; a bare unquoted value → no
+  *"entry"*; the case count asserted), and the *"an unquoted entry"* case of
+  `no_url_list_refusal_repeats_its_value` (`tests/config_file.rs:1524-1526`) tightened to require
+  *"entry 0"*. Plants: P108-a drops the number (the Accept's), P108-b counts from 1, and P108-c
+  drops the position from `rpc_endpoints_value`.
+
+How the lean fared: *"number entries in parse_value's array branch and carry `entry N` into the
+subset refusal; XS, no ruling"* fell (b). Its direction survived; *"no ruling"* fell on
+`rpc_endpoints`, which needed one ruling line — the second bullet above, recorded here —
+applying §2 R4 to `rpc_endpoints_value`.
+Lane L-CFG3 lands it in wave 40, with D207. Once it lands, §2 R4's sentence is true for all four
+of its keys. The ruling and §6 above stay as written.

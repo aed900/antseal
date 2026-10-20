@@ -216,3 +216,38 @@ candidate, `--dry-run` runs the fresh dry-run (encrypt and quote, journaling dis
 conditional notice — a real run discards the old work and seals afresh — and abandons nothing.
 The resume plan is printed only for a candidate that can be resumed. §2 and §5 above stay as
 written.
+
+## Addendum — 2026-10-20 (D203 §2 R1–R2): §2's candidate set is classified by the effective state
+
+§2's candidate set — *"works in state `incomplete` (any barrier), **excluding** `abandoned` and
+`complete`"* — was classified by the coarse mirror (`gather_candidates`,
+`crates/antseal-cli/src/seal_resume.rs:217-220` at `6e1cab3`). The journal writes the fine tag
+first and the mirror second, so a kill between the two writes left a work tagged `abandoned` or
+`complete` inside the set. Its exact re-run matched it and exited 2 (`NotResumable`), an
+overlapping run exited 25 and a flag variant 26, each naming a command that exits 2: those files
+could no longer be sealed in that vault (D203 §1.2).
+
+D203 (`S48`) classifies the set by the **effective state**: the fine tag's coarse value when a
+tag exists, the mirror only when it is absent. In every normal state the two agree; after a kill
+between the writes, the tag decides.
+- A work tagged `abandoned` leaves the set, so its exact re-run seals fresh, under a new seal id.
+- A work tagged `complete` leaves the set, so its exact re-run seals the files afresh, as a new
+  work, after the consent screen shows its cost. That is §2's rule for every complete work, and
+  D203 records it as its residual.
+
+The uniqueness argument and the matching table are unchanged. §2 above stays as written.
+
+## Addendum — 2026-10-20 (D203 §2 M4, as amended): §5's dry run reads the matched work's receipt
+
+§5 says that `--dry-run` on an invocation that exact-matches a resumable work *"prints the resume
+plan and exits with zero side effects"*. Since D203 M4 the plan's money lines come from the
+matched work's journaled receipt, so the dry run now makes one vault read before it returns the
+plan: `recorded_receipt` of the matched work, and only for a `Resume` decision
+(`crates/antseal-cli/src/seal_run.rs:381-386`). It still makes no backend call — no balance read,
+no quote and no `pay` — and no vault write (`seal_run.rs:402-404`), so "zero side effects" still
+holds. An undecodable receipt there now fails the rehearsal in `vault-auth-failure` (exit 12),
+with the class, code and Display that the real resume gives at its own read of the receipt
+(D203 §6). A real run over the same work fails at that read one step earlier, before the balance
+read, in the same class.
+
+§5 above stays as written.

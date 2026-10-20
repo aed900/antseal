@@ -25,8 +25,8 @@
 //! # endpoints are antseal-net's pinned constants and are deliberately NOT
 //! # configurable here — duplicating contract addresses in a hand-edited
 //! # file is exactly the drift the S5 byte-equality test exists to
-//! # prevent. `rpc_url` under any [networks.<id>] is REFUSED at load
-//! # (exit 17; U94, D180): the payer dials the pinned public endpoint for
+//! # prevent. `rpc_url` is REFUSED at load in every table (exit 17; U94,
+//! # D180, D207): the payer dials the pinned public endpoint for
 //! # arbitrum-one and arbitrum-sepolia, and the RPC_URL of the export
 //! # ANTSEAL_DEVNET_ENV names for devnet — nothing reads an override.
 //! [networks.arbitrum-one]
@@ -111,9 +111,9 @@
 //! first, so an unknown network keeps its *not a known network* answer, and
 //! these keep their own words: `bootstrap` under `[networks.arbitrum-sepolia]`
 //! or `[networks.devnet]` (D173 §2 R4) names `ANTSEAL_DEVNET_ENV`, those
-//! networks' only peer source; `rpc_url` under any `[networks.<id>]` (U94,
-//! D180) is a retired slot that no build ever read — accepting it would tell a
-//! user the payer dials their endpoint when it dials the pinned one; the
+//! networks' only peer source; the retired `rpc_url` (U94, D180), a payment
+//! slot no build ever read, is refused in every table, and outside
+//! `[networks.<id>]` its words name the receipt check's pair too (D207); the
 //! retired `arbitrum_endpoints` (U44, D188 R5) is refused in every table, its
 //! pair having moved to `[verify.<network>] rpc_endpoints`; and
 //! `[verify.devnet]` is refused whatever it holds: devnet has no RPC pair to
@@ -123,9 +123,9 @@
 //!
 //! No refusal of a URL-list key — `tsa_urls`, `ots_calendars`,
 //! `bitcoin_endpoints`, `rpc_endpoints` — repeats a value (U99, D195 R4): it
-//! names the key, the line and the entry's position, because a URL can carry
-//! a credential in its userinfo, its query or a path segment. The subset's
-//! own refusals repeat no value for any key.
+//! names the key, the line and the entry's position (the subset's too, U108),
+//! because a URL can carry a credential in its userinfo, its query or a path
+//! segment. The subset's own refusals repeat no value for any key.
 //!
 //! # The TOML subset, documented (and why it is hand-parsed)
 //!
@@ -478,6 +478,46 @@ enum Value {
     Bool(bool),
 }
 
+/// A value the subset refuses: what is wrong and, inside a one-line array,
+/// which entry (U108, D195 §2 R4). The key is not known here, so the caller
+/// names it in front ([`SubsetError::for_key`]); nothing here holds the value,
+/// which can carry a credential (U99, D195 R4).
+struct SubsetError {
+    /// The refused entry's position, counted from 0 like every other entry
+    /// refusal's — or `None` when the refusal is about the whole value: an
+    /// unquoted bare value is not a list and has no entry to name.
+    entry: Option<usize>,
+    /// What is wrong, in words that never repeat the value.
+    reason: String,
+}
+
+impl SubsetError {
+    /// A refusal of the whole value.
+    fn whole(reason: impl Into<String>) -> Self {
+        Self {
+            entry: None,
+            reason: reason.into(),
+        }
+    }
+
+    /// A refusal of the array entry at `index`.
+    fn at_entry(index: usize, reason: impl Into<String>) -> Self {
+        Self {
+            entry: Some(index),
+            reason: reason.into(),
+        }
+    }
+
+    /// The refusal in the house form, after the name of the key it belongs to:
+    /// "`{key}` entry {N}: …" for an entry, "`{key}`: …" for a whole value.
+    fn for_key(&self, key: &str) -> String {
+        match self.entry {
+            Some(index) => format!("`{key}` entry {index}: {}", self.reason),
+            None => format!("`{key}`: {}", self.reason),
+        }
+    }
+}
+
 fn strip_comment(line: &str) -> &str {
     // A `#` inside a quoted string must survive; scan with quote state.
     let mut in_quote: Option<char> = None;
@@ -499,7 +539,7 @@ fn is_bare_key(key: &str) -> bool {
             .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_'))
 }
 
-fn parse_value(raw: &str) -> Result<Value, String> {
+fn parse_value(raw: &str) -> Result<Value, SubsetError> {
     // D189 R1: exactly TOML's two spellings, bare and lowercase. `True`,
     // `"false"` and `off` are not booleans here; a key that wants one says so
     // in its own words.
@@ -513,33 +553,47 @@ fn parse_value(raw: &str) -> Result<Value, String> {
             .strip_prefix('[')
             .and_then(|r| r.strip_suffix(']'))
             .ok_or_else(|| {
-                "array value must open and close on one line in this config".to_owned()
+                SubsetError::whole("array value must open and close on one line in this config")
             })?;
         let mut items = Vec::new();
         let trimmed = inner.trim();
         if !trimmed.is_empty() {
-            for part in split_array_items(trimmed)? {
-                match parse_value(part.trim())? {
+            // U108 (D195 §2 R4): every refusal here is about ONE entry, so it
+            // names that entry's position. A refusal from inside a nested
+            // array takes the outer position: that is the entry a user can
+            // count to on the line.
+            for (index, part) in split_array_items(trimmed)?.into_iter().enumerate() {
+                let entry = parse_value(part.trim())
+                    .map_err(|refusal| SubsetError::at_entry(index, refusal.reason))?;
+                match entry {
                     Value::Str(s) => items.push(s),
                     Value::Array(_) => {
-                        return Err("nested arrays are outside the config subset".to_owned());
+                        return Err(SubsetError::at_entry(
+                            index,
+                            "nested arrays are outside the config subset",
+                        ));
                     }
                     Value::Bool(_) => {
-                        return Err("array entries must be quoted strings: a boolean inside \
-                                    an array is outside the config subset"
-                            .to_owned());
+                        return Err(SubsetError::at_entry(
+                            index,
+                            "array entries must be quoted strings: a boolean inside an array \
+                             is outside the config subset",
+                        ));
                     }
                 }
             }
         }
         return Ok(Value::Array(items));
     }
-    parse_string(raw).map(Value::Str)
+    parse_string(raw)
+        .map(Value::Str)
+        .map_err(SubsetError::whole)
 }
 
 /// Split a single-line array body on top-level commas (commas inside
-/// quotes survive).
-fn split_array_items(inner: &str) -> Result<Vec<&str>, String> {
+/// quotes survive). A quote still open at the end is refused as part of the
+/// entry it opened in, by that entry's position (U108).
+fn split_array_items(inner: &str) -> Result<Vec<&str>, SubsetError> {
     let mut items = Vec::new();
     let mut start = 0usize;
     let mut in_quote: Option<char> = None;
@@ -555,7 +609,12 @@ fn split_array_items(inner: &str) -> Result<Vec<&str>, String> {
         }
     }
     if in_quote.is_some() {
-        return Err("unterminated string inside array".to_owned());
+        // Every comma after the quote opened was inside it, so the quote
+        // opened in the entry after the last split: entry `items.len()`.
+        return Err(SubsetError::at_entry(
+            items.len(),
+            "unterminated string inside array",
+        ));
     }
     let tail = &inner[start..];
     if !tail.trim().is_empty() {
@@ -584,7 +643,7 @@ fn parse_string(raw: &str) -> Result<String, String> {
     // U99 (D195 R4): the one subset message that met its input never repeats
     // it, for every key — a URL-list entry written without quotes can carry a
     // credential, and nothing here knows which key the value belongs to.
-    // `apply` names the key in front of it.
+    // `apply` names the key in front of it, `parse_value` the entry (U108).
     Err(
         "the value is not a quoted string, a [\"…\"] array, or a bare true/false \
          (integers, dates, and inline tables are outside the antseal config subset); \
@@ -738,20 +797,28 @@ enum Home {
     /// Nowhere: the flat `arbitrum_endpoints`, retired into
     /// `[verify.<network>] rpc_endpoints` and refused in every table (D188 R5).
     RetiredIntoRpcEndpoints,
+    /// Nowhere: `rpc_url`, the payment-RPC override slot no build ever read
+    /// (U94, D180), refused in every table (D207). Under `[networks.<id>]`
+    /// `parse` refuses it first, in D180's words; every other table reaches
+    /// this row, whose words name the receipt check's pair as well.
+    RetiredPaymentRpc,
 }
 
-/// Every key this build reads, with its one home (U100, D196 R1) — the
-/// table `apply`'s three fall-through arms consult before they warn, so a
-/// KNOWN key written in a foreign table is refused by name instead of being
-/// warned on as if it were unknown. A key added to `apply` must be added
-/// here too, or a misplaced copy of it only warns.
+/// Every key this build knows: each key it reads, with its one home (U100,
+/// D196 R1), and the two retired keys, refused in every table (D188 R5,
+/// D207). It is the table `apply`'s three fall-through arms consult before
+/// they warn, so a KNOWN key written in a foreign table is refused by name
+/// instead of being warned on as if it were unknown. A key added to `apply`
+/// must be added here too, or a misplaced copy of it only warns.
 ///
 /// Why refuse rather than warn (D188 R5's ground, extended to every key): a
 /// warned override quietly uses the very defaults it was written to replace —
 /// measured, all seven keys and the retired one misplaced silently, and a
 /// `default_network` written after an `[anchors]` header made the invocation
 /// arbitrum-one. Unknown keys still warn (D189 R3's forward-compatibility
-/// promise), and `rpc_url` keeps its own refusal in `[networks.*]` only (D180).
+/// promise). `rpc_url` is refused in every table (D207): `parse` refuses it
+/// under any `[networks.<id>]` first, in D180's words, and every other table
+/// reaches its row here.
 const KEY_HOMES: &[(&str, Home)] = &[
     ("default_network", Home::TopLevel),
     ("bootstrap", Home::NetworksArbitrumOne),
@@ -761,6 +828,7 @@ const KEY_HOMES: &[(&str, Home)] = &[
     ("bitcoin_endpoints", Home::Verify),
     ("rpc_endpoints", Home::VerifyNetwork),
     ("arbitrum_endpoints", Home::RetiredIntoRpcEndpoints),
+    ("rpc_url", Home::RetiredPaymentRpc),
 ];
 
 /// The refusal for a key [`KEY_HOMES`] knows, found in `section`, which is not
@@ -796,6 +864,26 @@ fn misplaced_key_refusal(key: &str, section: &[String]) -> Option<String> {
                  because an RPC URL often carries an API key"
             ));
         }
+        Home::RetiredPaymentRpc => {
+            // D207 R1: two facts, because `rpc_endpoints` does not replace this
+            // slot — antseal reads no payment-RPC override at all, and the only
+            // RPC setting this file carries, the receipt check's, takes two
+            // URLs. Under a per-network table that pair belongs in this table.
+            let pair = match section {
+                [family, _] if family == "verify" => {
+                    "the receipt check takes a pair — write `rpc_endpoints` with two endpoint \
+                     URLs in this table instead"
+                }
+                _ => {
+                    "the receipt check's pair is `rpc_endpoints` under [verify.arbitrum-one] or \
+                     [verify.arbitrum-sepolia]"
+                }
+            };
+            return Some(format!(
+                "`{key}` {found} is retired: antseal reads no payment-RPC override, and {pair}. \
+                 Its value is not repeated here, because an RPC URL often carries an API key"
+            ));
+        }
     };
     Some(format!(
         "`{key}` is not read {found}: it belongs {belongs} — move the line there. Its value \
@@ -817,17 +905,23 @@ const URL_VALUE_NOT_REPEATED: &str =
 
 /// The `rpc_endpoints` value as a list, parsed **without ever repeating it**
 /// (D188 R5): every failure here is one sentence naming the table and the
-/// accepted shape. Written while the subset's own refusals still quoted what
-/// they rejected (U99 made them value-free, D195 R4), and kept because it
-/// says more than the subset's generic sentence.
+/// accepted shape — and, when the subset refused one entry, that entry's
+/// position (U108, D195 §2 R4), so this key's refusals name the position too.
+/// Written while the subset's own refusals still quoted what they rejected
+/// (U99 made them value-free, D195 R4), and kept because it says more than the
+/// subset's generic sentence.
 fn rpc_endpoints_value(raw: &str, network: NetworkId) -> Result<Vec<String>, String> {
-    match parse_value(raw) {
-        Ok(Value::Array(items)) => Ok(items),
-        _ => Err(format!(
-            "`rpc_endpoints` under [verify.{network}] takes a one-line array of exactly two \
-             quoted endpoint URLs; {RPC_VALUE_NOT_REPEATED}"
-        )),
-    }
+    let entry = match parse_value(raw) {
+        Ok(Value::Array(items)) => return Ok(items),
+        Err(SubsetError {
+            entry: Some(index), ..
+        }) => format!(", and entry {index} is not one"),
+        Ok(Value::Str(_) | Value::Bool(_)) | Err(SubsetError { entry: None, .. }) => String::new(),
+    };
+    Err(format!(
+        "`rpc_endpoints` under [verify.{network}] takes a one-line array of exactly two \
+         quoted endpoint URLs{entry}; {RPC_VALUE_NOT_REPEATED}"
+    ))
 }
 
 /// `[verify.<network>] rpc_endpoints`' one validator (U44, D188 R4, R5) — the
@@ -981,8 +1075,8 @@ fn apply(
     };
     // The subset parse, for every key that takes an ordinary value. Its
     // refusals never repeat the value (U99, D195 R4), so the key they belong
-    // to is named in front of them.
-    let value = |what: &str| parse_value(raw).map_err(|reason| err(format!("`{what}`: {reason}")));
+    // to is named in front of them, with a list entry's position (U108).
+    let value = |what: &str| parse_value(raw).map_err(|refusal| err(refusal.for_key(what)));
     let expect_str = |value: Value, what: &str| match value {
         Value::Str(s) => Ok(s),
         Value::Array(_) => Err(err(format!("`{what}` takes a string, not an array"))),
@@ -1197,8 +1291,8 @@ fn apply(
         }
         (["verify", network_name], other) => {
             // The table family is recognized: its network is judged even for
-            // a key this build does not know, then a key this build reads
-            // elsewhere is refused (U100, D196 R1) and any other is warned on.
+            // a key this build does not know, then a key read elsewhere or
+            // retired is refused (U100, D196 R1; D207) and any other warned on.
             verify_table_network(network_name).map_err(err)?;
             if let Some(refusal) = misplaced_key_refusal(other, section) {
                 return Err(err(refusal));

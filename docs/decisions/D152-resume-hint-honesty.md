@@ -885,3 +885,32 @@ The orchestrator executes §5(c)'s edit onto `U41`'s row in the act that ticks
 it. This record's finding that a blocked work had no exit at all (§5(a):
 *"There is no `abandon` subcommand"*) was true when written and stays as
 written.
+
+## Addendum — 2026-10-20 (D203 §2 M1–M2): R5's money clause follows the receipt
+
+R5 keys the blocked copy's money clause on `ResumeClock`'s two-way split — `ReQuote`:
+*"nothing was paid, so only the local staged copy is lost."*; `TimeBoxed`: *"this seal is paid
+for and the payment cannot be recovered."* — and `list` took the clock from the coarse state,
+never from the receipt. D203's planning lane executed two ways the clock goes wrong (D203
+§1.4), on `list`'s clock note; the blocked copy inherits both, because it takes the same clock:
+- a stranded payment (exit 28, or 37 with a durable capture) leaves the work tagged pre-pay over
+  a receipt that maps paid quotes, so the clause would say *"nothing was paid"* for a work with
+  money on the network;
+- after an exit 37 whose capture did not become durable, the vault holds no record that money
+  moved, and none that it did not, so *"nothing was paid"* is a claim it cannot back.
+
+D203 (`U109`) rules the clock by the receipt: `time-boxed` when the vault holds a receipt that
+maps at least one quote to a transaction, `re-quote` otherwise. The blocked copy's money clause
+follows the same predicate and D203's wording rule — where no such receipt is held, the copy
+says that no payment is recorded, never that nothing was paid (D203 §2 M1, M2). The golden
+`list-blocked-work.txt` is regenerated deliberately (D203 §2 M7). The rest of R5's copy and
+D185's way-forward sentences in both branches are unchanged, and the implementing lane keeps
+every clause true. R5 above stays as written.
+
+D203 M8 (`U113`, one of D203 §2's rules added during implementation) gives `blocked_lines` a
+third money clause, for a blocked work whose journaled receipt opens but will not decode: *"its
+payment receipt cannot be read ({detail}), so antseal cannot tell whether a payment for this seal
+is recorded, and `antseal abandon` fails until it can."* It claims no payment either way. Its way
+forward is only the one that does not read the receipt — move or copy the file(s) to a different
+path and seal them there with either flag dropped — because `antseal abandon` reads the receipt.
+*(Corrected in place before first commit; see D203 §6.)*

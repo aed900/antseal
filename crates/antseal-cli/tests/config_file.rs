@@ -1523,7 +1523,7 @@ fn no_url_list_refusal_repeats_its_value() {
         (
             "an unquoted entry",
             format!("[https://user:{c}@host.example/x, {ok}]"),
-            "not a quoted string",
+            "entry 0: the value is not a quoted string",
         ),
         (
             "an unquoted value",
@@ -2064,4 +2064,364 @@ fn every_full_schema_key_is_refused_outside_its_home() {
         let refused = parse(&format!("[future]\n{key} = 1\n")).is_err();
         assert!(refused, "`{key}` only warns outside its home");
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U108 (D195 §2 R4) — a list entry outside the subset is named by position
+// ─────────────────────────────────────────────────────────────────────
+
+/// **U108 (D195 §2 R4).** A list entry the subset refuses — written without
+/// quotes, a boolean, a nested array, an escape sequence, a stray or an
+/// unterminated quote — is named by its position, counted from 0, in the house
+/// form "`{key}` entry {N}: …", for every list key the subset parses; and
+/// `rpc_endpoints`, whose refusal is a sentence of its own, carries the
+/// position into it. Never the value: the unquoted entry carries the canary in
+/// its userinfo. An unquoted bare value is not a list and has no entry to
+/// name, so its refusal stays unnumbered. Every case is judged and every
+/// failure kept, so the report shows which keys and positions broke.
+#[test]
+fn an_array_entry_outside_the_subset_is_named_by_its_position() {
+    let c = URL_CANARY;
+    let hostile = format!("https://user:{c}@host.example/x");
+    let ok = "\"https://ok.example/\"";
+    let subset = "the value is not a quoted string";
+    // (label, config text, what the refusal must contain, numbered?)
+    let mut cases: Vec<(String, String, String, bool)> = Vec::new();
+    for (table, key, valid) in [
+        ("anchors", "tsa_urls", ok),
+        ("anchors", "ots_calendars", ok),
+        ("verify", "bitcoin_endpoints", ok),
+        ("networks.arbitrum-one", "bootstrap", "\"192.0.2.10:10000\""),
+    ] {
+        for (shape, value, needle, numbered) in [
+            (
+                "an unquoted second entry",
+                format!("[{valid}, {hostile}]"),
+                format!("`{key}` entry 1: {subset}"),
+                true,
+            ),
+            (
+                "an unquoted first entry",
+                format!("[{hostile}, {valid}]"),
+                format!("`{key}` entry 0: {subset}"),
+                true,
+            ),
+            (
+                "an unquoted bare value",
+                hostile.clone(),
+                format!("`{key}`: {subset}"),
+                false,
+            ),
+        ] {
+            cases.push((
+                format!("`{key}`, {shape}"),
+                format!("[{table}]\n{key} = {value}\n"),
+                needle,
+                numbered,
+            ));
+        }
+    }
+    // Every other per-entry reason, at the second position.
+    for (shape, entry, reason) in [
+        (
+            "a boolean",
+            "true".to_owned(),
+            "array entries must be quoted strings: a boolean inside an array",
+        ),
+        (
+            "a nested array",
+            "[\"https://b.example/\"]".to_owned(),
+            "nested arrays are outside the config subset",
+        ),
+        (
+            "an escape sequence",
+            format!("\"https://b.example/{c}\\t\""),
+            "escape sequences are outside the antseal config subset",
+        ),
+        (
+            "a stray quote",
+            format!("\"https://b.example/{c}\" \"x\""),
+            "stray \" inside a \"-quoted string",
+        ),
+        (
+            "a closing quote followed by text",
+            format!("\"https://b.example/{c}\" x"),
+            "unterminated \"-quoted string",
+        ),
+        (
+            "a quote that never closes",
+            format!("\"https://b.example/{c}"),
+            "unterminated string inside array",
+        ),
+    ] {
+        cases.push((
+            format!("`tsa_urls`, {shape} as the second entry"),
+            format!("[anchors]\ntsa_urls = [{ok}, {entry}]\n"),
+            format!("`tsa_urls` entry 1: {reason}"),
+            true,
+        ));
+    }
+    // `rpc_endpoints`' own sentence, under both networks.
+    let pair = "takes a one-line array of exactly two quoted endpoint URLs";
+    for network in ["arbitrum-one", "arbitrum-sepolia"] {
+        let sentence = format!("`rpc_endpoints` under [verify.{network}] {pair}");
+        for (shape, value, tail, numbered) in [
+            (
+                "an unquoted second entry",
+                format!("[\"https://a.example/\", {hostile}]"),
+                ", and entry 1 is not one;",
+                true,
+            ),
+            (
+                "an unquoted first entry",
+                format!("[{hostile}, \"https://b.example/\"]"),
+                ", and entry 0 is not one;",
+                true,
+            ),
+            (
+                "a boolean as the second entry",
+                "[\"https://a.example/\", true]".to_owned(),
+                ", and entry 1 is not one;",
+                true,
+            ),
+            ("an unquoted bare value", hostile.clone(), ";", false),
+        ] {
+            cases.push((
+                format!("`rpc_endpoints` under [verify.{network}], {shape}"),
+                format!("[verify.{network}]\nrpc_endpoints = {value}\n"),
+                format!("{sentence}{tail}"),
+                numbered,
+            ));
+        }
+    }
+    assert_eq!(
+        cases.len(),
+        4 * 3 + 6 + 2 * 4,
+        "four list keys in three shapes, six more reasons, and rpc_endpoints in four \
+         shapes under two networks"
+    );
+
+    let mut failures = Vec::new();
+    for (label, text, needle, numbered) in &cases {
+        let failure = match parse(text) {
+            Ok(_) => Some(format!("{label}: must be refused")),
+            Err(err) if err.line != 2 => Some(format!("{label}: the key's line is 2: {err:?}")),
+            // First, so a restored echo fails on the echo and not on wording.
+            Err(err) if err.detail.contains(c) || err.detail.contains("example") => Some(format!(
+                "{label}: the refusal must not carry the value: {}",
+                err.detail
+            )),
+            Err(err) if !err.detail.contains(needle.as_str()) => {
+                Some(format!("{label}: expected {needle:?} in {:?}", err.detail))
+            }
+            Err(err) if !numbered && err.detail.contains("entry") => Some(format!(
+                "{label}: a bare value has no entry to name: {:?}",
+                err.detail
+            )),
+            Err(_) => None,
+        };
+        failures.extend(failure);
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} cases failed:\n{}",
+        failures.len(),
+        cases.len(),
+        failures.join("\n")
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U107 (D207) — the retired `rpc_url` is refused in every table
+// ─────────────────────────────────────────────────────────────────────
+
+/// **U107 (D207 R1, R4).** `rpc_url` is refused in every table, not only under
+/// a `[networks.<id>]` one (D180): a malformed config on the key's line that
+/// names the key and the table it was found in, says antseal reads no
+/// payment-RPC override, and names the one RPC setting it does read — the
+/// receipt check's `rpc_endpoints` pair, "in this table" under a
+/// `[verify.<network>]` table. The value is an inline table holding the
+/// canary: it is outside the subset, so a refusal that waited for the value
+/// would fail on the value instead, and one that repeated it would carry the
+/// canary. The controls: `[networks.<id>]` keeps D180's own words, and an
+/// unknown key in each of the seven tables still only warns (D189 R3).
+#[test]
+fn rpc_url_is_refused_in_every_table() {
+    let c = RPC_URL_CANARY;
+    let value = format!("{{ url = \"https://rpc.example/v2/{c}\" }}");
+    let tables = [
+        None,
+        Some("anchors"),
+        Some("verify"),
+        Some("verify.arbitrum-one"),
+        Some("verify.arbitrum-sepolia"),
+        Some("future"),
+        Some("networks"),
+    ];
+    assert_eq!(
+        tables.len(),
+        7,
+        "every kind of table but a [networks.<id>] one"
+    );
+
+    let mut failures = Vec::new();
+    for table in tables {
+        let (text, line, found) = match table {
+            None => (
+                format!("# retired\nrpc_url = {value}\n"),
+                2,
+                "at the top level".to_owned(),
+            ),
+            Some(table) => (
+                format!("# retired\n[{table}]\nrpc_url = {value}\n"),
+                3,
+                format!("under [{table}]"),
+            ),
+        };
+        // Under a per-network table the user is one key name away from the
+        // receipt pair's line; anywhere else the text names both tables.
+        let pair = if table.is_some_and(|t| t.starts_with("verify.")) {
+            "the receipt check takes a pair — write `rpc_endpoints` with two endpoint URLs \
+             in this table instead"
+        } else {
+            "the receipt check's pair is `rpc_endpoints` under [verify.arbitrum-one] or \
+             [verify.arbitrum-sepolia]"
+        };
+        let named = format!("`rpc_url` {found} is retired");
+        let failure = match parse(&text) {
+            Ok(config) => Some(format!(
+                "`rpc_url` {found} must be refused, not warned on: {:?}",
+                config.warnings
+            )),
+            Err(err) if err.line != line => Some(format!(
+                "`rpc_url` {found}: the key's line is {line}: {err:?}"
+            )),
+            Err(err) if err.detail.contains(c) => Some(format!(
+                "`rpc_url` {found}: the refusal must not carry the value: {}",
+                err.detail
+            )),
+            Err(err)
+                if !(err.detail.contains(&named)
+                    && err.detail.contains("antseal reads no payment-RPC override")
+                    && err.detail.contains(pair)) =>
+            {
+                Some(format!(
+                    "`rpc_url` {found}: expected the key, the table, \"no payment-RPC \
+                     override\" and {pair:?} in {}",
+                    err.detail
+                ))
+            }
+            Err(_) => None,
+        };
+        failures.extend(failure);
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} tables failed:\n{}",
+        failures.len(),
+        tables.len(),
+        failures.join("\n")
+    );
+
+    // Control 1: under `[networks.<id>]` `parse` refuses the key first, in
+    // D180's own words, whatever the value.
+    for network in ["arbitrum-one", "arbitrum-sepolia", "devnet"] {
+        let err = parse(&format!("[networks.{network}]\nrpc_url = {value}\n")).expect_err(network);
+        assert!(
+            err.detail.contains(&format!(
+                "`rpc_url` under [networks.{network}] is refused: antseal reads no \
+                 payment-RPC override"
+            )) && !err.detail.contains("is retired")
+                && !err.detail.contains(c),
+            "[networks.{network}] keeps D180's text: {}",
+            err.detail
+        );
+    }
+
+    // Control 2: a key this build does not know only warns, in each table.
+    let unknown: String = tables
+        .iter()
+        .map(|table| match table {
+            None => "future_knob = 1\n".to_owned(),
+            Some(table) => format!("[{table}]\nfuture_knob = 1\n"),
+        })
+        .collect();
+    let config = parse(&unknown).expect("an unknown key only warns, in any table");
+    assert_eq!(config.warnings.len(), 7, "{:#?}", config.warnings);
+}
+
+/// **U107 Accept, through the binary (D207 R4).** `rpc_url` under
+/// `[verify.arbitrum-one]` and at the top level is the malformed-config code
+/// (17) with its envelope before any command runs (on `verify`, whose own
+/// code for a missing bundle would be 4), naming the key, the table and the
+/// line, with the value on neither stream. The control is an unknown key on
+/// the same line, which only warns, so the handler's own code follows.
+#[test]
+fn an_rpc_url_key_in_any_table_is_exit_17_before_any_command_runs() {
+    let dir = TestDir::new("rpc-url-any-table-wiring");
+    let layout = layout_with_config(&dir, None);
+    let root = layout.root().to_path_buf();
+    let config = layout.beside_path(BesideFile::Config);
+    let c = RPC_URL_CANARY;
+    let cases = [
+        (
+            "[verify.arbitrum-one]\n",
+            "under [verify.arbitrum-one]",
+            "config.toml:2",
+        ),
+        ("", "at the top level", "config.toml:1"),
+    ];
+    assert_eq!(cases.len(), 2);
+    for (header, found, line) in cases {
+        std::fs::write(
+            &config,
+            format!("{header}rpc_url = \"https://rpc.example/v2/{c}\"\n"),
+        )
+        .expect("write config");
+        let out = spawn(&root, &["--json", "verify", "missing.sealproof"]);
+        assert_eq!(
+            out.status.code(),
+            Some(17),
+            "{found}: malformed-config code; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n'))
+                .expect("one JSON document");
+        assert_eq!(doc["error"]["class"], serde_json::json!("malformed-config"));
+        let message = doc["error"]["message"].as_str().expect("a message");
+        assert!(
+            message.contains(&format!("`rpc_url` {found} is retired"))
+                && message.contains("no payment-RPC override")
+                && message.contains(line),
+            "{found}: names the key, the table and the line: {message}"
+        );
+        for (stream, bytes) in [("stdout", &out.stdout), ("stderr", &out.stderr)] {
+            let text = String::from_utf8_lossy(bytes);
+            assert!(
+                !text.contains(c),
+                "{found}: {stream} must not carry the value: {text}"
+            );
+        }
+    }
+
+    // The control: an unknown key on the same line only warns, and the
+    // handler's own code follows.
+    std::fs::write(
+        &config,
+        format!("[verify.arbitrum-one]\nfuture_knob = \"https://rpc.example/v2/{c}\"\n"),
+    )
+    .expect("write config");
+    let out = spawn(&root, &["--json", "verify", "missing.sealproof"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "an unknown key only warns; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("unknown key `future_knob` under [verify.arbitrum-one]")
+            && !stderr.contains(c),
+        "{stderr}"
+    );
 }

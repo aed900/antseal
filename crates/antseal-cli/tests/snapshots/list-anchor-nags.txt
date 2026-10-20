@@ -16,11 +16,11 @@ b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4  complete
   run antseal status b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4 --upgrade
 (no work id yet; seal e1151515151515151515151515151515)  incomplete
   anchored, killed before finalize   2027-01-01 00:03:20 UTC   arbitrum-one
-  cost: 11 atto-ANT
+  cost: none (no payment recorded)
   ANCHORS PENDING: 3 calendar attestation(s) not yet confirmed by Bitcoin, and nothing else here proves a time independently
   no work id yet — finish this seal first, then run antseal status <id> --upgrade
   state: anchored
-  nothing was paid; the recorded quote is stale by design — resuming re-quotes at current prices and asks for consent again
+  no payment is recorded for it; the recorded quote is stale by design — resuming re-quotes at current prices and asks for consent again
   resume with: antseal seal work.txt --title 'anchored, killed before finalize'
 b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6  complete
   artifacts, journaled manifest gone   2027-01-01 00:01:40 UTC   arbitrum-one

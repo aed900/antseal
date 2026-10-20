@@ -966,3 +966,27 @@ D100 R6, U23. R6 specifies the human rendering; the machine document's shape for
 a damaged slot in `status` (as opposed to `list`) is not specified here and must
 match R3's four keys, or the two commands will spell one fact two ways — A103's
 defect at the document level.
+
+## Addendum — 2026-10-20 (D203 M8, `U113`): `list` draws R5's line through payment receipts too
+
+Wave 40 made `list` read a work's payment receipt (D203 §2 M2, M3), for an unfinished row's clock
+and for the cost line of a row with no recorded cost. One undecodable receipt then failed the
+whole listing with `VaultAuthFailure` — the harm U65 recorded for anchor slots, one record class
+over (`U113`). D203 M8, one of D203 §2's rules added during implementation, applies this record's
+line to that read:
+
+- **R5's line, unchanged.** `WorkListing::gather` reads the receipt the way `StoredAnchors::read`
+  reads a slot (`crates/antseal-cli/src/listing.rs:683-701`). Everything the store raises — I/O,
+  the record size cap, the AEAD — still fails `list`. Only the decoder's refusal of a record that
+  opened becomes a datum on its row: `WorkRow::damaged_receipt`, the decoder's failure class.
+- **R3's row rule.** That row's cost line and money clause say that its receipt cannot be read,
+  and make no payment claim either way. Every other row and the summary render as they would
+  without the damaged record, and the listing succeeds.
+- **Not R3's machine shape.** No `--json` key is added before `U32`: the datum is never
+  serialized, and `counts` is unchanged. D203 M8's JSON ruling instead keeps such an unfinished
+  row on `clock: "time-boxed"`, because a receipt exists only once a payment began, and puts the
+  sentence that says the receipt cannot be read in its `note`.
+- **`list` only.** `status`, `abandon`, the resume and `seal --dry-run` over the work still refuse
+  an undecodable receipt, in `vault-auth-failure` (exit 12; D203 §6).
+
+R3 and R5 above stay as written.

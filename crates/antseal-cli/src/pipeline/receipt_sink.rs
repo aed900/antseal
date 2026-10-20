@@ -95,7 +95,7 @@ pub(super) fn encode_receipt(receipt: &PaymentReceipt) -> Result<Vec<u8>, Journa
 /// envelope version. Adversarial input reaches this only through a vault
 /// record that already passed its AEAD, but it is parsed defensively
 /// regardless.
-pub(super) fn decode_receipt(bytes: &[u8]) -> Result<PaymentReceipt, JournalError> {
+pub(crate) fn decode_receipt(bytes: &[u8]) -> Result<PaymentReceipt, JournalError> {
     let envelope: JournalReceipt = serde_json::from_slice(bytes)
         .map_err(|_| super::journal::corrupt("journaled receipt is malformed"))?;
     envelope
@@ -111,7 +111,7 @@ pub(super) fn decode_receipt(bytes: &[u8]) -> Result<PaymentReceipt, JournalErro
 /// read-only command needs the record, not a `SealJournal`, and minting one
 /// would arm a receipt sink nobody writes through on a path that never pays.
 ///
-/// `None` means *not paid yet* — the same state
+/// `None` means *no payment is recorded* (D203 M1) — the same state
 /// [`SealJournal::receipt`](super::journal::SealJournal::receipt) reports,
 /// and never an error.
 ///

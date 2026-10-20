@@ -572,12 +572,12 @@ to get wrong:
 
 - the wallet secret is **not derived from `W`** and is not derived from
   anything. It is a fresh 32-byte CSPRNG key, or a raw hex key the user
-  imported (`crates/antseal-cli/src/init.rs:537-560`);
+  imported (`crates/antseal-cli/src/init.rs:544-567`);
 - the sub-key is a sub-key of the **vault key**, so it protects the wallet
   record against a compromise of *another* record's key, not against the
   passphrase. A thief who breaks the passphrase derives the vault key and
   therefore the sub-key. `wallet_record_opens_only_under_the_sub_key`
-  (`wallet.rs:202-222`) proves the first half by forging a blob under the
+  (`wallet.rs:236-264`) proves the first half by forging a blob under the
   main vault key with the same identity and asserting it fails to open.
 
 **There is no recovery, and there is no rotation. Both were measured, not
@@ -587,7 +587,7 @@ rotation, TSA signing-key rotation as a *verifier's* concern, test-fixture
 bookkeeping, and prose asserting this absence. `re-encrypt|rekey|rewrap` and
 their spellings return test harnesses, verifier prose, and explicit refusals
 (`crates/antseal-core/src/crypto/unit_aead.rs:28`,
-`crates/antseal-cli/src/seal_resume.rs:130`). The frozen CLI surface has ten
+`crates/antseal-cli/src/seal_resume.rs:136`). The frozen CLI surface has ten
 commands and none of them is `rotate`, `passwd` or `change-passphrase`
 (`crates/antseal-cli/tests/snapshots/cli-surface.help.txt:7-16`). The one
 re-encryption that exists is `vault import`, which builds a **new** vault
@@ -596,7 +596,7 @@ it does not touch `W`, and nothing can touch what is already uploaded.
 
 **What the product does about it.** It nags, loudly, on first seal, and the
 nag is the only mitigation available at this layer: `export_nag`
-(`crates/antseal-cli/src/seal_run.rs:110`, computed at `:559`, rendered at
+(`crates/antseal-cli/src/seal_run.rs:110`, computed at `:564`, rendered at
 `:146-148`), whose copy opens *"NO BACKUP YET — this vault has never been
 exported."* (`crates/antseal-cli/src/vault/bookkeeping.rs:285-291`) and
 carries both the loss and the theft warning (`:73`, `:79`).
@@ -676,7 +676,7 @@ the whole product decision: *"single re-encrypted file, no flags (D47)"*.
 (§2.1) carries `LOSS_WARNING` *and* `THEFT_WARNING`
 (`crates/antseal-cli/src/vault/bookkeeping.rs:68`, `:74`), and it is
 recorded as satisfied only after an export has been written *and*
-self-verified (`crates/antseal-cli/src/commands.rs:1095-1099`). The reason to
+self-verified (`crates/antseal-cli/src/commands.rs:1100-1104`). The reason to
 nag on both is that the two mitigations pull in opposite directions: the
 answer to loss is *make more copies*, and the answer to theft is *make
 fewer*. A user told only about theft keeps no backup and loses everything to
@@ -845,7 +845,7 @@ The receipt is **excluded from bundles by default**, and the default is
 wrong (`crates/antseal-cli/src/cli.rs:445-447`; the shipped help snapshot
 `crates/antseal-cli/tests/snapshots/cli-surface.help.txt:286-287` carries the
 same warning to the user). The include branch is a single `if`
-(`crates/antseal-cli/src/pipeline/reveal.rs:653-657`), and at format level
+(`crates/antseal-cli/src/pipeline/reveal.rs:658-662`), and at format level
 *presence is the opt-in*: there is no parse-decidable condition on the
 section, its presence **is** the sealer's choice
 (`crates/antseal-core/src/bundle/schema.rs:730-733`).
@@ -860,7 +860,7 @@ tx hash resolves on any public explorer to the sending address, and from
 there to every other seal that address ever paid for. The code says so where
 a maintainer would otherwise log one — *"no field of this type may appear in
 logs or error messages — receipts are wallet-linkable on a public chain"*
-(`crates/antseal-net/src/receipt.rs:160-161`) — and the reveal consent screen
+(`crates/antseal-net/src/receipt.rs:163-164`) — and the reveal consent screen
 says so to the user before they opt in
 (`crates/antseal-cli/src/reveal_consent.rs:131-135`). Secondary linkage
 inside the payload: which storage nodes were paid (`rewards_address`), which
@@ -896,7 +896,7 @@ fields — the quote-based `proof_of_payment`, the ADR-0004
 `commitment_sidecars`, and **`tx_hashes`**, documented there as *"Transaction
 hashes from the on-chain payment"* — and `finalize_batch` hands the whole
 serialized proof to each storing peer, sequentially, until
-`CLOSE_GROUP_MAJORITY` of them accept (`ant_backend.rs:1838-1907`) — four of
+`CLOSE_GROUP_MAJORITY` of them accept (`ant_backend.rs:1922-1991`) — four of
 the seven quoting peers, since `CLOSE_GROUP_MAJORITY` is `(CLOSE_GROUP_SIZE
 / 2) + 1` over a close group of 7 (`ant-protocol-2.3.0/src/chunk.rs:35,40`).
 The proof rides *in* the PUT request rather than following an acceptance, so
@@ -1005,8 +1005,8 @@ singleton — `RecordIdentity::Wallet` carries no discriminant, where
 `Receipt { seal_id }` does (`crates/antseal-cli/src/vault/cipher.rs:100-118`)
 — so every seal in a vault is paid by the same address. The key itself is a
 fresh CSPRNG secret or an imported raw hex key
-(`crates/antseal-cli/src/init.rs:537-560`), never derived, and the address is
-its EIP-55 rendering (`init.rs:561`).
+(`crates/antseal-cli/src/init.rs:544-567`), never derived, and the address is
+its EIP-55 rendering (`init.rs:568`).
 
 `MVP-SPEC.md` line 185 makes three commitments against this risk. **Two are
 implemented and one is not**, and this document should not imply otherwise:
@@ -1623,7 +1623,7 @@ never a downgrade of the original. Executed by
 
 **Claimed time is the sealer's, and it is subordinate by absence rather than
 by a filter.** The value is injected once, at the one place a clock is
-trusted (`crates/antseal-cli/src/seal_run.rs:700-702`), and lands in the
+trusted (`crates/antseal-cli/src/seal_run.rs:705-707`), and lands in the
 manifest body as informational only (`body.rs:1204-1209`). In the verifier it
 lives in a field named for its status —
 `claimed_time_informational_only` (`crates/antseal-core/src/verify/report.rs:278`)
@@ -2040,10 +2040,10 @@ then: the classifier is wildcard-free and `OnlyPendingOts` is the single
 nagging state (`crates/antseal-anchor/src/ots/engine.rs:672-753`), rendering
 *"ANCHORS PENDING: {n} calendar attestation(s) not yet confirmed by Bitcoin,
 and nothing else here proves a time independently"* plus the exact command to
-run (`crates/antseal-cli/src/listing.rs:871-880`). A genuinely unanchored
+run (`crates/antseal-cli/src/listing.rs:989-998`). A genuinely unanchored
 work is **labelled, never nagged** — the nag exists for a state that will
 resolve itself, not for one that will not
-(`crates/antseal-cli/tests/list_command.rs:875-921`).
+(`crates/antseal-cli/tests/list_command.rs:920-938`).
 
 ### Autonomi is never trusted for time, and evidence never depends on it
 
@@ -2142,7 +2142,7 @@ consent given at the gate.
 SwissSign's ~10/day), configuring a custom list, and what `--force-degraded`
 means for a user are `docs/user/timestamp-authorities.md`'s (Q26): its §2–§4
 and §6. Their operator-side sources are
-`docs/anchors/real-smoke-runbook.md:71-85` and `docs/config.md:83-97,191-199`.
+`docs/anchors/real-smoke-runbook.md:71-85` and `docs/config.md:87-101,196-204`.
 
 ## 2.10 WASM zeroization caveat
 

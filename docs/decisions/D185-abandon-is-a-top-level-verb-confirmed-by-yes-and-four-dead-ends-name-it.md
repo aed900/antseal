@@ -520,3 +520,34 @@ action, the destination and the account.
   blocked-work copy — stand.
 
 The text above this addendum is not edited.
+
+## Addendum — 2026-10-20 (D203 §2 R2–R3, M6): the preview reads the effective state and the recorded payment, and its money words say what the vault records
+
+- **§2 R3's paid-work rule** is *"decided by the journaled receipt, not the tag"*. D203 (`U110`)
+  narrows "the journaled receipt" to a receipt that maps at least one quote to a transaction, in
+  rule 2, in `AbandonPreview::read` and in the resume's own branch (D203 §2 M1, M6). A receipt
+  journaled before `S50` for a first sub-batch that reverted maps nothing, yet at `6e1cab3`
+  abandon refused such a work as *"already been paid for"* and suppressed its preview.
+- **§6's *"A complete, abandoned or paid work gets no preview and no question; the engine
+  answers directly"*** did not hold in one window. `AbandonPreview::read` and rule 1 read the
+  coarse mirror (`crates/antseal-cli/src/seal_resume.rs:652` and `:477` at `6e1cab3`). After a
+  kill between `write_state`'s two writes, a work whose fine tag said `abandoned` over a mirror
+  still pre-pay got a preview whose progress line read *"the journal records `abandoned`"*
+  (code-traced by D203's planning lane), and the engine then wrote nothing and reported
+  `already: false` (executed). Under D203 §2 R2 both read the effective state, so that work gets
+  no preview and the engine reports *"Work {id} was already abandoned; nothing changed."*
+  (D203 §2 R3).
+- **The money words.** D203 §2 M6 maps *"Nothing was paid for it"* → *"No payment is recorded
+  for it"* — the phrase is in §2 R4's question and in the report. The vault can know only that
+  much: after an exit 37 whose capture did not become durable the work is tagged `Anchored` with
+  no receipt, and money may have moved (D203 §1.4, case (a)). In the preview's progress line the
+  mapping *"not paid"* → *"no payment recorded"* is conditional. As built (D203 M6b), the line
+  keeps *"not paid"* exactly where the vault holds no consent record for the work, which proves
+  that no payment could have started, and says *"no payment recorded"* wherever one exists. So
+  the pre-staging arm reads *"not paid"* for every work the pipeline writes (consent follows the
+  plan write), a seal declined at its consent still reads *"staged; not paid"*, and a
+  pipeline-written `Anchored` work reads *"no payment recorded"*. The anchors clause, the default
+  of no and the `--yes` channel are unchanged.
+  *(Corrected in place before first commit; see D203 §6.)*
+
+The text above this addendum is not edited.

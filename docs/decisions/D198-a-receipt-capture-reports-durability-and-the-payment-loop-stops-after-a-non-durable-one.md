@@ -553,3 +553,31 @@ It changes the capture hook's type, what the payment loop does after a capture t
 become durable, and two rustdoc paragraphs, inside the wave's own commits. Nothing in it
 authorises a push, a workflow dispatch, a deploy or any other outward act; each of those needs
 the maintainer's express consent naming the action, the destination and the account.
+
+## Addendum — 2026-10-20 (D204 §2 R1–R3): the stop now lives in `settle_sub_batch`, and §6's `S49` and `S50` are answered
+
+- **Where §2 R2's stop lives.** §2 R2 put the stop in the loop's tail (`ant_backend.rs:807` and
+  `:819` at the time). D204 §2 R1 moves the decision taken after each awaited sub-batch receipt —
+  the revert branch, the finalize result, the capture and this stop — into one pure function,
+  `settle_sub_batch` (the implementing lane names it), which the loop calls after every awaited
+  receipt. The stop moves unchanged: mid-sequence, a capture answered `NotDurable` returns
+  `StrandedPayment` with §2 R2's reason, and after the last sub-batch it stops nothing. G1
+  (`devnet_s46_a_not_durable_capture_stops_the_next_sub_batch`) and G1b stay the devnet witnesses
+  and now also witness that the loop calls the seam. A new in-crate test (D204 §3, G46-u) covers
+  the stop directly, which until now only the devnet did.
+- **§6's `S49` is answered by D204 §2 R2.** A proof failure after a landing now delivers the
+  capture of what exists — the landed sub-batch's quote→tx map, its tx record, the gas, and the
+  records already built — and then returns `StrandedPayment`. The class and the journal agree
+  that money moved, and the capture's verdict reaches D186's 28/37 split (§1.4). The pre-pass
+  before any sub-batch keeps `Payment`.
+- **§6's `S50` is answered by D204 §2 R3.** A revert with no confirmed landing in the same `pay`
+  call returns `Payment` and delivers no capture; a revert after a landing keeps its capture and
+  `StrandedPayment` with the unchanged reason. Of the two returns §2 R2 cites as counting
+  confirmed transactions (`:742-746` and `:783-787` then), the unobserved landing is unchanged and
+  the revert's now applies only after a landing.
+- **The rustdoc §2 R4 wrote gains one sentence** (D204 §2 R4): *"A revert reports at least one
+  landing (S50); only an unobserved first landing reports 0, because there money may have
+  moved."* The Display stays untouched, as §2 R4 and §4 recorded; D204 rewords `Payment`'s Display
+  only, superseding D147 §2 R11 for that one string.
+
+The text above is history and stays as written.

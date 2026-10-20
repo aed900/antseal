@@ -69,7 +69,7 @@ use antseal_core::bundle::schema::OtsUpgrade;
 
 use super::upgrade::{
     HeaderError, MergeError, PendingRef, UpgradePoll, UpgradeTarget, already_merged,
-    confirm_header_by, merge_upgrade, pending_refs, poll_upgrade,
+    confirm_header, merge_upgrade, pending_refs, poll_upgrade,
 };
 use super::upgrade_uri::UpgradeUriRefusal;
 use crate::agree::EndpointPair;
@@ -583,7 +583,7 @@ fn upgrade_one_anchor(
             // each esplora request must start before. `None` (no deadline)
             // only if the sum overflows `Instant`, which no real budget does.
             let deadline = started.checked_add(budget.total);
-            match confirm_header_by(client, pair, attestation, fetch_date, deadline) {
+            match confirm_header(client, pair, attestation, fetch_date, deadline) {
                 Ok(confirmed) => upgrade = Some(confirmed),
                 Err(source) => {
                     // Atomic: the merge is dropped with the header. Nothing

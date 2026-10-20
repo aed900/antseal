@@ -111,7 +111,10 @@ pub enum TxStatus {
     /// The awaited transaction receipt reports the tx mined but
     /// **reverted** (S6): gas was spent, **no ANT moved**, and the
     /// sub-batch's quotes are deliberately NOT in the quote→tx map (they
-    /// are unpaid). The record is journaled as evidence of the gas spend.
+    /// are unpaid). The record is journaled as evidence of the gas spend
+    /// when an earlier sub-batch of the same payment landed; a FIRST
+    /// sub-batch that reverts journals nothing (S50), because no quote is
+    /// paid.
     Reverted,
 }
 

@@ -10,9 +10,9 @@ and nobody else can spend from it. If you lose the vault you lose the wallet
 with it — see `vault-loss.md`.
 
 **Money moves only after you consent.** Before anything is paid, `seal` prints
-the full quote beside both balances and asks. Every failure described on this
-page happens *before* payment: the CLI says so in the error itself, with the
-words "nothing was paid or uploaded".
+the full quote beside both balances and asks. The two funding failures below
+happen *before* payment, and the CLI says so in the error itself ("nothing was
+paid or uploaded"); the last section covers the three where money was spent.
 
 ## Two assets, and you need both
 
@@ -104,7 +104,7 @@ Unpacked:
   it.** `--wallet` defaults to `generate`
   (`crates/antseal-cli/src/cli.rs:250`), and a generated key goes straight into
   the vault's wallet record: `init` keeps the checksummed address and drops the
-  key (`crates/antseal-cli/src/init.rs:561-563`). None of the ten subcommands
+  key (`crates/antseal-cli/src/init.rs:568-570`). None of the ten subcommands
   prints, exports or rotates it.
 - **You can keep spending it; you cannot move it.** A vault backup carries the
   key, and `vault import` reinstalls it
@@ -288,8 +288,8 @@ What each one asks of you:
 - **37 means the vault could not record what was bought: fix the vault
   first, then read the next quote.** antseal decides what is already paid
   for from the receipt in your vault alone, and has no other way to learn
-  what a payment bought (`crates/antseal-cli/src/pipeline/resume.rs:180-184`,
-  `:218-222`). When the vault could not write that receipt — for example a
+  what a payment bought (`crates/antseal-cli/src/pipeline/resume.rs:185-189`,
+  `:215-219`). When the vault could not write that receipt — for example a
   full disk, a permissions change or a failing drive — re-running
   `antseal seal` quotes, and charges again for, everything the vault does not
   show as paid, and the ANT spent on the unrecorded part is gone. Re-running

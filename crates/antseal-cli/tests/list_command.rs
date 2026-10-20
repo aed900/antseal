@@ -172,6 +172,12 @@ fn fixture_vault() -> IsolatedVault {
             SealState::Abandoned => &[SealState::Abandoned],
         };
         for step in path {
+            if *step == SealState::Paid {
+                // The payment is journaled first, as the pipeline does it.
+                journal
+                    .put_receipt(&id, &fixture_receipt(f.cost_atto.unwrap_or(0)))
+                    .expect("receipt");
+            }
             journal.set_state(&id, *step).expect("advance");
         }
         if let Some(offset) = f.consent_offset {
@@ -283,7 +289,7 @@ fn the_two_clocks_land_on_the_right_rows() {
             .expect("hint")
             .clock
             .note()
-            .contains("nothing was paid")
+            .contains("no payment is recorded")
     );
 
     // Finished works carry no hint at all: there is nothing to resume.
@@ -797,8 +803,11 @@ fn anchor_fixture_vault() -> IsolatedVault {
                     },
                 )
                 .expect("consent");
+            // The cost rides with the work id: the pipeline writes both, and
+            // only, in `complete()` (`pipeline/resume.rs`, `record_outcome`),
+            // so the row killed before finalize carries neither (D203 M9).
             journal
-                .record_outcome(&id, f.work_id.map(|b| [b; 32]), Some(11))
+                .record_outcome(&id, f.work_id.map(|b| [b; 32]), f.work_id.map(|_| 11))
                 .expect("outcome");
         }
     }
@@ -1357,12 +1366,12 @@ fn a_blocked_work_names_the_refusal_and_a_workaround_that_runs() {
          makes the recorded flags this work's identity, so no re-run can change them."
             .to_owned(),
         format!(
-            "  nothing was paid, so only the local staged copy is lost. To seal this material, \
-             discard this work with `antseal abandon {id}` and seal the same files again with \
-             either --split or --no-fine-tree dropped, or move or copy the file(s) to a different \
-             path and seal them there with either flag dropped: re-running the recorded command \
-             is refused, and so is re-running the same paths with different flags while this \
-             work is kept."
+            "  no payment is recorded for it, so abandoning it loses no recorded payment — only \
+             the local staged copy. To seal this material, discard this work with `antseal \
+             abandon {id}` and seal the same files again with either --split or --no-fine-tree \
+             dropped, or move or copy the file(s) to a different path and seal them there with \
+             either flag dropped: re-running the recorded command is refused, and so is \
+             re-running the same paths with different flags while this work is kept."
         ),
         "  recorded invocation, refused — do not re-run: antseal seal 'chapter one.txt' --title \
          'legacy work' --split blank-lines --no-fine-tree '*.txt' --network devnet"
@@ -1424,6 +1433,11 @@ fn a_blocked_post_pay_work_says_the_payment_cannot_be_recovered() {
         let mut rng = ChaCha20Rng::from_seed([0x87; 32]);
         let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
         for step in [SealState::Anchored, SealState::Paid] {
+            if step == SealState::Paid {
+                journal
+                    .put_receipt(&id, &fixture_receipt(9))
+                    .expect("receipt");
+            }
             journal.set_state(&id, step).expect("advance");
         }
         journal
@@ -1445,10 +1459,10 @@ fn a_blocked_post_pay_work_says_the_payment_cannot_be_recovered() {
     let text = rendered(&listing);
     assert!(
         text.contains(
-            "  this seal is paid for and the payment cannot be recovered. To seal this \
+            "  a payment for this seal is recorded and cannot be recovered. To seal this \
                        material, move or copy the file(s) to a different path"
         ),
-        "the post-pay money clause, verbatim:\n{text}"
+        "the payment-recorded money clause, verbatim:\n{text}"
     );
     assert!(
         !text.contains("RESUME PROMPTLY"),
@@ -1602,7 +1616,7 @@ fn the_flag_pair_alone_does_not_block_a_work() {
         ),
         "the ordinary path is untouched:\n{text}"
     );
-    assert!(text.contains("nothing was paid; the recorded quote is stale by design"));
+    assert!(text.contains("no payment is recorded for it; the recorded quote is stale by design"));
     assert!(!text.contains("CANNOT BE FINISHED"), "{text}");
     assert_eq!(
         resume_json(&listing, None)["refusal"],
@@ -1695,9 +1709,10 @@ fn only_the_refused_file_is_named_not_every_matched_one() {
 /// `blocked_lines` renders four distinct strings, not three: the money
 /// clause forks on `ResumeClock`, and the verb agreement forks on the
 /// offender count. Copy the lint does not read is copy that is not policed,
-/// so the fixture carries a **post-pay, single-offender** work (`this seal
-/// is paid for`; `was`/`is`) and a **pre-pay, two-offender** work
-/// (`nothing was paid`; `were`/`are`).
+/// so the fixture carries a **payment-recorded, single-offender** work (`a
+/// payment for this seal is recorded`; `was`/`is`) and a **no-payment,
+/// two-offender** work (`no payment is recorded for it`; `were`/`are`). The
+/// clock is the receipt's (D203 M2), so the paid one journals a receipt.
 #[test]
 fn the_blocked_rendering_is_committed_where_the_copy_lint_reads_it() {
     let vault = IsolatedVault::create("u87-blocked-copy");
@@ -1726,6 +1741,11 @@ fn the_blocked_rendering_is_committed_where_the_copy_lint_reads_it() {
         let mut rng = ChaCha20Rng::from_seed([0x87; 32]);
         let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
         for step in [SealState::Anchored, SealState::Paid] {
+            if step == SealState::Paid {
+                journal
+                    .put_receipt(&id, &fixture_receipt(9))
+                    .expect("receipt");
+            }
             journal.set_state(&id, step).expect("advance");
         }
         journal
@@ -1739,16 +1759,15 @@ fn the_blocked_rendering_is_committed_where_the_copy_lint_reads_it() {
                 },
             )
             .expect("consent");
-        // A paid work that reports `cost: not recorded (nothing paid)` two
-        // lines above `this seal is paid for` would be a fixture arguing
-        // with itself, so the outcome is recorded the way `fixture_vault`
-        // records it for its own `Paid` row.
+        // A paid work whose cost line contradicted its money clause would be
+        // a fixture arguing with itself, so the outcome is recorded the way
+        // `fixture_vault` records it for its own `Paid` row.
         journal
             .record_outcome(&id, Some([0xC1; 32]), Some(9))
             .expect("outcome");
     }
 
-    // The pre-pay half: two offenders, which is the only way the plural
+    // The no-payment half: two offenders, which is the only way the plural
     // rendering appears in a committed file at all.
     seal_into(
         &vault,
@@ -1792,8 +1811,9 @@ fn the_blocked_rendering_is_committed_where_the_copy_lint_reads_it() {
     // Each of the four forks named, so a rendering that quietly lost one
     // cannot be blessed back to green.
     for needle in [
-        "nothing was paid, so only the local staged copy is lost.",
-        "this seal is paid for and the payment cannot be recovered.",
+        "no payment is recorded for it, so abandoning it loses no recorded payment — only the \
+         local staged copy.",
+        "a payment for this seal is recorded and cannot be recovered.",
         "CANNOT BE FINISHED: chapter one.txt was selected for splitting",
         "were selected for splitting",
     ] {
@@ -1894,7 +1914,7 @@ fn a_work_with_no_manifest_gets_no_verdict_and_renders_as_before() {
         "the ordinary hint, unchanged:\n{text}"
     );
     assert!(
-        text.contains("nothing was paid; the recorded quote is stale by design"),
+        text.contains("no payment is recorded for it; the recorded quote is stale by design"),
         "{text}"
     );
 
@@ -2282,4 +2302,442 @@ fn the_manifest_verdict_agrees_with_build_plan_on_every_shape() {
         list_side.contains(&true) && list_side.contains(&false),
         "and so must the manifest side: {list_side:?}"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D203 (wave 40): the receipt is the money authority (U109)
+// ─────────────────────────────────────────────────────────────────────
+
+/// A NON-SECRET fixture payment receipt: one quote mapped to one confirmed
+/// transaction, `storage_cost_atto` as given, every hash an obviously
+/// synthetic byte pattern. The `Paid` walks above journal it first.
+// Pipeline order mirrored: pipeline/resume.rs:554 put_receipt precedes :571 set_state(Paid).
+fn fixture_receipt(storage_cost_atto: u128) -> antseal_net::PaymentReceipt {
+    use antseal_net::{GasSummary, PaymentReceipt, QuoteHash, TxHash, TxRecord, TxStatus};
+
+    let quote = QuoteHash::from_bytes([0xB1; 32]);
+    let tx = TxHash::from_bytes([0xB2; 32]);
+    PaymentReceipt {
+        blobs: Vec::new(),
+        tx_map: [(quote, tx)].into_iter().collect(),
+        txs: vec![TxRecord {
+            tx_hash: tx,
+            block_number: Some(42),
+            status: TxStatus::Confirmed,
+            quote_hashes: vec![quote],
+        }],
+        storage_cost_atto,
+        gas: GasSummary {
+            gas_cost_wei: 21_000,
+        },
+    }
+}
+
+mod d203 {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    /// Every member a `list --json` row carries, and every member of its
+    /// `resume` object — pinned so that a new member is a reviewed event.
+    const ROW_KEYS: [&str; 14] = [
+        "cost_atto",
+        "damaged_anchors",
+        "degraded",
+        "detail_state",
+        "nag",
+        "network",
+        "pending_anchors",
+        "resume",
+        "seal_id",
+        "sealed_at",
+        "state",
+        "title",
+        "unanchored",
+        "work_id",
+    ];
+    const RESUME_KEYS: [&str; 4] = ["clock", "invocation", "note", "refusal"];
+
+    /// **D203 M3**: [`WorkRow::receipt_cost_atto`] — the receipt's amount,
+    /// behind the human cost line — is never serialized. `--json`'s
+    /// `cost_atto` stays the meta's value until U32, and no other member
+    /// carries the receipt's. A distinctive amount on a stranded work whose
+    /// meta records no cost proves it three ways: the human line prints it
+    /// (the datum is real), the document holds it nowhere, and every row
+    /// keeps exactly the pinned member set.
+    #[test]
+    fn the_receipt_cost_is_rendered_for_humans_and_never_serialized() {
+        const DISTINCT: u128 = 777_777_777_777_777;
+        let vault = IsolatedVault::create("d203-never-serialized");
+        {
+            let unlocked = vault.unlock();
+            let mut rng = ChaCha20Rng::from_seed([0xD5; 32]);
+            let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+            let id = seal_id(0xD5);
+            let w = MasterSecret::from_bytes([0xD5; 32]);
+            journal
+                .begin(&WorkIdentity {
+                    w: w.secret_ref(),
+                    seal_id: id,
+                    network: "devnet".to_owned(),
+                    unanchored: true,
+                    degraded: false,
+                    input_paths_as_given: vec!["stranded.txt".to_owned()],
+                    input_paths_absolute: vec!["/w/stranded.txt".to_owned()],
+                    shaping: SealShapingFlags {
+                        no_anchor: true,
+                        ..SealShapingFlags::default()
+                    },
+                })
+                .expect("begin");
+            journal
+                .set_state(&id, SealState::Anchored)
+                .expect("anchored");
+            // Stranded (exit 28): a payment journaled, no outcome recorded.
+            journal
+                .put_receipt(&id, &fixture_receipt(DISTINCT))
+                .expect("receipt");
+        }
+        let listing = listing(&vault);
+        assert_eq!(listing.works.len(), 1);
+        let row = &listing.works[0];
+        assert_eq!(row.cost_atto, None, "control: no outcome recorded a cost");
+        assert_eq!(
+            row.receipt_cost_atto,
+            Some(DISTINCT),
+            "control: the datum is real"
+        );
+
+        let human = listing.render().join("\n");
+        assert!(
+            human.contains(&format!(
+                "  cost: {DISTINCT} atto-ANT so far (from the payment receipt)"
+            )),
+            "{human}"
+        );
+
+        let doc = listing.json();
+        let text = doc.to_string();
+        assert!(
+            !text.contains(&DISTINCT.to_string()),
+            "the receipt's amount reached --json: {text}"
+        );
+        let works = doc["works"].as_array().expect("a works array");
+        assert_eq!(works.len(), 1);
+        let keys: BTreeSet<&str> = works[0]
+            .as_object()
+            .expect("a row object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, ROW_KEYS.into_iter().collect::<BTreeSet<_>>());
+        let resume: BTreeSet<&str> = works[0]["resume"]
+            .as_object()
+            .expect("an unfinished work's resume object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(resume, RESUME_KEYS.into_iter().collect::<BTreeSet<_>>());
+        assert!(works[0]["cost_atto"].is_null(), "{text}");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D203 M8 (wave 40, U113): an undecodable receipt is a row, not a refusal
+// ─────────────────────────────────────────────────────────────────────
+
+/// **U113** (D203 M8): one payment receipt whose record opens but will not
+/// decode is a datum on its own row — like an anchor slot's (D100 R3) —
+/// and never fails the whole `list`. The store's read stays on the far side
+/// of D100 R5's line: an enumeration, I/O, size-cap or AEAD failure still
+/// fails `list`.
+mod u113 {
+    use std::collections::BTreeSet;
+
+    use super::*;
+    use antseal_cli::pipeline::receipt_sink::recorded_receipt;
+    use antseal_cli::vault::store::MAX_RECORD_FILE_BYTES;
+
+    /// The receipt decoder's failure class for the planted record, as the
+    /// row carries it.
+    const DETAIL: &str = "journaled receipt is malformed";
+    /// The damaged row's cost line (D203 M8).
+    const UNREADABLE_COST: &str =
+        "  cost: unknown (the payment receipt cannot be read: journaled receipt is malformed)";
+    /// The damaged row's money clause — in the human report and, by the
+    /// orchestrator's D203 M8 ruling, as its `--json` `note`.
+    const UNREADABLE_NOTE: &str = "its payment receipt cannot be read (journaled receipt is \
+                                   malformed), so antseal cannot tell whether a payment for this \
+                                   seal is recorded, and resuming or abandoning it fails until \
+                                   the receipt can be read";
+
+    fn hex(id: &SealId) -> String {
+        id.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Three works, newest first: complete with its cost recorded, stranded
+    /// with a readable receipt, and unfinished — holding, when `damaged`, a
+    /// receipt record written by the store's own writer (a genuine AEAD)
+    /// whose plaintext the receipt decoder refuses. NON-SECRET values.
+    fn three_works(tag: &str, damaged: bool) -> IsolatedVault {
+        let vault = IsolatedVault::create(tag);
+        {
+            let unlocked = vault.unlock();
+            let mut rng = ChaCha20Rng::from_seed([0x13; 32]);
+            let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut rng);
+            let works = [
+                (0xC1, "complete, cost recorded", 300),
+                (0xC2, "stranded, receipt readable", 200),
+                (0xC3, "unfinished, receipt planted", 100),
+            ];
+            assert_eq!(works.len(), 3);
+            for (byte, title, offset) in works {
+                let w = MasterSecret::from_bytes([byte; 32]);
+                let id = seal_id(byte);
+                journal
+                    .begin(&WorkIdentity {
+                        w: w.secret_ref(),
+                        seal_id: id,
+                        network: "devnet".to_owned(),
+                        unanchored: true,
+                        degraded: false,
+                        input_paths_as_given: vec![format!("w{byte:02x}.txt")],
+                        input_paths_absolute: vec![format!("/w/w{byte:02x}.txt")],
+                        shaping: SealShapingFlags {
+                            title: Some(title.to_owned()),
+                            no_anchor: true,
+                            ..SealShapingFlags::default()
+                        },
+                    })
+                    .expect("begin");
+                journal
+                    .put_consent(
+                        &id,
+                        ConsentRecord {
+                            total_ant_atto: 4_200,
+                            gas_estimate_wei: 21_000,
+                            consent_time_unix_secs: BASE_TIME + offset,
+                            channel: ConsentChannel::YesFlag,
+                        },
+                    )
+                    .expect("consent");
+                journal
+                    .set_state(&id, SealState::Anchored)
+                    .expect("anchored");
+                match byte {
+                    0xC1 => {
+                        journal
+                            .put_receipt(&id, &fixture_receipt(4_200))
+                            .expect("receipt");
+                        for step in [SealState::Paid, SealState::Finalizing] {
+                            journal.set_state(&id, step).expect("advance");
+                        }
+                        journal
+                            .record_outcome(&id, Some([0xC1; 32]), Some(4_200))
+                            .expect("outcome");
+                        journal
+                            .set_state(&id, SealState::Complete)
+                            .expect("complete");
+                    }
+                    0xC2 => journal
+                        .put_receipt(&id, &fixture_receipt(4_200))
+                        .expect("the stranded capture"),
+                    _ => {}
+                }
+            }
+        }
+        if damaged {
+            let unlocked = vault.unlock();
+            WorkStore::new(&unlocked)
+                .put_receipt(
+                    &seal_id(0xC3),
+                    b"not a journaled receipt",
+                    &mut ChaCha20Rng::from_seed([0x14; 32]),
+                )
+                .expect("plant an undecodable receipt");
+        }
+        vault
+    }
+
+    /// The rendered report split into one block per row (header first);
+    /// the summary line is not a row.
+    fn row_blocks(lines: &[String]) -> Vec<Vec<String>> {
+        let mut blocks: Vec<Vec<String>> = Vec::new();
+        for line in lines {
+            if line.starts_with("  ") {
+                blocks
+                    .last_mut()
+                    .expect("a row line follows its header")
+                    .push(line.clone());
+            } else if !line.contains(" work(s): ") {
+                blocks.push(vec![line.clone()]);
+            }
+        }
+        blocks
+    }
+
+    fn keys(value: &serde_json::Value) -> BTreeSet<String> {
+        value
+            .as_object()
+            .expect("an object")
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    /// **U113's Accept.** A vault with one planted undecodable receipt
+    /// lists every work; the damaged row says its receipt cannot be read and
+    /// makes no money claim either way; every other row, and the summary,
+    /// render exactly as they do in the same vault without the planted
+    /// record. In `--json` the row keeps the members every unfinished row
+    /// has, `clock: "time-boxed"` and the unreadable sentence as its `note`
+    /// (the orchestrator's D203 M8 ruling).
+    ///
+    /// Red at L-RESUME2's tree: `WorkListing::gather` refused the whole
+    /// listing with the vault-authentication class.
+    #[test]
+    fn one_undecodable_receipt_is_a_row_and_not_a_refusal() {
+        let damaged = three_works("u113-damaged", true);
+        let control = three_works("u113-control", false);
+        {
+            let unlocked = damaged.unlock();
+            let store = WorkStore::new(&unlocked);
+            assert!(
+                store
+                    .get_receipt(&seal_id(0xC3))
+                    .expect("the planted record opens: a genuine AEAD")
+                    .is_some(),
+                "control: the planted record is there"
+            );
+            assert!(
+                recorded_receipt(&store, &seal_id(0xC3)).is_err(),
+                "control: the receipt decoder refuses it"
+            );
+        }
+        let listing = {
+            let unlocked = damaged.unlock();
+            match WorkListing::gather(&WorkStore::new(&unlocked)) {
+                Ok(listing) => listing,
+                Err(err) => panic!("one undecodable receipt failed the whole `list`: {err}"),
+            }
+        };
+        let control_listing = super::listing(&control);
+        assert_eq!(listing.works.len(), 3, "every work is listed");
+        assert_eq!(control_listing.works.len(), 3);
+
+        let rendered = listing.render();
+        let control_rendered = control_listing.render();
+        let blocks = row_blocks(&rendered);
+        let control_blocks = row_blocks(&control_rendered);
+        assert_eq!(blocks.len(), 3, "{rendered:?}");
+        assert_eq!(control_blocks.len(), 3, "{control_rendered:?}");
+        let damaged_header = format!("seal {})", hex(&seal_id(0xC3)));
+        let note_line = format!("  {UNREADABLE_NOTE}");
+        let mut seen = 0;
+        for (block, control_block) in blocks.iter().zip(&control_blocks) {
+            if !block[0].contains(&damaged_header) {
+                assert_eq!(block, control_block, "every other row renders as before");
+                continue;
+            }
+            seen += 1;
+            let text = block.join("\n");
+            assert_eq!(
+                block.iter().filter(|line| *line == UNREADABLE_COST).count(),
+                1,
+                "{text}"
+            );
+            assert_eq!(
+                block.iter().filter(|line| **line == note_line).count(),
+                1,
+                "{text}"
+            );
+            // The unreadable sentence itself says "whether a payment for this
+            // seal is recorded", so the two notes are matched by their heads.
+            for claim in [
+                "so far",
+                "no payment is recorded",
+                "RESUME PROMPTLY",
+                "cost: none",
+            ] {
+                assert!(
+                    !text.contains(claim),
+                    "the damaged row makes a money claim ({claim:?}):\n{text}"
+                );
+            }
+        }
+        assert_eq!(seen, 1, "the damaged row is rendered once");
+        assert_eq!(
+            rendered.last(),
+            control_rendered.last(),
+            "the summary is unchanged"
+        );
+
+        let doc = listing.json();
+        let works = doc["works"].as_array().expect("a works array");
+        assert_eq!(works.len(), 3);
+        let row = works
+            .iter()
+            .find(|work| work["seal_id"] == hex(&seal_id(0xC3)))
+            .expect("the damaged row");
+        let healthy = works
+            .iter()
+            .find(|work| work["seal_id"] == hex(&seal_id(0xC2)))
+            .expect("the stranded row");
+        assert_eq!(row["resume"]["clock"], "time-boxed");
+        assert_eq!(row["resume"]["note"], UNREADABLE_NOTE);
+        assert!(row["cost_atto"].is_null());
+        assert_eq!(keys(row), keys(healthy), "no new member on the row");
+        assert_eq!(
+            keys(&row["resume"]),
+            keys(&healthy["resume"]),
+            "no new member in its resume object"
+        );
+        let text = doc.to_string();
+        assert_eq!(
+            text.matches(DETAIL).count(),
+            1,
+            "the failure class reaches --json only inside the note: {text}"
+        );
+    }
+
+    /// **D100 R5's line, held for receipts.** Only the receipt DECODER's
+    /// refusal is a row datum. A record the store refuses before decoding —
+    /// one over the defensive size cap, or one whose AEAD does not open —
+    /// still fails the whole `list` in the vault-authentication class, as
+    /// an anchor slot's does.
+    #[test]
+    fn a_receipt_the_store_refuses_still_fails_the_whole_list() {
+        let cases = ["over the size cap", "AEAD tampered"];
+        assert_eq!(cases.len(), 2);
+        for (index, case) in cases.into_iter().enumerate() {
+            let vault = three_works(&format!("u113-store-{index}"), false);
+            let path = vault
+                .layout
+                .works_dir()
+                .join(hex(&seal_id(0xC2)))
+                .join("receipt");
+            let sealed = std::fs::read(&path).expect("control: the stranded receipt's file exists");
+            let planted = if case == "over the size cap" {
+                vec![0_u8; MAX_RECORD_FILE_BYTES + 1]
+            } else {
+                let mut tampered = sealed;
+                let last = tampered.len() - 1;
+                tampered[last] ^= 0x01;
+                tampered
+            };
+            std::fs::write(&path, &planted).expect("plant");
+            let unlocked = vault.unlock();
+            match WorkListing::gather(&WorkStore::new(&unlocked)) {
+                Ok(listing) => panic!(
+                    "{case}: a store-layer refusal became a row ({} works listed)",
+                    listing.works.len()
+                ),
+                Err(err) => assert_eq!(
+                    err.class(),
+                    antseal_cli::error::ErrorClass::VaultAuthFailure,
+                    "{case}: {err}"
+                ),
+            }
+        }
+    }
 }

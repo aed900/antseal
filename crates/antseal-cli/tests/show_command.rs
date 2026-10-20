@@ -22,7 +22,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use antseal_cli::pipeline::journal::{BlobSlot, StagedBlob, UNIT_ENTRY_BASE};
+use antseal_cli::pipeline::journal::{BlobSlot, STATE_ENTRY, StagedBlob, UNIT_ENTRY_BASE};
 use antseal_cli::pipeline::{
     NoBarriers, Pipeline, RevealEngine, RevealError, RevealRequest, SealFile, SealRequest,
     SealResult, UnitSelection, VaultJournal, hex32,
@@ -158,7 +158,7 @@ fn seal_fixture(mock: &MockBackend, vault: &UnlockedVault, scratch: &Scratch) ->
         dry_run: false,
         sig_policy: SigPolicy::hybrid(),
         // The production path fills `SealRequest.title` **from**
-        // `plan.shaping.title` (`seal_run.rs:506`) and stores the shaping on
+        // `plan.shaping.title` (`seal_run.rs:511`) and stores the shaping on
         // the record, so the fixture sets both from one value — as `seal`
         // does — and `show` reads the title where `list` and `status` read
         // it.
@@ -223,6 +223,10 @@ fn an_incomplete_work_still_shows_its_units_and_says_it_is_incomplete() {
     {
         let store = WorkStore::new(&unlocked);
         let seal_id = only_work(&store);
+        // An UNTAGGED work: the mirror is its only state (D203 R1).
+        store
+            .delete_journal_entry(&seal_id, STATE_ENTRY)
+            .expect("drop the tag");
         store
             .set_state(
                 &seal_id,
@@ -861,4 +865,90 @@ fn the_copy_makes_no_notary_or_priority_claim() {
     assert!(!rendered.contains("priority"), "{rendered}");
     // Nor a verdict-shaped sentence: `show` states contents, not proof.
     assert!(!rendered.contains("existed no later than"), "{rendered}");
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// D203 R2: the tag-present branch of the state read
+// ─────────────────────────────────────────────────────────────────────
+
+/// **D203 R2, the tag-present branch**: a work interrupted for real after
+/// its payment — the upload aborted after one stored blob, so its fine tag
+/// is `Finalizing` and its mirror, written by the same transition,
+/// `incomplete-post-pay` — still shows its units and says it is incomplete.
+/// `an_incomplete_work_still_shows_its_units_and_says_it_is_incomplete`
+/// covers the untagged branch, where the mirror is the only state.
+#[test]
+fn a_work_whose_tag_is_post_pay_shows_as_incomplete() {
+    let scratch = Scratch::new("d203-tagged");
+    let absolutes: Vec<PathBuf> = NAMES.iter().map(|n| scratch.join(n)).collect();
+    for (path, bytes) in absolutes.iter().zip(CONTENT) {
+        std::fs::write(path, bytes).expect("plant the fixture file");
+    }
+    let absolute_strings: Vec<String> = absolutes
+        .iter()
+        .map(|p| p.to_str().expect("utf-8 path").to_owned())
+        .collect();
+    let files: Vec<SealFile<'_>> = (0..NAMES.len())
+        .map(|i| SealFile {
+            path_as_given: NAMES[i],
+            path_absolute: &absolute_strings[i],
+            bytes: CONTENT[i],
+            flags: FileFlags::new(),
+        })
+        .collect();
+    let mock = MockBackend::new();
+    mock.arm_fault(antseal_net::test_util::Fault::AfterStoringK(1));
+    let vault = IsolatedVault::create("d203-show-tagged");
+    let unlocked = vault.unlock();
+    {
+        let mut journal_rng = ChaCha20Rng::from_seed([0xD5; 32]);
+        let journal = VaultJournal::new(WorkStore::new(&unlocked), &mut journal_rng);
+        let gate = RecordingGate::new();
+        let consent = ScriptedConsent::always_yes();
+        let pipeline = Pipeline::new(&mock, &gate, &journal, &consent, &NoBarriers);
+        let request = SealRequest {
+            files: &files,
+            title: "d203 fixture".to_owned(),
+            claimed_time_unix_secs: 1_800_000_000,
+            app_version: "antseal-test/1".to_owned(),
+            network: NetworkId::Devnet,
+            no_anchor: false,
+            degraded: false,
+            dry_run: false,
+            sig_policy: SigPolicy::hybrid(),
+            shaping: SealShapingFlags {
+                title: Some("d203 fixture".to_owned()),
+                ..SealShapingFlags::default()
+            },
+        };
+        let interrupted =
+            block_on(pipeline.seal(&request, &mut ChaCha20Rng::from_seed([0xD6; 32])));
+        assert!(
+            interrupted.is_err(),
+            "the upload aborts after one stored blob"
+        );
+    }
+    {
+        let store = WorkStore::new(&unlocked);
+        let seal_id = only_work(&store);
+        assert_eq!(
+            antseal_cli::pipeline::journal::recorded_state(&store, &seal_id).expect("tag"),
+            Some(antseal_cli::pipeline::SealState::Finalizing),
+            "control: the fine tag is genuinely post-pay"
+        );
+        assert_eq!(
+            store.load_meta(&seal_id).expect("meta").state,
+            WorkState::IncompletePostPay,
+            "control: the mirror agrees with the tag"
+        );
+    }
+
+    let units = show(&unlocked);
+    assert_eq!(units.state, WorkState::IncompletePostPay);
+    assert_eq!(units.json()["state"], serde_json::json!("incomplete"));
+    assert!(
+        units.render()[0].ends_with("  incomplete"),
+        "{:?}",
+        units.render()[0]
+    );
 }

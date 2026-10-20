@@ -72,6 +72,7 @@ use antseal_core::crypto::secrets::SealId;
 
 use crate::config::Config;
 use crate::error::CliError;
+use crate::pipeline::journal::{effective_work_state, recorded_state};
 use crate::rng::OsEntropy;
 use crate::status::{UpgradeConfig, hex_seal, pending_work, persist_upgrades};
 use crate::vault::layout::BesideFile;
@@ -409,15 +410,35 @@ pub fn run_with(ctx: &HookContext<'_>) -> HookPass {
     let mut candidates = Vec::with_capacity(works.len());
     for seal_id in works {
         match store.load_meta(&seal_id) {
-            Ok(record) if record.state == WorkState::Complete => candidates.push(seal_id),
-            Ok(record) => {
-                pass.excluded += 1;
-                tracing::debug!(
-                    work = %hex_seal(&seal_id),
-                    state = ?record.state,
-                    "skipped: only completed works are upgraded opportunistically (R7)"
-                );
-            }
+            // R7's filter, on the EFFECTIVE state (D203 R1–R2): the fine
+            // tag's, and the mirror only for a work with no tag — so a work
+            // killed between `Finalizing → Complete`'s two writes is
+            // complete, and is upgraded like any other.
+            Ok(record) => match recorded_state(&store, &seal_id) {
+                Ok(fine) => {
+                    let state = effective_work_state(fine, record.state);
+                    if state == WorkState::Complete {
+                        candidates.push(seal_id);
+                    } else {
+                        pass.excluded += 1;
+                        tracing::debug!(
+                            work = %hex_seal(&seal_id),
+                            state = ?state,
+                            "skipped: only completed works are upgraded opportunistically (R7)"
+                        );
+                    }
+                }
+                Err(error) => {
+                    // R6 again: a state record that will not read is a skip,
+                    // exactly as an unreadable meta record is below.
+                    pass.excluded += 1;
+                    tracing::debug!(
+                        work = %hex_seal(&seal_id),
+                        %error,
+                        "skipped: the work's state record could not be read"
+                    );
+                }
+            },
             Err(error) => {
                 // R6: a newer build's record, a corrupt one, a failed AEAD.
                 // Each is a skip, and `status <work-id>` is what says so out

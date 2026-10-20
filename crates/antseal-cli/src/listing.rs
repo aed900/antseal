@@ -26,15 +26,15 @@
 //! restored vault. What is now unclear is `list`'s stated *reason* for the
 //! coarse-mirror fallback, since entry 0 survives as well — also U58's.
 //!
-//! # The two clocks (U19, from the D36/D37 planning round)
+//! # The two clocks (U19, from the D36/D37 planning round; D203 M1–M2)
 //!
 //! An unfinished seal is on one of two clocks, and they pull in opposite
 //! directions:
 //!
-//! - **pre-pay** — nothing was paid, and the journaled quote is stale *by
-//!   design*: resume always re-quotes and re-asks for consent (D36). There
-//!   is no hurry and no risk of a surprise charge.
-//! - **post-receipt** — money already moved, and the payment proofs stay
+//! - **re-quote** — no payment is recorded, and the journaled quote is
+//!   stale *by design*: resume always re-quotes and re-asks for consent
+//!   (D36). There is no hurry and no risk of a surprise charge.
+//! - **time-boxed** — a payment is recorded, and the payment proofs stay
 //!   usable for uploading only about a day (D37's conservative client-side
 //!   window). Past it, finishing the seal costs a **second** payment.
 //!   Hence the nag: resume promptly.
@@ -42,6 +42,25 @@
 //! Saying "resume when convenient" to the second class would cost users
 //! money, and saying "hurry" to the first would be a lie, so the row states
 //! which clock it is on rather than printing one generic reminder.
+//!
+//! **Which clock is a money question, so the receipt answers it** (D203 M1,
+//! U109), never the state tag. A work is on the time-boxed clock exactly
+//! when the vault holds a receipt that maps at least one quote to a
+//! transaction
+//! ([`payment_recorded`](crate::pipeline::journal::payment_recorded)): a
+//! payment that stranded part-way (exit 28) leaves the work tagged pre-pay
+//! with money moved, and the tag would put it on the re-quote clock while its
+//! proofs expire. Where the vault holds no such receipt, the copy says "no
+//! payment is recorded" and never "nothing was paid": after an exit 37 with
+//! no durable capture, nothing in the vault records whether money moved. The
+//! cost line follows the same authority.
+//!
+//! A receipt whose record opens but will not decode is a datum on its row,
+//! not a refusal of the listing ([`WorkRow::damaged_receipt`], D203 M8,
+//! U113) — the line D100 R3 drew for anchor slots: that row says its receipt
+//! cannot be read and makes no money claim either way, and every other row
+//! renders as before. A failure below the decoder — enumeration, I/O, the
+//! record size cap, the AEAD — still fails `list` (D100 R5).
 //!
 //! # The anchor nag (U25, ruled by D98 rider 3)
 //!
@@ -207,7 +226,10 @@ use crate::error::CliError;
 use crate::pipeline::anchors::{
     AnchorArtifact, DamageReason, DamagedSlot, StoredAnchors, damaged_slot_json,
 };
-use crate::pipeline::journal::{JournalError, SealState, recorded_plan, recorded_state};
+use crate::pipeline::journal::{
+    JournalError, SealState, effective_work_state, payment_recorded, recorded_plan, recorded_state,
+};
+use crate::pipeline::receipt_sink::decode_receipt;
 use crate::seal_plan::{pattern_matches, split_conflicts_with_no_fine_tree};
 use crate::vault::store::{SealShapingFlags, WorkRecord, WorkState, WorkStore};
 
@@ -225,14 +247,15 @@ use crate::vault::store::{SealShapingFlags, WorkRecord, WorkState, WorkStore};
 /// knob on a nag is a knob that silences it.
 pub const NAG_VERIFY_AT_UNIX: u64 = 0;
 
-/// Which clock an unfinished seal is on (module docs).
+/// Which clock an unfinished seal is on (module docs) — decided by the
+/// receipt, never the state tag (D203 M2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResumeClock {
-    /// Pre-pay: the journaled quote is stale by design; resume re-quotes
-    /// and re-consents (D36). No time pressure.
+    /// No payment is recorded: the journaled quote is stale by design;
+    /// resume re-quotes and re-consents (D36). No time pressure.
     ReQuote,
-    /// Post-receipt: the payment proofs are PUT-usable for roughly a day
-    /// (D37); past that, finishing costs a second payment.
+    /// A payment is recorded: the payment proofs are PUT-usable for
+    /// roughly a day (D37); past that, finishing costs a second payment.
     TimeBoxed,
 }
 
@@ -246,17 +269,25 @@ impl ResumeClock {
         }
     }
 
-    /// The human note the row carries.
+    /// The human note the row carries (D203 M2's copy).
+    ///
+    /// Neither note claims more than the vault records. The re-quote note
+    /// says "no payment is recorded" rather than "nothing was paid": after
+    /// an exit 37 with no durable capture the vault cannot know. The
+    /// time-boxed note says a payment "is recorded" rather than "this seal
+    /// is paid for": a payment that stranded part-way paid for some of the
+    /// seal, and the rest is still owed.
     #[must_use]
     pub const fn note(self) -> &'static str {
         match self {
             Self::ReQuote => {
-                "nothing was paid; the recorded quote is stale by design — resuming re-quotes \
-                 at current prices and asks for consent again"
+                "no payment is recorded for it; the recorded quote is stale by design — resuming \
+                 re-quotes at current prices and asks for consent again"
             }
             Self::TimeBoxed => {
-                "RESUME PROMPTLY: this seal is paid for, and the payment proofs stay usable for \
-                 uploading only about a day — after that, finishing it costs a second payment"
+                "RESUME PROMPTLY: a payment for this seal is recorded, and its payment proofs \
+                 stay usable for uploading only about a day — after that, finishing it costs a \
+                 second payment"
             }
         }
     }
@@ -350,7 +381,10 @@ pub struct WorkRow {
     pub sealed_at_unix_secs: Option<u64>,
     /// The work's network, canonical CLI spelling.
     pub network: String,
-    /// The coarse state (always available, survives `vault import`).
+    /// The coarse state (always available, survives `vault import`) — the
+    /// effective one (D203 R1): the fine tag's coarse value whenever the
+    /// journal carries a tag, and the meta record's mirror only when it does
+    /// not, because the mirror can trail the tag by one write (S48).
     pub state: WorkState,
     /// The fine state (S10's journal tag), when the journal still carries
     /// it.
@@ -380,6 +414,33 @@ pub struct WorkRow {
     pub degraded: bool,
     /// Total storage cost, atto-ANT, as journaled at seal.
     pub cost_atto: Option<u128>,
+    /// The journaled payment receipt's `storage_cost_atto`, when the vault
+    /// records a payment for this work
+    /// ([`payment_recorded`](crate::pipeline::journal::payment_recorded),
+    /// D203 M1) and the row needs it: an unfinished work (its clock) or one
+    /// whose outcome recorded no cost (its cost line). `None` when no payment
+    /// is recorded, and for a finished work whose cost is recorded — its
+    /// receipt is not read at all, so a damaged one never stops `list`.
+    ///
+    /// The money authority behind the clock and the human cost line (M2,
+    /// M3): the line prints [`Self::cost_atto`] once an outcome recorded
+    /// one, and this amount "so far" before that. **Never serialized**:
+    /// `--json`'s `cost_atto` stays the meta's value this wave (D203 M3 — no
+    /// JSON semantics move before U32).
+    pub receipt_cost_atto: Option<u128>,
+    /// The receipt decoder's failure class, when this row's journaled
+    /// receipt was read (see [`Self::receipt_cost_atto`] for when) and its
+    /// record opened but would not decode (**D203 M8**, U113): a datum on
+    /// this row, like [`Self::damaged_anchors`] (D100 R3), never a refusal of
+    /// the listing. The row then makes no money claim either way — its cost
+    /// line and its money clause say the receipt cannot be read — and an
+    /// unfinished row keeps the `time-boxed` clock, the safe direction for a
+    /// script (a receipt record exists only once a payment began; the
+    /// orchestrator's D203 M8 ruling). A failure below the decoder (I/O, the
+    /// record size cap, the AEAD) is not one: it still fails `list`
+    /// (D100 R5). **Never serialized**: no `--json` member before U32 — the
+    /// row's `note` carries the sentence.
+    pub damaged_receipt: Option<&'static str>,
     /// Present exactly for unfinished works.
     pub resume: Option<ResumeHint>,
     /// Whether the recorded flags make [`ResumeHint::invocation`] a command
@@ -597,10 +658,48 @@ impl WorkListing {
         let mut works = Vec::new();
         for seal_id in store.list_works().map_err(CliError::from)? {
             let record = store.load_meta(&seal_id).map_err(CliError::from)?;
-            // The fine tag is preferred; its absence is a state, not a
-            // failure (module docs).
+            // The fine tag decides the state wherever one exists; its
+            // absence is a state, not a failure, and only then does the
+            // mirror answer (D203 R1–R2). The mirror can trail the tag by
+            // one write (S48), so the state, the resume hint, the refusal
+            // and `counts()` all key on the effective state.
             let fine_state =
                 recorded_state(store, &seal_id).map_err(|err: JournalError| CliError::from(err))?;
+            let state = effective_work_state(fine_state, record.state);
+            let unfinished = matches!(
+                state,
+                WorkState::IncompletePrePay | WorkState::IncompletePostPay
+            );
+            // The money authority is the receipt (D203 M1). It is read only
+            // where it decides something — an unfinished work's clock, or the
+            // cost line of a work whose outcome recorded no cost — so a
+            // damaged receipt on a finished, costed work never stops `list`.
+            //
+            // Read the way `StoredAnchors::read` reads a slot (D203 M8, U113):
+            // the store's read keeps D100 R5's line — enumeration, I/O, the
+            // record size cap and the AEAD fail `list` — and only the
+            // decoder's refusal of a record that opened becomes this row's
+            // datum, so one damaged receipt never refuses the whole vault.
+            let mut damaged_receipt = None;
+            let payment = if unfinished || record.cost_atto.is_none() {
+                match store.get_receipt(&seal_id).map_err(CliError::from)? {
+                    None => None,
+                    Some(bytes) => match decode_receipt(bytes.as_bytes()) {
+                        Ok(receipt) => {
+                            Some(receipt).filter(|receipt| payment_recorded(Some(receipt)))
+                        }
+                        Err(JournalError::Corrupt { detail }) => {
+                            damaged_receipt = Some(detail);
+                            None
+                        }
+                        // Not a decoder refusal, so not this row's damage.
+                        Err(other) => return Err(CliError::from(other)),
+                    },
+                }
+            } else {
+                None
+            };
+            let receipt_cost_atto = payment.map(|receipt| receipt.storage_cost_atto);
             // U25's column, and D100's. A slot that cannot be decoded is a
             // datum on this row, not a refusal of the listing: the wrong
             // answer a nag must never give is "no anchors" for a work whose
@@ -609,33 +708,32 @@ impl WorkListing {
             // What still fails here is the enumeration and the AEAD.
             let read = anchor_nag(store, &seal_id, record.work_id, NAG_VERIFY_AT_UNIX)
                 .map_err(|err: JournalError| CliError::from(err))?;
-            let state = record.state;
-            let resume = match state {
-                WorkState::IncompletePrePay => Some(ResumeHint {
-                    invocation: seal_invocation(
-                        &record.input_paths_as_given,
-                        &record.shaping,
-                        &record.network,
-                    ),
-                    clock: ResumeClock::ReQuote,
-                }),
-                WorkState::IncompletePostPay => Some(ResumeHint {
-                    invocation: seal_invocation(
-                        &record.input_paths_as_given,
-                        &record.shaping,
-                        &record.network,
-                    ),
-                    clock: ResumeClock::TimeBoxed,
-                }),
-                WorkState::Complete | WorkState::Abandoned => None,
-            };
+            // The clock is a money question, answered by the receipt — never
+            // by the state (D203 M2): a payment that stranded part-way leaves
+            // the work tagged pre-pay with money moved and its proofs on the
+            // ~1-day clock.
+            let resume = unfinished.then(|| ResumeHint {
+                invocation: seal_invocation(
+                    &record.input_paths_as_given,
+                    &record.shaping,
+                    &record.network,
+                ),
+                // An unreadable receipt keeps the time-boxed clock (D203 M8,
+                // the orchestrator's ruling): a receipt record exists only
+                // once a payment began, so urgency is the safe direction for
+                // a script; the row's note says what the vault cannot tell.
+                clock: if receipt_cost_atto.is_some() || damaged_receipt.is_some() {
+                    ResumeClock::TimeBoxed
+                } else {
+                    ResumeClock::ReQuote
+                },
+            });
             // U85/D152 R4: only an unfinished work can be blocked, and only
             // the flag pair pays for the plan read (`resume_refusal` step 1).
-            let refusal = match state {
-                WorkState::IncompletePrePay | WorkState::IncompletePostPay => {
-                    resume_refusal(store, &seal_id, &record)
-                }
-                WorkState::Complete | WorkState::Abandoned => None,
+            let refusal = if unfinished {
+                resume_refusal(store, &seal_id, &record)
+            } else {
+                None
             };
             works.push(WorkRow {
                 work_id: record.work_id,
@@ -648,6 +746,8 @@ impl WorkListing {
                 unanchored: record.unanchored,
                 degraded: record.degraded,
                 cost_atto: record.cost_atto,
+                receipt_cost_atto,
+                damaged_receipt,
                 resume,
                 resume_refusal: refusal,
                 pending_anchors: read.nag.as_ref().map(|nag| nag.pending),
@@ -743,9 +843,21 @@ impl WorkListing {
                 .sealed_at_unix_secs
                 .map_or_else(|| "not yet sealed".to_owned(), format_utc);
             out.push(format!("  {title}   {when}   {}", row.network));
-            match row.cost_atto {
-                Some(cost) => out.push(format!("  cost: {cost} atto-ANT")),
-                None => out.push("  cost: not recorded (nothing paid)".to_owned()),
+            // D203 M3: the recorded outcome's cost; before one is recorded,
+            // what the payment receipt says was paid so far; and where the
+            // vault records no payment, exactly that — never "nothing paid",
+            // which the vault cannot know after an exit 37.
+            // A receipt that cannot be read makes no claim either way
+            // (D203 M8).
+            match (row.cost_atto, row.receipt_cost_atto, row.damaged_receipt) {
+                (Some(cost), _, _) => out.push(format!("  cost: {cost} atto-ANT")),
+                (None, _, Some(detail)) => out.push(format!(
+                    "  cost: unknown (the payment receipt cannot be read: {detail})"
+                )),
+                (None, Some(so_far), None) => out.push(format!(
+                    "  cost: {so_far} atto-ANT so far (from the payment receipt)"
+                )),
+                (None, None, None) => out.push("  cost: none (no payment recorded)".to_owned()),
             }
             out.extend(nag_lines(row));
             if let Some(resume) = &row.resume {
@@ -769,7 +881,13 @@ impl WorkListing {
                             .work_id
                             .as_ref()
                             .map_or_else(|| hex_seal(&row.seal_id), crate::pipeline::hex32);
-                        out.extend(blocked_lines(files, patterns, resume, &abandon_id));
+                        out.extend(blocked_lines(
+                            files,
+                            patterns,
+                            resume,
+                            &abandon_id,
+                            row.damaged_receipt,
+                        ));
                     }
                     // No verdict is not a verdict. An `Undetermined` work
                     // has no journaled manifest, which (D152 §1.7) means
@@ -778,7 +896,7 @@ impl WorkListing {
                     // aborts pre-passphrase and pre-network, with a message
                     // naming the file, both flags and the matched pattern.
                     None | Some(ResumeRefusal::Undetermined) => {
-                        out.push(format!("  {}", resume.clock.note()));
+                        out.push(format!("  {}", resume_note(row, resume)));
                         out.push(format!("  resume with: {}", resume.invocation));
                     }
                 }
@@ -1150,7 +1268,7 @@ fn resume_refusal(
         return Some(ResumeRefusal::Undetermined);
     };
     let files = manifest.body().files();
-    // The length guard `show.rs:412-423` already applies to this same pair
+    // The length guard `show.rs:416-427` already applies to this same pair
     // of records: the manifest carries the file entries and the meta record
     // carries the paths, and only their agreement makes `files[i]` and
     // `input_paths_*[i]` the same file.
@@ -1378,6 +1496,22 @@ fn refusal_json(refusal: Option<&ResumeRefusal>) -> serde_json::Value {
     }
 }
 
+/// The money clause an unfinished row prints under its state: its clock's
+/// note ([`ResumeClock::note`]) — or, when its receipt cannot be read, the
+/// sentence that says so and claims nothing either way (D203 M8, U113). The
+/// same text is the row's `--json` `note` (the orchestrator's D203 M8
+/// ruling: no new member, and the clock stays `time-boxed`).
+fn resume_note(row: &WorkRow, resume: &ResumeHint) -> String {
+    match row.damaged_receipt {
+        Some(detail) => format!(
+            "its payment receipt cannot be read ({detail}), so antseal cannot tell whether a \
+             payment for this seal is recorded, and resuming or abandoning it fails until the \
+             receipt can be read"
+        ),
+        None => resume.clock.note().to_owned(),
+    }
+}
+
 fn row_json(row: &WorkRow) -> serde_json::Value {
     serde_json::json!({
         "work_id": row.work_id.as_ref().map(crate::pipeline::hex32),
@@ -1399,7 +1533,9 @@ fn row_json(row: &WorkRow) -> serde_json::Value {
         "resume": row.resume.as_ref().map(|hint| serde_json::json!({
             "invocation": hint.invocation,
             "clock": hint.clock.name(),
-            "note": hint.clock.note(),
+            // The clock's note — or, for a receipt that cannot be read, the
+            // sentence that says so (D203 M8; the clock stays `time-boxed`).
+            "note": resume_note(row, hint),
             "refusal": refusal_json(row.resume_refusal.as_ref()),
         })),
         // U25 (M2). Both `null` together, and only for a work whose
@@ -1445,18 +1581,19 @@ fn row_json(row: &WorkRow) -> serde_json::Value {
 /// `ResumeDecision::Fresh` — and it appears in none of the three refusals as
 /// an instruction.
 ///
-/// # The abandon exit (U41, D185 R6) — and why only for an unpaid work
+/// # The abandon exit (U41, D185 R6) — and why only where no payment is recorded
 ///
 /// Until U41 this copy ended *"This build has no command that discards a
 /// staged work"*, which was true. D185 added `antseal abandon <ID>`, and it
-/// changes what the pre-pay branch can promise: once the work is
-/// abandoned it is no longer a resume candidate (D45 §2 excludes abandoned
-/// works), so the **same** paths with either flag dropped seal as a fresh
-/// work instead of meeting 26. That is the only reason the pre-pay branch
-/// may say *drop a flag* without *at a different path*, and it says it only
-/// after the abandon; `tests/list_command.rs` measures the before and the
-/// after. The post-pay branch keeps D152's copy and adds that the command
-/// refuses a paid work — the engine's rule 2, read from the receipt.
+/// changes what the re-quote branch (no payment recorded — D203 M2 keys the
+/// clock on the receipt) can promise: once the work is abandoned it is no
+/// longer a resume candidate (D45 §2 excludes abandoned works), so the
+/// **same** paths with either flag dropped seal as a fresh work instead of
+/// meeting 26. That is the only reason the re-quote branch may say *drop a
+/// flag* without *at a different path*, and it says it only after the
+/// abandon; `tests/list_command.rs` measures the before and the after. The
+/// time-boxed branch (a payment recorded) keeps D152's copy and adds that the
+/// command refuses a paid work — the engine's rule 2, read from the receipt.
 ///
 /// Every offending file is named, comma-joined in `file_id` order — D46's
 /// *"every offending argument named"*, the rule
@@ -1468,6 +1605,7 @@ fn blocked_lines(
     patterns: &[String],
     resume: &ResumeHint,
     abandon_id: &str,
+    damaged_receipt: Option<&str>,
 ) -> Vec<String> {
     let (was, is) = if files.len() == 1 {
         ("was", "is")
@@ -1484,23 +1622,39 @@ fn blocked_lines(
         .join(", ");
     // The only line that keys on the clock, and it takes `ResumeClock`'s own
     // two-way split rather than inventing a third reading of it: the money
-    // clause, and — since U41 — which exits exist.
-    let way_out = match resume.clock {
-        ResumeClock::ReQuote => format!(
-            "nothing was paid, so only the local staged copy is lost. To seal this material, \
-             discard this work with `antseal abandon {abandon_id}` and seal the same files again \
-             with either --split or --no-fine-tree dropped, or move or copy the file(s) to a \
-             different path and seal them there with either flag dropped: re-running the \
-             recorded command is refused, and so is re-running the same paths with different \
-             flags while this work is kept."
+    // clause, and — since U41 — which exits exist. The clock is the
+    // receipt's (D203 M2), and the money clause states what the vault
+    // records, never more: "no payment is recorded", not "nothing was paid".
+    // A receipt that cannot be read answers neither way (D203 M8): its
+    // clause says so, and offers only the exit that does not read it —
+    // `antseal abandon` reads the receipt, and fails until it can.
+    let way_out = match (damaged_receipt, resume.clock) {
+        (Some(detail), _) => format!(
+            "its payment receipt cannot be read ({detail}), so antseal cannot tell whether a \
+             payment for this seal is recorded, and `antseal abandon` fails until it can. To \
+             seal this material, move or copy the file(s) to a different path and seal them \
+             there with either --split or --no-fine-tree dropped: re-running the recorded \
+             command is refused, and so is re-running the same paths with different flags \
+             while this work is kept."
         ),
-        ResumeClock::TimeBoxed => "this seal is paid for and the payment cannot be recovered. \
+        (None, ResumeClock::ReQuote) => format!(
+            "no payment is recorded for it, so abandoning it loses no recorded payment — only \
+             the local staged copy. To seal this material, discard this work with \
+             `antseal abandon {abandon_id}` and seal the same files again with either --split \
+             or --no-fine-tree dropped, or move or copy the file(s) to a different path and \
+             seal them there with either flag dropped: re-running the recorded command is \
+             refused, and so is re-running the same paths with different flags while this work \
+             is kept."
+        ),
+        (None, ResumeClock::TimeBoxed) => {
+            "a payment for this seal is recorded and cannot be recovered. \
                                    To seal this material, move or copy the file(s) to a \
                                    different path and seal them there with either --split or \
                                    --no-fine-tree dropped: re-running the recorded command is \
                                    refused, re-running the same paths with different flags is \
                                    refused too, and `antseal abandon` refuses a paid work."
-            .to_owned(),
+                .to_owned()
+        }
     };
     vec![
         format!(
@@ -2138,6 +2292,8 @@ mod tests {
             unanchored: false,
             degraded: false,
             cost_atto: None,
+            receipt_cost_atto: None,
+            damaged_receipt: None,
             resume: None,
             resume_refusal: None,
             pending_anchors: nag.map(|_| 0),
@@ -2304,10 +2460,72 @@ mod tests {
 
     #[test]
     fn the_two_clocks_say_opposite_things() {
-        assert!(ResumeClock::ReQuote.note().contains("nothing was paid"));
+        assert!(
+            ResumeClock::ReQuote
+                .note()
+                .contains("no payment is recorded")
+        );
+        assert!(!ResumeClock::ReQuote.note().contains("nothing was paid"));
+        assert!(!ResumeClock::TimeBoxed.note().contains("is paid for"));
         assert!(ResumeClock::TimeBoxed.note().contains("RESUME PROMPTLY"));
         assert_ne!(ResumeClock::ReQuote.note(), ResumeClock::TimeBoxed.note());
         assert_eq!(ResumeClock::ReQuote.name(), "re-quote");
         assert_eq!(ResumeClock::TimeBoxed.name(), "time-boxed");
+    }
+
+    /// **D203 M8 (U113)**: a row whose receipt cannot be decoded makes no
+    /// money claim in either rendering an unfinished row has — the clock
+    /// note's and the blocked work's money clause — and its cost line says
+    /// the receipt cannot be read. In `--json` the clock stays `time-boxed`
+    /// and the note carries the same sentence (the orchestrator's ruling).
+    #[test]
+    fn an_unreadable_receipt_replaces_every_money_clause() {
+        let detail = "journaled receipt is malformed";
+        let mut plain = row_with(None);
+        plain.state = WorkState::IncompletePrePay;
+        plain.damaged_receipt = Some(detail);
+        plain.resume = Some(ResumeHint {
+            invocation: "antseal seal a.txt".to_owned(),
+            clock: ResumeClock::TimeBoxed,
+        });
+        let mut blocked = plain.clone();
+        blocked.work_id = Some([0xB1; 32]);
+        blocked.resume_refusal = Some(ResumeRefusal::SplitOnNoFineTree {
+            files: vec!["a.txt".to_owned()],
+            patterns: vec!["*.txt".to_owned()],
+        });
+        let rows = [plain, blocked];
+        assert_eq!(rows.len(), 2);
+        let unreadable = format!("its payment receipt cannot be read ({detail}), so antseal");
+        for row in rows {
+            let listing = WorkListing { works: vec![row] };
+            let text = listing.render().join("\n");
+            assert!(
+                text.contains(&format!(
+                    "  cost: unknown (the payment receipt cannot be read: {detail})"
+                )),
+                "{text}"
+            );
+            assert!(text.contains(&unreadable), "{text}");
+            for claim in [
+                ResumeClock::TimeBoxed.note(),
+                ResumeClock::ReQuote.note(),
+                "is recorded and cannot be recovered",
+                "no payment is recorded",
+                "so far",
+                "cost: none",
+            ] {
+                assert!(!text.contains(claim), "{claim:?}:\n{text}");
+            }
+            let doc = listing.json();
+            let resume = &doc["works"][0]["resume"];
+            assert_eq!(resume["clock"], "time-boxed", "{doc}");
+            assert!(
+                resume["note"]
+                    .as_str()
+                    .is_some_and(|note| note.starts_with(&unreadable)),
+                "{doc}"
+            );
+        }
     }
 }

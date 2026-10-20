@@ -1522,6 +1522,7 @@
 - Do: rule between refusing (an existing `config.toml` is a reason to stop and say so), keeping the file (and warning when it disagrees with the flags), or documenting the overwrite; implement and test it.
 - Accept:
   - A test runs `init` over a directory holding only a hand-written `config.toml` and shows the ruled outcome (the file kept, or a refusal naming it), red baseline recorded first.
+- Notes: **[2026-10-20, wave 40 — TICKED (D205, lane L-INIT).]** Captures on the `TODO.md` row; D205 §6 records what was built and every deviation.
 
 ### U106 — `WalletOpsError::KeyGenerationFailed` blames the machine's entropy source and calls itself an antseal bug in one message
 - Milestone: M4
@@ -1533,6 +1534,7 @@
 - Do: rule whether `KeyGenerationFailed` is a random-source failure (route it through D201's variant) or a bug (word its text as one), and implement it at `init`'s mapping.
 - Accept:
   - The rendered message for `KeyGenerationFailed` makes one claim about whose fault it is, asserted by message through `init`'s mapping.
+- Notes: **[2026-10-20, wave 40 — TICKED (D206, lane L-INIT).]** Captures on the `TODO.md` row; D206 §6 records what was built and every deviation.
 
 ### U107 — A retired `rpc_url` written outside `[networks.*]` only warns
 - Milestone: M4
@@ -1544,6 +1546,7 @@
 - Do: refuse `rpc_url` in every table with the retired-key text (never repeating its value), or record why it differs from `arbitrum_endpoints`.
 - Accept:
   - `rpc_url` under `[verify.arbitrum-one]` and at the top level is exit 17 naming the key, the table and the line, the value absent (canary), asserted in-process and once through the binary; or the reason is recorded where the key is documented.
+- Notes: **[2026-10-20, wave 40 — TICKED (D207, lane L-CFG3).]** Captures on the `TODO.md` row; D207 §6 records what was built and every deviation.
 
 ### U108 — An unquoted array entry's config refusal cannot name its position
 - Milestone: M4
@@ -1555,3 +1558,96 @@
 - Do: number the entries in the array branch and carry the position into the subset refusal.
 - Accept:
   - An unquoted second entry is refused naming the key, the line and `entry 1`, the value absent, asserted in-process; a plant dropping the number reddens it by message.
+- Notes: **[2026-10-20, wave 40 — TICKED (ruled without a new record, lane L-CFG3).]** Captures on the `TODO.md` row; the lane report's deviations are summarised on the row.
+
+### U109 — `list` tells a user whose payment stranded that nothing was paid
+- Milestone: M4
+- Size: S
+- Deps: with S48 (one lane: both edit `WorkListing::gather`; D203 M1–M3)
+- Spec: S16 (the receipt is the money authority, `pipeline/resume.rs`); D152 R5 (the blocked-work copy); D37 Decision 6 (the proof clock)
+- Discovered by: wave-40 planning lane P1, 2026-10-20 (executed in the planning probe). Id assigned centrally.
+- Problem: `WorkListing::gather` (`crates/antseal-cli/src/listing.rs`) picks the resume clock and its note from the coarse state alone, and the cost line from the meta record, and never reads the receipt. After an exit 28 (`StrandedPayment`) or 37 (`PaymentUnrecorded`) with at least one durable capture, the work stays tagged pre-pay (the pipeline returns before `set_state(Paid)`) while the journaled receipt maps paid quotes, so `list` prints "re-quote" and "nothing was paid; the recorded quote is stale by design …" and withholds RESUME PROMPTLY although the landed sub-batches' proofs expire in about a day; the cost line reads "cost: not recorded (nothing paid)" for paid works. Where no receipt exists at all (exit 37 with no durable capture), the vault cannot know whether money moved, so "nothing was paid" is a claim it cannot back either.
+- Do: the clock is `time-boxed` iff a journaled receipt maps at least one quote, else `re-quote`; the notes, the blocked lines' money clause and the cost line follow the receipt and say "no payment is recorded" where none is (D203 M1–M3).
+- Accept:
+  - Cases (a) exit 37 with no durable capture, (b) a revert-only receipt, (c) a stranded payment, (d) a normal paid work and (e) a pre-staging work each produce the ruled clock and note through `WorkListing::gather`; a plant putting the clock back on the coarse state reddens case (c) by message; the snapshots are regenerated with every changed line justified.
+- Notes: **[2026-10-20, wave 40 — TICKED (D203, lane L-RESUME2).]** Captures on the `TODO.md` row; D203 §6 records what was built and every deviation.
+
+### U110 — The resume plan and the abandon screens state money from the state tag or from a receipt's mere existence, and a declined remainder leaves the work tagged `Paid`
+- Milestone: M4
+- Size: M
+- Deps: after U109 (D203 M4–M6 reuse its predicate)
+- Spec: S16; D37 Decision 5 (the remainder); D185 (the abandon preview and report); D45 (the resume plan on the consent screen)
+- Discovered by: wave-40 planning lane P1, 2026-10-20, in the orchestrator's challenge round (executed in the planning probe). Id assigned centrally.
+- Problem: (1) `resume_plan_lines` (`crates/antseal-cli/src/seal_resume.rs`; printed on the resume consent screen and in `seal --json`) says "staged and anchored; nothing paid" / "remaining: pay, upload" for a work whose receipt maps paid quotes. (2) The early repair in `pipeline/resume.rs` (`set_state(Paid)` on a pre-pay tag with a journaled receipt) runs BEFORE the remainder's consent, so a declined remainder leaves the work tagged `Paid`, and the next plan says "PAID — the payment receipt is journaled" / "upload only (no further payment)" while the remainder is owed (executed). (3) The abandon preview and report say "not paid" / "Nothing was paid for it" where the vault can only know that no payment is recorded. (4) Abandon's rule 2, the preview and the resume branch key on `receipt.is_some()`, so a revert-only receipt written before S50 makes abandon refuse "already been paid for".
+- Do: D203 M4–M6 — the plan's money lines follow `payment_recorded`; the repair sets `Paid` only when nothing remains to buy; rule 2, the preview and `resume.rs`'s receipt branch key on `payment_recorded`; the copy says "no payment recorded".
+- Accept:
+  - After a declined remainder the tag stays pre-pay and the plan says the work is partly paid with the rest to pay; an exit-37-without-capture work's preview and report say "no payment recorded"; a revert-only receipt does not block `abandon`; plants restoring the early repair, the old strings and rule 2's `receipt.is_some()` redden them by message.
+- Notes: **[2026-10-20, wave 40 — TICKED (D203, lane L-MONEY).]** Captures on the `TODO.md` row; D203 §6 records what was built and every deviation.
+
+### U111 — An `rpc_endpoints` entry outside the config subset is refused by position but not by reason
+- Milestone: M4
+- Size: XS
+- Deps: after U108 (the numbered subset refusal)
+- Spec: D195 §2 R4 (every URL-list refusal names the key, the line and the entry's position, never the value); U108
+- Discovered by: wave-40 lane L-CFG3, 2026-10-20, while landing U108. Id assigned centrally.
+- Problem: after U108, `tsa_urls`, `ots_calendars`, `bitcoin_endpoints` and `bootstrap` refuse an entry outside the config subset with the position AND the reason (*"`tsa_urls` entry 0: escape sequences are outside the antseal config subset (use a literal '…' string)"*); `rpc_endpoints_value` (`crates/antseal-cli/src/config.rs`) keeps its own sentence (*"`rpc_endpoints` under [verify.<net>] takes a one-line array of exactly two quoted endpoint URLs, and entry N is not one; …"*), so an escape sequence, a stray quote and a boolean in entry N read alike. The ruled U108 text is true; this is polish.
+- Do: append the subset reason (value-free since U99) in `rpc_endpoints_value`'s numbered arm.
+- Accept:
+  - An escape sequence, a stray quote and a boolean in `rpc_endpoints` entry 1 each name the entry and their own reason, the value absent (canary), asserted in-process; a plant dropping the reason reddens them by message.
+
+### U112 — `init`'s non-empty-directory check mishandles two odd entries
+- Milestone: M4
+- Size: XS
+- Deps: after U105 (D205's walk)
+- Spec: D205 (the refusal and its text); D39 (the absolute refusal over an existing vault)
+- Discovered by: wave-40 lane L-INIT, 2026-10-20, while landing U105 (code-traced; executed through the binary by the wave-40 as-built lane). Id assigned centrally.
+- Problem: D205's walk counts every non-directory entry except the top-level `vault.lock`. (a) A dangling `vault.header` symlink fails D39's `header.exists()`, which follows links, and the walk then names that very entry, so the refusal says *"there is no vault.header"* and names `…/vault.header` as what it found. (b) An empty DIRECTORY named `config.toml` passes the walk (directories never count), so an in-process `run_init` caller creates the vault and then fails writing `config.toml`: a vault without its config, and an I/O error (exit 4). Measured through the binary (wave-40 as-built lane, 2026-10-20): dispatch's `config::load()` (`crates/antseal-cli/src/lib.rs`) refuses first with exit 4, *"I/O error: reading …/config.toml: Is a directory (os error 21)"*, and creates nothing; (a) measured as described (exit 2).
+- Do: (a) treat a `vault.header` that exists as a link (`symlink_metadata`) as D39's case, or word the refusal for it; (b) count a non-file entry at the path `init` will write (`config.toml`, the store's record names) as an obstacle.
+- Accept:
+  - Both shapes, built in a test directory, produce one refusal whose words are true, before any passphrase and with nothing written; plants reverting each fix redden them by message.
+
+### U113 — One undecodable payment receipt fails the whole `list`
+- Milestone: M4
+- Size: S
+- Deps: after U109 (it introduced the read); rides L-MONEY this wave (D203 M8)
+- Spec: D100 R3 (per-row treatment of damaged records in `list`); D203 M2–M3
+- Discovered by: wave-40 lane L-RESUME2, 2026-10-20, while landing U109. Id assigned centrally.
+- Problem: since U109, `WorkListing::gather` (`crates/antseal-cli/src/listing.rs`) reads the journaled receipt of every unfinished row and every row with no recorded cost. An undecodable receipt (a newer envelope version, or a damaged record, mapped to `VaultAuthFailure`, "wrong passphrase, or the vault store … modified or corrupted") now fails the entire listing for one work's sake, where D100 R3 gave anchor slots a per-row datum (`damaged_anchors`). `status` already fails for its one work; `list` must not fail for all of them.
+- Do: the row carries a "receipt unreadable" datum; its money clause says the receipt could not be read (no payment claim either way), and the other rows render as before (D203 M8).
+- Accept:
+  - A vault with one planted undecodable receipt lists every work, the damaged row saying its receipt cannot be read; a plant propagating the error reddens it by message.
+- Notes: **[2026-10-20, wave 40 — TICKED (D203, lane L-MONEY).]** Captures on the `TODO.md` row; D203 §6 records what was built and every deviation.
+
+### U114 — A post-pay tag over a payment that does not cover the work still reads as fully paid in vaults written before this wave
+- Milestone: M4
+- Size: S
+- Deps: after U110 (D203 M5–M6)
+- Spec: S16 (the receipt is the money authority); D203 (state from the tag, money from the receipt)
+- Discovered by: wave-40 lane L-MONEY, 2026-10-20, recording D203's legacy residue (code-traced). Id assigned centrally.
+- Problem: D203 M5 stops new vaults from tagging `Paid` before the remainder is paid, and S50 stops a first-sub-batch revert from journaling a receipt, but two shapes written before this wave survive: (1) a pre-S50 vault whose early repair tagged `Paid` over a revert-only receipt; (2) a pre-M5 vault tagged `Paid` over a DECLINED remainder. In both, abandon's rule 2 refuses by its state clause ("already been paid for"), the resume plan's post-pay arms say "PAID — the payment receipt is journaled" / "upload only (no further payment)", and in case 1 `list` says "no payment is recorded" — while the resume asks to pay for everything (case 1) or for the remainder (case 2). Only developer vaults can hold these shapes (nothing is released, Q31).
+- Do: key the post-pay plan arms and rule 2's state clause on the receipt as well (a post-pay tag whose receipt does not cover the staged blobs is treated as partly paid), or record why legacy vaults are out of scope.
+- Accept:
+  - Both legacy shapes, planted in a test vault, get a plan and an abandon answer that agree with what the resume will charge; a plant restoring the tag-only post-pay arm reddens them by message.
+
+### U115 — Two money sentences overstate or understate what the vault knows
+- Milestone: M4
+- Size: XS
+- Deps: after U110
+- Spec: D203 M1 (the wording rule); D37 Decision 6 (the proof clock)
+- Discovered by: wave-40 lane L-MONEY, 2026-10-20. Id assigned centrally.
+- Problem: (1) abandon's rule-2 refusal (`crates/antseal-cli/src/seal_resume.rs`) opens "work … has already been paid for", which reads as fully paid for a partly paid work and is not certain under a `Submitted`-only mapping, where money may not have moved. (2) The resume plan and `seal --dry-run` for a stranded payment carry no urgency sentence, while `list` prints "RESUME PROMPTLY: … its payment proofs stay usable for uploading only about a day" for the same work.
+- Do: reword rule 2's opening to what the vault knows ("a payment is recorded for work …"), and give the plan's payment-recorded arm the proof-clock sentence `list` uses.
+- Accept:
+  - Both sentences asserted by message on a partly paid fixture, with plants restoring the old wording reddening them.
+
+### U116 — Two user-doc sentences claimed more than the product does
+- Milestone: M4
+- Size: XS
+- Deps: after U110 (D203's wording rule for money claims)
+- Spec: D203 M1 (a claim the vault can back); D186 (exit 37, a payment the vault could not record)
+- Discovered by: wave-40 lane L-LOC, 2026-10-20, while checking which living-doc sentences the wave's copy changes made false. Id assigned centrally.
+- Problem: (1) `docs/user/funding-your-wallet.md` (the "Money moves only after you consent" paragraph) said *"Every failure described on this page happens *before* payment"*, false since wave 25 added the page's own section *"The three failures where money *was* spent"*. (2) `docs/user/timestamp-authorities.md` (the gate's degraded-run paragraph) said *"`antseal abandon` refuses a work that has been paid for"*; abandon refuses a work whose payment is recorded in the vault, and an exit-37 work with no durable capture is not refused.
+- Do: scope (1) to the two funding failures and point at the last section; reword (2) to "a work whose payment is recorded in the vault".
+- Accept:
+  - Both sentences read true against the page and the code, line counts unchanged (citations into both pages unmoved); `check-copy-style.py` and `check-personal-data.py` exit 0.
+- Notes: **[2026-10-20, wave 40 — TICKED (ruled without a new record, orchestrator act).]** Captures on the `TODO.md` row; both edits are line-count neutral.

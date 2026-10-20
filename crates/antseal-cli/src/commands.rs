@@ -187,8 +187,8 @@ pub(crate) fn init(
     })?;
 
     // The lock lives beside the AEAD and needs the directory to exist;
-    // creating it is idempotent and leaves nothing behind if `init`
-    // refuses (an empty `~/.antseal/` is not a vault — the header is).
+    // creating it is idempotent, and a refused `init` leaves only
+    // `vault.lock` behind, which D205's check ignores (the header is the vault).
     std::fs::create_dir_all(layout.root()).map_err(|source| CliError::Io {
         context: format!("creating {}", layout.root().display()),
         source,
@@ -727,9 +727,14 @@ pub(crate) fn restore(
     let recorded = {
         // Scoped: the record carries `W`, and nothing below needs it.
         let record = store.load_meta(&seal_id).map_err(RestoreError::from)?;
-        if record.state != WorkState::Complete {
+        // The engine's own gate (D203 R1–R2): the effective state.
+        let state =
+            crate::pipeline::restore::effective_state(&store, &seal_id, record.state, |detail| {
+                RestoreError::MalformedRecord { detail }
+            })?;
+        if state != WorkState::Complete {
             return Err(RestoreError::NotRestorable {
-                state: crate::status::detail_state_name(record.state),
+                state: crate::status::detail_state_name(state),
             }
             .into());
         }

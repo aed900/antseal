@@ -9,7 +9,12 @@ It carries **operator preferences only** — never per-work data, and never
 secrets, except that a `[verify]` endpoint URL may carry a provider's API
 key, which antseal never prints beyond its origin (see "Online-verification
 endpoints"). `antseal init` writes the initial file; edit it by hand
-afterwards.
+afterwards. `init` refuses a vault directory that already has files in it
+but no `vault.header` — a `config.toml` written before `init`, say — since
+it writes its own `config.toml` and store records there, replacing any it
+finds: move the directory aside (a moved directory keeps everything), run
+`antseal init`, then copy your `config.toml` back. Empty folders, and the
+`vault.lock` antseal itself creates there, do not count as files.
 `vault export` embeds it in the backup and `vault import` restores it
 (D47).
 
@@ -30,10 +35,9 @@ afterwards.
   was written to replace. The error names the key, the table, the line and
   where the key belongs, and never its value. `bootstrap` is accepted under
   `[networks.arbitrum-one]` only (see "Bootstrap peers"); the retired
-  `rpc_url` is an error in every `[networks.*]` table (see "The payment
-  RPC") and the retired `arbitrum_endpoints` in every table; and
-  `[verify.devnet]` is an error whatever it holds (see "Online-verification
-  endpoints").
+  `rpc_url` (see "The payment RPC") and the retired `arbitrum_endpoints` are
+  errors in every table; and `[verify.devnet]` is an error whatever it holds
+  (see "Online-verification endpoints").
 
 ## Precedence
 
@@ -68,8 +72,8 @@ default_network = "arbitrum-sepolia"
 # endpoints are compiled-in constants (kept byte-identical to the pinned
 # evmlib) and are deliberately NOT configurable — a hand-edited contract
 # address is an evidence-downgrade hazard, not a preference. There is no
-# RPC override: `rpc_url` under any [networks.<id>] is REFUSED when the
-# file is read (exit 17, malformed config; U94), naming the key, the table
+# payment-RPC override: `rpc_url` is REFUSED in every table when the file
+# is read (exit 17, malformed config; U94, U107), naming the key, the table
 # and the line but never the value. The payer dials the compiled-in public
 # endpoint for arbitrum-one and arbitrum-sepolia, and the RPC_URL of the
 # export ANTSEAL_DEVNET_ENV names for devnet.
@@ -179,7 +183,8 @@ surfacing as a failed anchor midway through a seal. The error names the
 key, the line and the entry's position (`entry 0`, `entry 1`, …) — never
 the URL itself, which may carry a credential. A value outside the subset,
 such as a URL written without quotes, is refused without being repeated
-either.
+either, and when it is one entry of a list the error names that entry's
+position the same way.
 
 `bitcoin_endpoints` and `rpc_endpoints` must additionally be **`https://`**,
 and the file is refused at load if one is not, before any network call. The
@@ -247,10 +252,14 @@ reads receipts from the same endpoint.
 
 Earlier builds parsed `rpc_url` under `[networks.<id>]` and never read it, so
 a configured endpoint was silently not used. The key is now refused when the
-file is read — a malformed config (exit code 17), raised before any command
-runs, naming the key, the table and the line. The error never repeats the
-value: an RPC URL usually carries an API key, and error messages end up in
-terminals, logs and `--json` output. Delete the line.
+file is read, in whichever table it is written — a malformed config (exit
+code 17), raised before any command runs, naming the key, the table and the
+line. The error never repeats the value: an RPC URL usually carries an API
+key, and error messages end up in terminals, logs and `--json` output. Delete
+the line. The only RPC setting this file carries is the receipt check's pair,
+`rpc_endpoints` under `[verify.arbitrum-one]` or `[verify.arbitrum-sepolia]`
+(see "Online-verification endpoints"): it takes two endpoint URLs, and only
+`verify --online` uses it — never a payment.
 
 ## OpenTimestamps calendars
 

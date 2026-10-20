@@ -378,7 +378,12 @@ where
     }
 
     let resume_plan = match &decision {
-        ResumeDecision::Resume(candidate) => resume_plan_lines(candidate),
+        ResumeDecision::Resume(candidate) => resume_plan_lines(
+            candidate,
+            crate::pipeline::receipt_sink::recorded_receipt(&store, &candidate.seal_id)
+                .map_err(CliError::from)?
+                .as_ref(),
+        ),
         // A restart (D197) seals afresh: there is no work it finishes.
         ResumeDecision::Fresh { .. } | ResumeDecision::Restart(_) => Vec::new(),
     };

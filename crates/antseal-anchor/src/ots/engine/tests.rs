@@ -644,6 +644,7 @@ fn an_unconfirmable_header_records_no_transition() {
         &esplora_pair(&first, &second),
         &merged.added[0],
         0,
+        None,
     )
     .expect_err("a dead pair confirms nothing");
     assert!(matches!(error, crate::ots::HeaderError::NotAgreed { .. }));

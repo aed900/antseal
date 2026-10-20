@@ -350,3 +350,16 @@ push, a dispatch, a deploy or any other outward act; its tests talk only to stub
 ## Addendum — 2026-10-19 (D201 §2 R1, R3): §6's `U103` entry is discharged — the gate's `Entropy` refusal leaves class 22
 
 §6 recorded, under *"Found, minted as a row"*: *"`U103`: the gate's `Entropy` arm wears class 22 with a remedy that cannot apply. That mapping is not new."* **D201** discharges it. `AnchorGateError::Entropy` leaves `anchor-gate-abort` (22) for `internal` (1), through one `CliError` variant whose message names the machine, not antseal (`U104`). That message offers no timestamp authority, no `--force-degraded` and no `antseal abandon`: neither of the two routes §2 R2 states can apply to it, because no TSA is asked and every TSA nonce is drawn before the gate evaluates. The abort message §2 R1–R2 ruled is unchanged for every arm that stays in 22, and the exit-22 exemplar (`cli-errors.display.txt:53-54`) stays byte-identical. This record is not rewritten.
+
+## Addendum — 2026-10-20 (D203 §2 M1–M2, M7): §1.3's quote of `list`'s note for a staged work loses its first clause
+
+§1.3 quotes `crates/antseal-cli/tests/snapshots/list-report.txt:19-21` — *"nothing was paid; the
+recorded quote is stale by design — resuming re-quotes at current prices and asks for consent
+again / resume with: antseal seal half-done.txt"* — as `list` already saying that the identical
+command resumes a staged work. D203 (`U109`) changes that note's first clause. The vault can
+record a payment but cannot show the absence of one — an exit 37 whose capture did not become
+durable leaves no record either way — so the `re-quote` note now opens *"no payment is recorded
+for it"* (D203 §2 M1, M2), and the golden is regenerated deliberately (D203 §2 M7). The point
+§1.3 makes stands: the note still says that resuming re-quotes at current prices and asks for
+consent again, and the `resume with:` line does not change. The quotation was true when written
+and is not edited.

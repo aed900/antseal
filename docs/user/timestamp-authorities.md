@@ -99,13 +99,13 @@ network path can neither forge a token, replay an old one, nor substitute one
 issued for a different digest. What plain HTTP does cost is **privacy**: a
 passive observer learns that this machine timestamped a particular 32-byte
 digest at a particular moment, and could link it to a bundle you publish later
-(`docs/config.md:191-199`). If that matters to you, drop DigiCert from your
+(`docs/config.md:196-204`). If that matters to you, drop DigiCert from your
 list — nothing else changes, and FreeTSA is HTTPS.
 
 By contrast, the endpoints under `[verify]` in your config **must** be
 `https://`, and antseal refuses the file at load if one is not. Their replies
 carry no signature of their own, so transport is their only integrity control
-(`docs/config.md:123-127, 184-189`; `crates/antseal-cli/src/config.rs:1159-1197`).
+(`docs/config.md:127-131, 189-194`; `crates/antseal-cli/src/config.rs:1253-1291`).
 
 ---
 
@@ -213,7 +213,7 @@ config edit.
 
 The slot is `[anchors] tsa_urls` in `config.toml`, which lives **in the vault
 directory** — `~/.antseal/config.toml`, or `$ANTSEAL_DIR/config.toml`
-(`docs/config.md:1-14`). `antseal init` writes the initial file; edit it by
+(`docs/config.md:1-19`). `antseal init` writes the initial file; edit it by
 hand afterwards.
 
 ```toml
@@ -234,7 +234,7 @@ The behaviour, read off the implementation rather than off intent:
   (`crates/antseal-anchor/src/tsa.rs:112-126`).
 - **Every entry is parsed at config load**, through the same endpoint parser
   the HTTP client uses, under a policy that allows plain HTTP because DigiCert
-  requires it (`crates/antseal-cli/src/config.rs:1015-1048, 1119-1125`). A URL with
+  requires it (`crates/antseal-cli/src/config.rs:1109-1142, 1213-1219`). A URL with
   no host (`http:///tsr`), an unusable scheme, or embedded credentials
   (`http://user:pw@host/`) is refused **at load**, naming the key and the line
   — exit code **17**, class `malformed-config` — rather than surfacing as a
@@ -244,14 +244,14 @@ The behaviour, read off the implementation rather than off intent:
   a gate abort and in `--json` — so none of them may carry a credential.
 - **A malformed config is never silently ignored.** It is a hard error on
   every command; a silently dropped override is worse than a loud stop
-  (`docs/config.md:15-25`).
+  (`docs/config.md:20-30`).
 - **`seal` answers both of its config questions from a single read.** The
   effective network and this TSA list come from one `load()`, so an invocation
   can never resolve its network from one read of the file and its endpoints
   from another (`crates/antseal-cli/src/commands.rs:296-302`). Stated exactly,
   because it is easy to over-read: the *process* reads `config.toml` twice —
   once at dispatch, which is where a malformed file hard-fails every command
-  (`crates/antseal-cli/src/lib.rs:127`), and once inside `seal`
+  (`crates/antseal-cli/src/lib.rs:140`), and once inside `seal`
   (`crates/antseal-cli/src/commands.rs:302`). What is guaranteed is that the
   two answers `seal` acts on come from the same read, not that the file is
   opened once. There is exactly one place in the product that turns config
@@ -394,8 +394,8 @@ What you get instead:
 - `degraded` is recorded on the work in the vault
   (`crates/antseal-cli/src/vault/store.rs:209-210`) and is read back **from the
   record**, not from the flag you typed — `list` reads `record.degraded`
-  (`crates/antseal-cli/src/listing.rs:569`) and so does `status`
-  (`crates/antseal-cli/src/status.rs:411`) — so the three surfaces cannot
+  (`crates/antseal-cli/src/listing.rs:747`) and so does `status`
+  (`crates/antseal-cli/src/status.rs:420`) — so the three surfaces cannot
   disagree about it later.
 - With zero tokens the work is **UNANCHORED**. `list` badges it; `status`
   prints *"UNANCHORED — integrity and signature only, no provable time"*
@@ -418,7 +418,7 @@ cheap, reversible and usually transient, and an aborted seal leaves a staged
 work that **the same command — same files, same flags —** resumes rather than
 sealing a second time (`crates/antseal-cli/src/seal_resume.rs:52-56`). The
 resume quotes again and asks for your consent again
-(`crates/antseal-cli/src/pipeline/resume.rs:184-197`). The gate's message says
+(`crates/antseal-cli/src/pipeline/resume.rs:189-202`). The gate's message says
 so.
 
 **`--force-degraded` cannot be added to that re-run.** The seal-shaping flags,
@@ -428,8 +428,8 @@ files with the flag added are refused with exit **26**
 files degraded instead, discard the staged work first with
 `antseal abandon <id>` — the gate's message prints the seal id, and the work id
 that `antseal list` shows is accepted too — then run the command again with
-`--force-degraded`. `antseal abandon` refuses a work that has been paid for; a
-seal the gate stopped never has been. All of this is asserted end to end in
+`--force-degraded`. `antseal abandon` refuses a work whose payment is recorded
+in the vault; a seal the gate stopped has none. All of this is asserted end to end in
 `crates/antseal-cli/tests/anchor_gate_resume.rs`.
 
 ---
@@ -535,6 +535,6 @@ Nothing above is asserted from memory. The primary sources:
 | the gate, its threshold and its ordering | `crates/antseal-anchor/src/submit.rs:31-48, 252-292` |
 | a `429` is never re-sent; a `503` at most twice | `crates/antseal-anchor/src/http/retry.rs` (`classify`); `crates/antseal-anchor/src/http.rs:117-125` |
 | the degraded rendering, byte for byte | `crates/antseal-cli/tests/snapshots/seal-degraded-report.txt` |
-| the config slot and its validation | `crates/antseal-cli/src/config.rs:186-191, 1015-1048, 1119-1125`; `docs/config.md:83-199` |
+| the config slot and its validation | `crates/antseal-cli/src/config.rs:186-191, 1109-1142, 1213-1219`; `docs/config.md:87-204` |
 | root-store update procedure | `docs/anchors/root-store-update.md` |
 | how a real-endpoint run is conducted | `docs/anchors/real-smoke-runbook.md` |

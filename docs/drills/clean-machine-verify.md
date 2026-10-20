@@ -570,11 +570,11 @@ cd ~/gate/bundle && ls -l && sha256sum -- *.sealproof
 *STOP if* the digest differs, or there is more than one bundle.
 
 **10. Verify with the CLI, offline, with the network provably off.** `verify`
-opens no vault and never prompts (`crates/antseal-cli/src/commands.rs:922-925`);
-without `--online` it collects no network inputs at all (`commands.rs:996-997`);
+opens no vault and never prompts (`crates/antseal-cli/src/commands.rs:927-930`);
+without `--online` it collects no network inputs at all (`commands.rs:1001-1002`);
 and because no vault is opened, the post-command anchor-upgrade pass returns
-before doing anything (`commands.rs:973`;
-`crates/antseal-cli/src/upgrade_hook.rs:323-327`). Detach the network adapter,
+before doing anything (`commands.rs:978`;
+`crates/antseal-cli/src/upgrade_hook.rs:324-328`). Detach the network adapter,
 then:
 
 ```sh

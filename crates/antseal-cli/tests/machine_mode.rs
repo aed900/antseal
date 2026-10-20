@@ -1048,18 +1048,21 @@ fn fixture_dry_run_resume() -> antseal_cli::seal_run::SealCommandResult {
     // Built through the real `resume_plan_lines` renderer rather than a
     // hand-written array: three prior lanes found hand-copied strings had
     // drifted from what the command emits.
-    SealCommandResult::ResumePlan(resume_plan_lines(&ResumeCandidate {
-        seal_id: SealId::from_bytes([0xE4; 16]),
-        absolute_paths: vec!["/home/user/work/big.bin".to_owned()],
-        as_given_paths: vec!["big.bin".to_owned()],
-        shaping: SealShapingFlags {
-            no_anchor: true,
-            ..SealShapingFlags::default()
+    SealCommandResult::ResumePlan(resume_plan_lines(
+        &ResumeCandidate {
+            seal_id: SealId::from_bytes([0xE4; 16]),
+            absolute_paths: vec!["/home/user/work/big.bin".to_owned()],
+            as_given_paths: vec!["big.bin".to_owned()],
+            shaping: SealShapingFlags {
+                no_anchor: true,
+                ..SealShapingFlags::default()
+            },
+            network: "arbitrum-one".to_owned(),
+            state: WorkState::IncompletePostPay,
+            journal_state: Some(SealState::Paid),
         },
-        network: "arbitrum-one".to_owned(),
-        state: WorkState::IncompletePostPay,
-        journal_state: Some(SealState::Paid),
-    }))
+        None,
+    ))
 }
 
 /// A completed `init`, rendered by U11's own report type so the
@@ -1348,6 +1351,8 @@ fn fixture_listing() -> antseal_cli::listing::WorkListing {
                 unanchored: false,
                 degraded: false,
                 cost_atto: Some(4_200_000_000_000_000_000),
+                receipt_cost_atto: None,
+                damaged_receipt: None,
                 resume: None,
                 resume_refusal: None,
                 pending_anchors: Some(2),
@@ -1365,6 +1370,8 @@ fn fixture_listing() -> antseal_cli::listing::WorkListing {
                 unanchored: true,
                 degraded: false,
                 cost_atto: Some(1_000_000_000_000_000_000),
+                receipt_cost_atto: None,
+                damaged_receipt: None,
                 resume: Some(ResumeHint {
                     invocation: "antseal seal big.bin --no-anchor --network devnet".to_owned(),
                     clock: ResumeClock::TimeBoxed,
@@ -1394,6 +1401,8 @@ fn fixture_listing() -> antseal_cli::listing::WorkListing {
                 unanchored: false,
                 degraded: false,
                 cost_atto: Some(2_000_000_000_000_000_000),
+                receipt_cost_atto: None,
+                damaged_receipt: None,
                 resume: None,
                 resume_refusal: None,
                 // The nag class is **orthogonal** to the damage and is not

@@ -1048,3 +1048,29 @@ second, the order §5's W4 row records. Every other transition from an absent ta
   (D197 §2 R2).
 
 R4 and §5 above stay as written; W2's *"Tolerated"* now has an exit.
+
+## Addendum — 2026-10-20 (D203 §2 R1–R3, M1–M2): W4's *"R4 preserves it"* held only in a test-only enumeration, and W6's *"`list` renders honestly"* was false
+
+- **W4.** §5's W4 row says of `write_state`'s two writes: *"R4 preserves it by preferring the
+  fine tag whenever present."* R4's point 1 says the same. At `6e1cab3` that was true only of
+  `VaultJournal::incomplete_works`, which has no production caller (§11 (iv) recorded the
+  duplication; it was never minted). The production scan, `gather_candidates`, and ten other
+  readers — abandon's rules, its preview, `list`, `status`, `show`, both `restore` gates, the
+  `reveal` gate and the upgrade hook — classified a work by the coarse mirror (D203 §1.3). So
+  the window W4 leaves, the tag written and the mirror stale, was read by safety rules after all.
+  A kill there produced four windows, the commonest at `Finalizing → Complete`, which every
+  successful seal passes through (D203 §1.2).
+- **What D203 (`S48`) does.** Every classifying reader takes the effective state: the fine tag's
+  coarse value when a tag exists, the mirror only when it is absent (D203 §2 R1, R2). No mirror
+  repair is written (R3), and export and import stay on the mirror together (R5). The window
+  stays, and the rule that makes it harmless now runs in production; W4's quoted comment in
+  `vault_journal.rs` is corrected (R6).
+- **W6.** Its row says: *"A concurrent reader between them sees a receipt on a pre-pay work,
+  which `list` renders honestly."* At `6e1cab3` it did not. `list` read no receipt, and for that
+  shape — also the normal state after a stranded payment (exit 28, or 37 with a durable
+  capture) — it printed *"re-quote"* and *"nothing was paid; …"*, which D203's planning lane
+  executed. D203 (`U109`) makes `list`'s clock follow the receipt: `time-boxed` when the vault
+  holds a receipt that maps at least one quote to a transaction (D203 §2 M1, M2).
+
+R4 and §5 above stay as written. R4's reasoning about `state()` is unchanged, and
+`incomplete_works` is kept (D203 §4).

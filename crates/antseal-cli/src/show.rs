@@ -99,7 +99,10 @@ use antseal_core::manifest::{
 };
 
 use crate::error::CliError;
-use crate::pipeline::journal::{BlobSlot, StagedBlob, check_staged_integrity, recorded_plan};
+use crate::pipeline::journal::{
+    BlobSlot, StagedBlob, check_staged_integrity, effective_work_state, recorded_plan,
+    recorded_state,
+};
 use crate::pipeline::restore::{ManifestSource, RestoreError, hex32};
 use crate::pipeline::reveal::RevealError;
 use crate::preview::{
@@ -361,7 +364,8 @@ pub struct WorkUnits {
     pub title: Option<String>,
     /// The work's network, canonical CLI spelling.
     pub network: String,
-    /// The coarse completion state.
+    /// The coarse completion state — the effective one (D203 R1): the fine
+    /// tag's whenever the journal carries a tag, the mirror only when not.
     pub state: WorkState,
     /// Where the manifest was recovered from. Never
     /// [`ManifestSource::Network`]: `show` holds no backend.
@@ -456,12 +460,19 @@ impl WorkUnits {
             }
         })?;
 
+        // The effective state (D203 R1–R2): the fine tag's, and the mirror
+        // only for a work with no tag.
+        let state = effective_work_state(
+            recorded_state(store, seal_id).map_err(CliError::from)?,
+            record.state,
+        );
+
         Ok(Self {
             work_id: record.work_id,
             seal_id: *seal_id,
             title: record.shaping.title.clone(),
             network: record.network.clone(),
-            state: record.state,
+            state,
             manifest_source,
             files,
             preview,

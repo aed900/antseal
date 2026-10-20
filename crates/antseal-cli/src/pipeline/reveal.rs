@@ -154,7 +154,7 @@ use super::journal::{
     BlobSlot, JournalError, NONCE_LEN, PLAN_ENTRY, StagedBlob, check_staged_integrity, decode_plan,
 };
 use super::receipt_sink::{encode_receipt, recorded_receipt};
-use super::restore::{BlobOrigin, address_matches, storage_detail};
+use super::restore::{BlobOrigin, address_matches, effective_state, storage_detail};
 use crate::error::CliError;
 use crate::preview::{
     DisclosurePreview, PreviewError, SealedPlaintexts, all_normal_units, disclosure_preview,
@@ -588,7 +588,12 @@ impl<'i, 'v, B: StorageBackend> RevealEngine<'i, 'v, B> {
         request: &RevealRequest,
     ) -> Result<PreparedReveal, RevealError> {
         let record = self.store.load_meta(seal_id)?;
-        if record.state != WorkState::Complete {
+        // The effective state (D203 R1–R2), through the restore engine's
+        // own gate rather than a twin of it.
+        let state = effective_state(self.store, seal_id, record.state, |detail| {
+            RevealError::MalformedRecord { detail }
+        })?;
+        if state != WorkState::Complete {
             // U70: the finer word, from the one production of it — the
             // restore engine's call site, reached the same way rather than
             // by a byte-identical private twin of its table (the twin's own
@@ -596,7 +601,7 @@ impl<'i, 'v, B: StorageBackend> RevealEngine<'i, 'v, B> {
             // name states identically", which was true of those two and of
             // nothing else in the tree).
             return Err(RevealError::NotRevealable {
-                state: crate::status::detail_state_name(record.state),
+                state: crate::status::detail_state_name(state),
             });
         }
         let w = record.w.secret_ref();

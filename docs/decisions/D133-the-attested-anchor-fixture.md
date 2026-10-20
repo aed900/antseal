@@ -1240,3 +1240,75 @@ untouched, and `git status -- testdata/` is empty after R27's work. The clause
 this record forwards to R27's `Do`, to R27's Accept and to the M3 `Gate:` line
 carries the same error and is corrected at each of those sites; **Q237** carries
 the gate line.
+
+## Addendum — 2026-10-20 (wave 40, `R100`): §8 item 3 is built, as a spawned CLI row rather than a `verify_with_host` row
+
+§8 item 3 (`:916-922`) described the follow-on in these words: *"A cheap native row — the
+emitted fixture plus the two captured headers through `verify_with_host` — would put a
+real-material promotion under `cargo test` where `local-gate.sh` can see it. This is the single
+highest-value follow-on and it costs one test."* The register carries it as `R100`
+(`TODO.md:1104`).
+
+**First, a quotation that is not this record's.** `R100`'s row (`TODO.md:1104`) and its task
+entry (`tasks/R.md:1287`) attribute to this item the words *"the native promotion row — NOT
+built … the highest-value one-test follow-on, and it has no id"*. `command grep -n 'NOT
+built\|native promotion\|highest-value\|has no id'` over this record as it stood at `6e1cab3`,
+before this addendum, finds one line, `:921` (*"This is the single highest-value follow-on"*).
+The quoted words are `R84`'s tick note
+(`TODO.md:950`: *"D133 §8 item 3 — the native `verify_with_host` promotion row — was NOT built:
+it is discovered work, it remains the highest-value one-test follow-on, and it has no id"*). This
+record's own words are the ones quoted above.
+
+**What wave 40 rules — `R100`'s own Do, without a new record**, on planning lane P3's
+measurements at `6e1cab3`:
+- **A spawned row, not a `verify_with_host` row.** A new file,
+  `crates/antseal-cli/tests/verify_online_promotion.rs`, runs the shipped binary through
+  `tests/common/spawn.rs`, with a `config.toml` whose `[verify] bitcoin_endpoints` point at two
+  loopback stubs. `spawn.rs` arms the real-network gates (`ANTSEAL_NO_REAL_ANCHOR_NETWORK=1`,
+  `ANTSEAL_NO_REAL_STORAGE_NETWORK=1`), so a config-wiring regression that fell back to the pinned
+  esplora pair is refused before DNS and the row goes red on zero stub requests; an in-process
+  run is unarmed under a bare `cargo test`. The spawned row also covers what an in-process one
+  cannot: argv, `config::load()`, the `--json` envelope and the process exit code. This item's
+  *"native"* means *"not the browser"* (`cargo test`), which either venue satisfies.
+- **The fixture is assembled in the test**, from the two frozen vectors by §3 R4's public-API
+  assembly, and asserts 4 846 bytes, the size `crates/antseal-core/tests/page_fixtures.rs:160`
+  pins. It is not read from `target/`, where another crate's test writes it (a cold `target/`
+  reddens such a consumer, measured in wave 36), and it is not committed (§3 R2). P3's executed
+  draft produced bytes identical to the page fixture: sha256 `eca63446…7bd12e` for both,
+  `cmp` exit 0. The implementing lane re-proves that equality once, read-only, if the page
+  fixture exists in its tree, and records it.
+- **The stubs are `antseal_anchor::testing::replay`'s committed captures.** Agreement is two
+  independent captures of block 960767. The control is block 960768's capture served at height
+  960767: the two committed 960767 captures are byte-identical, so they cannot disagree.
+- **Three rows.** Offline: exit 43, `result.overlay` null, no request to either stub. Promotion:
+  exit 0, equal to `result.verdict.exit_code`; class `promoted` at `time_unix` 1785701746, height
+  960767, source `bitcoin-block-960767`; `headline_impact` supplying time 1785701746; the
+  offline report's `anchors[0].state` still `attested`; each stub's requests exactly the
+  block-height GET and the header GET; `endpoints.overridden` true. Control: exit 43,
+  `not-promoted` with reason `disagreed`, `headline_impact` `still-unanchored`. The plants run in
+  a shadow copy with a private target, and the file names nothing on `anchor_stage.rs`'s
+  live-endpoint lists, which `no_test_source_names_a_live_anchor_endpoint` checks in every test
+  source.
+- **Executed at `HEAD` with the existing binary:** offline 43; the agreeing pair 0, `promoted` at
+  1785701746; the disagreeing pair 43, `not-promoted` / `disagreed`. P3's draft of the file
+  passed 3 of 3 in a shadow copy, and each plant reddened its own row by message: the Accept's
+  (the promotion row's second stub swapped for the 960768 capture), `--online` dropped from the
+  promotion row, `--online` added to the offline row, the control's stubs made to agree, and the
+  product plant — `verify_host.rs:180` skipping `evidence.with_block` — which reddened only the
+  promotion row, so the row observes the production collector.
+- **Nothing to plant on the time's source.** The promotion requires the agreed header to equal
+  the embedded one (`crates/antseal-core/src/anchor/verdicts.rs:791`) before it reads the time
+  from the agreed header (`:811`), so the two times are equal by construction; the row pins the
+  value.
+
+**What changed since this item was written.** Its *"where `local-gate.sh` can see it"* is
+partly met already: `local-gate.sh` has run the browser lane since 2026-08-16 (`bda6849`;
+`browser_lane page-browser --check`, `scripts/local-gate.sh:870`; a SKIP on a host with no
+browser), so `R84`'s *"which `local-gate.sh` does not run"* (`tasks/R.md:1028`) is stale. What
+`R100` adds is the `cargo test` venue — the hosted `ci` runs it — and the CLI's own collector.
+
+How the lean fared: *"a spawned-binary test … with two loopback replay stubs … the fixture is
+the D133 attested sealproof; three outcomes asserted"* fell (b). The direction survived; two
+premises fell — the test cannot read that sealproof and must assemble the same bytes, and the
+stubs are the existing replay module, not new servers. Lane L-VERIFY builds the row in wave 40.
+The rulings and corrections above stand as written.
