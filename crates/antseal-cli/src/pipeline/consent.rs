@@ -44,6 +44,11 @@ pub struct ConsentRequest<'a> {
     pub quote: &'a CostQuote,
     /// How many blobs the quote covers (units + the encrypted manifest).
     pub blob_count: usize,
+    /// How many blobs the whole seal holds — every encrypted unit plus the
+    /// encrypted manifest. A remainder or a proofs-expired re-payment quotes
+    /// only the blobs still to buy, so `blob_count` can be smaller, and the
+    /// screen says which share of the seal it is (U120, D209 R8).
+    pub work_blob_count: usize,
     /// The last journaled consent, for the prior-totals display (D36 rule
     /// 4). Display only — nothing gates on it.
     pub prior: Option<ConsentRecord>,

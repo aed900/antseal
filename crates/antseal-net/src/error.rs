@@ -34,12 +34,12 @@ pub enum StorageError {
         /// Diagnostic detail.
         reason: String,
     },
-    /// Payment failed **before any ANT moved**. Gas may have been spent —
-    /// by a token approval, or by a first payment sub-batch that reverted
-    /// on-chain (S50) — but no quote is paid and nothing is journaled, so a
-    /// resume quotes and pays everything afresh. A failure after one or
-    /// more sub-batch txs landed is [`StorageError::StrandedPayment`]
-    /// instead — the distinction is the whole point of the split.
+    /// Payment failed **before any ANT moved**: nothing was sent, a first sub-batch
+    /// transaction reverted on-chain (S50), or a broadcast that was not acknowledged
+    /// never showed on the chain within the resolution window (D208). Gas may have
+    /// been spent (an approval, a revert), but no quote is paid and nothing is
+    /// journaled, so a resume quotes and pays everything afresh. A failure after one
+    /// or more sub-batch txs landed is [`StorageError::StrandedPayment`] instead.
     #[error("payment failed before any ANT moved: {reason}")]
     Payment {
         /// Diagnostic detail.
@@ -81,9 +81,9 @@ pub enum StorageError {
     },
     /// Payment failed **mid-sequence with money already moved**: one or
     /// more sub-batch txs landed before the failure. A revert reports at
-    /// least one landing (S50); only an unobserved first landing reports 0,
-    /// because there money may have moved. The adapter hands the
-    /// partial quote→tx map to its capture hook before this error surfaces
+    /// least one landing (S50); only an unobserved first landing, or a first broadcast
+    /// the chain could not settle or still holds (D208), reports 0: money may have
+    /// moved. The adapter hands the partial quote→tx map to its capture hook first
     /// (D37 Decisions 2 and 7), but **whether that record became durable is
     /// the hook's to report, not this error's**: when the latest capture was
     /// not durable, the evidence of money spent may exist only on-chain, and

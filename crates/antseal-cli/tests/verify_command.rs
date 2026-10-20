@@ -2588,3 +2588,182 @@ fn the_cli_prints_the_modules_receipt_sentence_and_carries_its_token() {
         document["overlay"]["receipt"]["line"]
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// U119 — `verify` reads no more than one byte past the codec's cap
+// ─────────────────────────────────────────────────────────────────────
+
+/// **U119.** `verify` reads at most one byte past the codec's cap, so an
+/// endless input — `/dev/zero` — reaches the codec's own oversize refusal
+/// promptly instead of being read until memory runs out (at `ab7226f`: exit 4,
+/// "out of memory", under this test's cap). The reference is a sparse file one
+/// byte over the cap: the endless input must get its refusal byte for byte, in
+/// both modes. A regular file further over the cap is refused from its length,
+/// unread, and states that true length — the endless input's `cap + 1` is all
+/// a reader of a stream can know. And the refusal keeps its place behind the
+/// invocation checks that come before verification (D69 §3 R6, D170 §2 R6):
+/// `--network devnet --live` with no devnet export meets the no-backend seam
+/// (23) in a build without a backend and the usage refusal (2) in one with.
+///
+/// Each child runs under an address-space cap (`ulimit -v`, through `sh`), so
+/// a regression that reads the endless input whole fails here as "out of
+/// memory" instead of exhausting the host, and under a deadline, so one that
+/// blocks fails by message instead of hanging the suite. Linux only: the cap
+/// is enforced there, and CI runs this suite there.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_endless_bundle_input_is_refused_at_the_cap_without_being_read_whole() {
+    use antseal_core::codec::caps::MAX_BUNDLE_BYTES;
+    use std::time::{Duration, Instant};
+
+    /// Address space for each child, in KiB (2 GiB). The bounded read's buffer
+    /// peaks at 512 MiB (the vector doubles past 256 MiB); the unbounded read
+    /// exhausts the cap within a second.
+    const LIMIT_KIB: u64 = 2 * 1024 * 1024;
+    const DEADLINE: Duration = Duration::from_secs(60);
+
+    /// One capped, deadlined run of the armed binary: its exit code, stdout
+    /// and stderr, or the run's name if it missed the deadline.
+    fn run_capped(
+        dir: &TestDir,
+        label: &str,
+        args: &[&str],
+    ) -> Result<(Option<i32>, String, String), String> {
+        let armed = spawn::antseal();
+        let mut command = std::process::Command::new("sh");
+        command
+            .arg("-c")
+            .arg("ulimit -v \"$1\" && shift && exec \"$@\"")
+            .arg("sh")
+            .arg(LIMIT_KIB.to_string())
+            .arg(armed.get_program())
+            .args(args);
+        // The helper's own gate variables (D99 R4.1), carried over rather than
+        // spelled here, so this child is armed exactly as `spawn::antseal()`'s.
+        for (key, value) in armed.get_envs() {
+            match value {
+                Some(value) => command.env(key, value),
+                None => command.env_remove(key),
+            };
+        }
+        let stdout = dir.path().join(format!("{label}.stdout"));
+        let stderr = dir.path().join(format!("{label}.stderr"));
+        command
+            .env("ANTSEAL_DIR", dir.path().join("no-vault-here"))
+            .env_remove("ANTSEAL_DEVNET_ENV")
+            .env_remove("RUST_LOG")
+            .stdin(Stdio::null())
+            .stdout(std::fs::File::create(&stdout).expect("a stdout file"))
+            .stderr(std::fs::File::create(&stderr).expect("a stderr file"));
+        let started = Instant::now();
+        let mut child = command.spawn().expect("spawn sh");
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("poll the child") {
+                break status;
+            }
+            if started.elapsed() >= DEADLINE {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{label}: no exit within {} s", DEADLINE.as_secs()));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let read = |path: &Path| std::fs::read_to_string(path).expect("a captured stream");
+        Ok((status.code(), read(&stdout), read(&stderr)))
+    }
+
+    let dir = TestDir::new("u119");
+    let sparse = |name: &str, len: u64| {
+        let path = dir.path().join(name);
+        std::fs::File::create(&path)
+            .and_then(|file| file.set_len(len))
+            .expect("a sparse file");
+        path.to_str().expect("utf-8").to_owned()
+    };
+    let over_one = sparse("over-one.sealproof", MAX_BUNDLE_BYTES + 1);
+    let over_more = sparse("over-more.sealproof", MAX_BUNDLE_BYTES + 1000);
+    let refusal = |len: u64| {
+        format!(
+            "this bundle did not verify: bundle input of {len} bytes exceeds the \
+             {MAX_BUNDLE_BYTES}-byte limit [bundle-too-large]"
+        )
+    };
+
+    let reference_refusal = refusal(MAX_BUNDLE_BYTES + 1);
+    let mut failures = Vec::new();
+    // The endless input against the reference, in both modes.
+    for (mode, flags) in [("json", &["--json"][..]), ("plain", &[][..])] {
+        let mut reference_args = flags.to_vec();
+        reference_args.extend(["verify", over_one.as_str()]);
+        let mut endless_args = flags.to_vec();
+        endless_args.extend(["verify", "/dev/zero"]);
+        let reference = run_capped(&dir, &format!("reference-{mode}"), &reference_args);
+        let endless = run_capped(&dir, &format!("endless-{mode}"), &endless_args);
+        match (reference, endless) {
+            (Ok(reference), Ok(endless)) => {
+                if reference.0 != Some(40) || !reference.2.contains(&reference_refusal) {
+                    failures.push(format!(
+                        "the reference ({mode}): expected exit 40 and {reference_refusal:?}, \
+                         got {reference:?}"
+                    ));
+                }
+                if endless != reference {
+                    failures.push(format!(
+                        "/dev/zero ({mode}): expected the reference's exit and bytes {reference:?}, \
+                         got {endless:?}"
+                    ));
+                }
+            }
+            (reference, endless) => {
+                failures.extend(reference.err());
+                failures.extend(endless.err());
+            }
+        }
+    }
+    // A regular file is refused at its true length, never `cap + 1`.
+    let true_length = ["--json", "verify", over_more.as_str()];
+    match run_capped(&dir, "true-length", &true_length) {
+        Ok((code, stdout, _)) => {
+            if code != Some(40) || !stdout.contains(&refusal(MAX_BUNDLE_BYTES + 1000)) {
+                failures.push(format!(
+                    "a regular file {} bytes long: expected exit 40 and {:?}, got {code:?}: \
+                     {stdout}",
+                    MAX_BUNDLE_BYTES + 1000,
+                    refusal(MAX_BUNDLE_BYTES + 1000)
+                ));
+            }
+        }
+        Err(missed) => failures.push(missed),
+    }
+    // The invocation checks keep their place ahead of the refusal.
+    let (expected, class) = if cfg!(feature = "ant-backend") {
+        (2, "usage")
+    } else {
+        (23, "network-failure")
+    };
+    let precedence = [
+        "--json",
+        "--network",
+        "devnet",
+        "verify",
+        over_more.as_str(),
+        "--live",
+    ];
+    match run_capped(&dir, "precedence", &precedence) {
+        Ok((code, stdout, _)) => {
+            if code != Some(expected) || !stdout.contains(&format!("\"class\":\"{class}\"")) {
+                failures.push(format!(
+                    "--network devnet --live over an oversize file: expected exit {expected} \
+                     ({class}) before any verdict, got {code:?}: {stdout}"
+                ));
+            }
+        }
+        Err(missed) => failures.push(missed),
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of 6 runs failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}

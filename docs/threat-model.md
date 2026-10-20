@@ -572,7 +572,7 @@ to get wrong:
 
 - the wallet secret is **not derived from `W`** and is not derived from
   anything. It is a fresh 32-byte CSPRNG key, or a raw hex key the user
-  imported (`crates/antseal-cli/src/init.rs:544-567`);
+  imported (`crates/antseal-cli/src/init.rs:555-578`);
 - the sub-key is a sub-key of the **vault key**, so it protects the wallet
   record against a compromise of *another* record's key, not against the
   passphrase. A thief who breaks the passphrase derives the vault key and
@@ -676,7 +676,7 @@ the whole product decision: *"single re-encrypted file, no flags (D47)"*.
 (§2.1) carries `LOSS_WARNING` *and* `THEFT_WARNING`
 (`crates/antseal-cli/src/vault/bookkeeping.rs:68`, `:74`), and it is
 recorded as satisfied only after an export has been written *and*
-self-verified (`crates/antseal-cli/src/commands.rs:1100-1104`). The reason to
+self-verified (`crates/antseal-cli/src/commands.rs:1135-1139`). The reason to
 nag on both is that the two mitigations pull in opposite directions: the
 answer to loss is *make more copies*, and the answer to theft is *make
 fewer*. A user told only about theft keeps no backup and loses everything to
@@ -731,7 +731,7 @@ at every call site it has:
 | | antseal | upstream |
 | --- | --- | --- |
 | amount approved | the exact quoted total | `U256::MAX` (unlimited) |
-| where | the rule is the free function `allowance_to_approve` (`crates/antseal-net/src/backend.rs:133-141`); the adapter calls it and passes its output, deciding nothing itself (`ant_backend.rs:469`, `:474`, doc comment `:423-459`) | `evmlib-0.9.0/src/wallet.rs:188` and `:421`, `ant-core-0.5.0/src/data/client/payment.rs:141`, `ant-protocol-2.3.0/src/payment/single_node.rs:683` — four sites, one value; `payment.rs:130` documents *"Approves `U256::MAX` (unlimited) spending."* |
+| where | the rule is the free function `allowance_to_approve` (`crates/antseal-net/src/backend.rs:133-141`); the adapter calls it and passes its output, deciding nothing itself (`ant_backend.rs:469`, `:476`, doc comment `:423-459`) | `evmlib-0.9.0/src/wallet.rs:188` and `:421`, `ant-core-0.5.0/src/data/client/payment.rs:141`, `ant-protocol-2.3.0/src/payment/single_node.rs:683` — four sites, one value; `payment.rs:130` documents *"Approves `U256::MAX` (unlimited) spending."* |
 | how often | before essentially **every** seal | once per address, **ever** |
 
 The frequency difference is the mechanism, and it follows from the amount.
@@ -896,7 +896,7 @@ fields — the quote-based `proof_of_payment`, the ADR-0004
 `commitment_sidecars`, and **`tx_hashes`**, documented there as *"Transaction
 hashes from the on-chain payment"* — and `finalize_batch` hands the whole
 serialized proof to each storing peer, sequentially, until
-`CLOSE_GROUP_MAJORITY` of them accept (`ant_backend.rs:1922-1991`) — four of
+`CLOSE_GROUP_MAJORITY` of them accept (`ant_backend.rs:2688-2757`) — four of
 the seven quoting peers, since `CLOSE_GROUP_MAJORITY` is `(CLOSE_GROUP_SIZE
 / 2) + 1` over a close group of 7 (`ant-protocol-2.3.0/src/chunk.rs:35,40`).
 The proof rides *in* the PUT request rather than following an acceptance, so
@@ -1005,8 +1005,8 @@ singleton — `RecordIdentity::Wallet` carries no discriminant, where
 `Receipt { seal_id }` does (`crates/antseal-cli/src/vault/cipher.rs:100-118`)
 — so every seal in a vault is paid by the same address. The key itself is a
 fresh CSPRNG secret or an imported raw hex key
-(`crates/antseal-cli/src/init.rs:544-567`), never derived, and the address is
-its EIP-55 rendering (`init.rs:568`).
+(`crates/antseal-cli/src/init.rs:555-578`), never derived, and the address is
+its EIP-55 rendering (`init.rs:579`).
 
 `MVP-SPEC.md` line 185 makes three commitments against this risk. **Two are
 implemented and one is not**, and this document should not imply otherwise:
@@ -1623,7 +1623,7 @@ never a downgrade of the original. Executed by
 
 **Claimed time is the sealer's, and it is subordinate by absence rather than
 by a filter.** The value is injected once, at the one place a clock is
-trusted (`crates/antseal-cli/src/seal_run.rs:705-707`), and lands in the
+trusted (`crates/antseal-cli/src/seal_run.rs:706-708`), and lands in the
 manifest body as informational only (`body.rs:1204-1209`). In the verifier it
 lives in a field named for its status —
 `claimed_time_informational_only` (`crates/antseal-core/src/verify/report.rs:278`)
@@ -1942,27 +1942,27 @@ different numbers. Measured:
   `the_default_tsa_list_is_the_specs_two`, `tsa/tests.rs:579`);
 - the **seal gate requires one verified token**, not two:
   `MIN_VERIFIED_TSA_TOKENS = 1`
-  (`crates/antseal-anchor/src/submit.rs:292`), and the constant's own doc at
-  `:284-291` says *"**One**, and A31 does not change it."*
+  (`crates/antseal-anchor/src/submit.rs:286`), and the constant's own doc at
+  `:278-285` says *"**One**, and A31 does not change it."*
 
 The distinction is load-bearing in the other direction too: two configured
 endpoints can be **one** TSA behind two names — `timestamp.entrust.net` and
 `timestamp.sectigo.com` share a signer certificate
 (`docs/anchors/real-smoke-runbook.md:80-85`) — which is why `distinct_tsas()`
-(`submit.rs:124`) exists, so a report never says "two anchors" when two
+(`submit.rs:118`) exists, so a report never says "two anchors" when two
 endpoints collapsed into one authority. A section that promised "≥2 verified
 TSAs" would be describing a policy the code does not implement and a
 robustness the collapse case does not deliver.
 
 **The minimum-anchor policy, and the escape.** `evaluate_seal_gate`
-(`submit.rs:252-276`) aborts a seal that produced zero verified tokens unless
+(`submit.rs:246-270`) aborts a seal that produced zero verified tokens unless
 `--force-degraded` is passed (`crates/antseal-cli/src/cli.rs:392-394`), and
 the abort is loud about what did *not* happen: `antseal seal` exits 22 with
 *"no RFC 3161 timestamp token that counts toward the anchor gate was obtained,
 so the seal stopped before anything was paid or uploaded"*, names every
 endpoint that failed with its class, and states the resume rules
 (`crates/antseal-cli/src/error.rs:719-764`). The gate's own text carries the
-same facts (`crates/antseal-anchor/src/gate.rs:191-202`).
+same facts (`crates/antseal-anchor/src/gate.rs:185-196`).
 `--force-degraded` cannot buy everything: it cannot authorise a `--no-anchor`
 seal on a permanent network, and the test loops both flag combinations to
 prove it (`submit/tests.rs:251`).

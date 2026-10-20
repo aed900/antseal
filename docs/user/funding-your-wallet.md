@@ -60,7 +60,7 @@ The report shows the quote and both balances together, and marks any shortfall:
                <N> wei
 ```
 
-(`crates/antseal-cli/src/seal_consent.rs:139-158`, `:236-242`)
+(`crates/antseal-cli/src/seal_consent.rs:143-172`, `:268-274`)
 
 The help's *true pricing mechanism, indicative figure* is the whole contract:
 the quote comes from the network itself rather than an offline estimate, and
@@ -104,7 +104,7 @@ Unpacked:
   it.** `--wallet` defaults to `generate`
   (`crates/antseal-cli/src/cli.rs:250`), and a generated key goes straight into
   the vault's wallet record: `init` keeps the checksummed address and drops the
-  key (`crates/antseal-cli/src/init.rs:568-570`). None of the ten subcommands
+  key (`crates/antseal-cli/src/init.rs:579-581`). None of the ten subcommands
   prints, exports or rotates it.
 - **You can keep spending it; you cannot move it.** A vault backup carries the
   key, and `vault import` reinstalls it
@@ -169,7 +169,7 @@ What *has* been measured, so you know the shape of the bill:
 - **Storage, on a local devnet.** Two end-to-end runs against live nodes
   quoted exactly 11 718 750 000 000 000 atto-ANT (0.01171875 ANT) per blob —
   82 031 250 000 000 000 atto-ANT for 7 blobs and 58 593 750 000 000 000 for 5
-  (`TODO.md:363`, `tasks/S.md:277`). Those nodes were running on one laptop
+  (row `S17`; row `S18`, `tasks/S.md:278`). Those nodes were running on one laptop
   and set their own prices. **Read this as arithmetic that works, not as a
   price**: Arbitrum One's price is set by the real network's peers and is
   unrelated.
@@ -184,7 +184,7 @@ What *has* been measured, so you know the shape of the bill:
 Two rules of thumb that follow from how the payment is built:
 
 - **You pay per blob, not per file.** A blob is every encrypted unit plus the
-  encrypted manifest (`crates/antseal-cli/src/seal_consent.rs:140-142`), so a
+  encrypted manifest (`crates/antseal-cli/src/seal_consent.rs:148-150`), so a
   work split into many units has more blobs to pay for than the same work
   sealed whole. How much more depends on what the network's peers charge;
   `--dry-run` prints both the blob count and the total.
@@ -288,8 +288,8 @@ What each one asks of you:
 - **37 means the vault could not record what was bought: fix the vault
   first, then read the next quote.** antseal decides what is already paid
   for from the receipt in your vault alone, and has no other way to learn
-  what a payment bought (`crates/antseal-cli/src/pipeline/resume.rs:185-189`,
-  `:215-219`). When the vault could not write that receipt — for example a
+  what a payment bought (`crates/antseal-cli/src/pipeline/resume.rs:185-212`,
+  `:239-243`). When the vault could not write that receipt — for example a
   full disk, a permissions change or a failing drive — re-running
   `antseal seal` quotes, and charges again for, everything the vault does not
   show as paid, and the ANT spent on the unrecorded part is gone. Re-running

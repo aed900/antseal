@@ -1187,3 +1187,94 @@ exclusion and §5's `reveal` mapping are untouched. The one consequence worth
 naming is downstream and already registered: the third arm is what makes D48
 §6's own *"per-file detail always available … in the `--json` result"* true, and
 the `restore` half of that correction is row **U69**.
+
+## Addendum — 2026-10-20 (U119): `verify` reads its input through a bound of `MAX_BUNDLE_BYTES + 1`, refuses an oversize regular file unread at its true size, and keeps this record's precedence
+
+§3 R2 puts *"a tampered, forged, malformed, oversized or non-canonical bundle"* in
+`verify-bundle-rejected` (40), and a bundle file that is *"missing or unreadable"* in `io-error`
+(4) (`:410`, `:422`). At `ab7226f` the handler read its input with `std::fs::read`, so the
+codec's 256 MiB cap (`MAX_BUNDLE_BYTES`, `crates/antseal-core/src/codec/caps.rs:108`, checked as
+the decoder's first statement) applied only once the whole input was in memory. Wave 41's
+planning lane P3 executed `antseal verify /dev/zero` under a 1.5 GB address-space cap: exit 4,
+*"I/O error: reading /dev/zero: out of memory"*. An oversized input reached 40 only if it fit in
+memory; P3 judged, without running it, that with no cap an endless one would take the host's
+memory. Row `U119` bounds the read. Wave 41's lane L-CFG4 lands it, with an extension the
+orchestrator granted. Line numbers are the wave's working tree, where
+`crates/antseal-cli/src/commands.rs` and `crates/antseal-cli/tests/verify_command.rs` hash to the
+sha256 values the lane reported.
+
+- **The read is bounded** (`crates/antseal-cli/src/commands.rs:989-1019`). The handler opens the
+  input and reads its metadata. Every input except a regular file over the cap is read through
+  `std::io::Read::take(file, cap + 1)`, where the cap is the codec's own constant, imported by
+  path, with no second literal. A missing or unreadable input is still `io-error` (4), with the
+  same *"reading {path}"* context as at `ab7226f`, as §3 R2 rules. The read is inline `std`, not
+  the vault's `read_bounded`: `verify_command.rs`'s closed-reach scan (`U77`) pins `verify`'s
+  body to the `crate::` modules `backend`, `config`, `verify_host` and `verify_out`, and per the
+  lane's report a body call to `crate::vault::session::read_bounded` turns that scan red.
+- **An oversize regular file is refused unread, at its true size, through the path a decode
+  failure takes.** A regular file whose metadata length exceeds the cap is not read. Its refusal
+  is built from core's own chain, `BundleError::InputTooLarge { len: meta.len(), cap }` inside
+  `SealProofError::Bundle`, `VerifyError::Decode`, `VerifyRunError` and `CliError`, so it renders
+  exactly as the codec's refusal did when the file was read whole. For a file 1000 bytes over the
+  cap: *"error: this bundle did not verify: bundle input of 268436456 bytes exceeds the
+  268435456-byte limit [bundle-too-large]"*, class `verify-bundle-rejected`, exit 40. The bounded
+  read alone would have stated *"268435457 bytes"* for every such file, which is false.
+- **It is returned where the decode would have failed, so this record's precedence holds**
+  (`:1060-1065`, the one seven-line insertion the orchestrator granted outside the read region).
+  The stored refusal comes after the no-backend seam (`:1021-1027`: §3 R6's `--live` refusal at
+  the seam as `network-failure`, 23) and after the network resolution of D170 §2 R6
+  (`:1037-1058`: a missing devnet definition is `usage`, 2, before verification). That is where
+  the decode of a whole read failed at `ab7226f`.
+- **Measured: every regular-file row is byte-identical to `ab7226f`.** Per the lane's report:
+  default build, `env -i`, a 2 GiB address-space cap and a 60 s kill timeout. A sparse file one
+  byte over the cap and one 1000 bytes over were each run under plain `verify`, `--online`,
+  `--live` and `--network devnet --live`, in human and `--json` modes. All 16 runs gave
+  byte-identical stdout and stderr and the same exit code: 40, 40, 23 and 23 in those four modes.
+  For a build with the storage backend the lane traced the code without building it.
+  `--network devnet --live` with no definition stays `usage` (2), resolved inside the network
+  block before the insertion. `--live` on `arbitrum-one` gives the same 40 bytes, now returned
+  just before the runtime is built rather than from inside `run_verify_live`. The one reordering
+  is a tokio runtime that fails to build, which is practically unreachable, and the orchestrator
+  accepted it.
+- **A stream now gets the oversize refusal promptly.** `/dev/zero` is read to the cap and one
+  byte more, then refused. Under plain `verify` and `--online` it exits 40 in 0.13–0.43 s. Under
+  `--live` it gets the seam's 23 after the bounded read, and no `/dev/zero` run took more than
+  0.86 s. At `ab7226f`, under the same 2 GiB cap, the same eight runs exited 4 with *"out of
+  memory"*. `/dev/zero`'s refusal is byte-identical to the one-byte-over file's in both modes. A
+  pipe takes the same branch, because it is not a regular file; the lane measured `/dev/zero`. In
+  this record's terms, an endless input moves from an `io-error` that only the memory limit
+  ended to §3 R2's *"oversized"* bundle.
+- **Recorded residue: a stream's *"268435457 bytes"*.** For a stream the refusal reads *"bundle
+  input of 268435457 bytes exceeds the 268435456-byte limit"*. A stream's length is unknowable,
+  and that number is only what was read. The wording lives in `antseal-core`
+  (`crates/antseal-core/src/bundle/error.rs:557`), pinned by that file's Display test and by
+  `crates/antseal-core/tests/format_registry_freeze.rs`; `antseal-core` is a wasm input and was
+  not touched this wave. Row `U121` owns it.
+- **Tests and plants.** Per the lane's report, the test is spawned, and it and every plant ran in
+  a shadow copy with a private target.
+  - `an_endless_bundle_input_is_refused_at_the_cap_without_being_read_whole`
+    (`crates/antseal-cli/tests/verify_command.rs:2615`, `#[cfg(target_os = "linux")]`, appended
+    at the end) makes six runs. `/dev/zero` runs against a sparse one-byte-over reference in
+    `--json` and plain modes, and exit, stdout and stderr must be byte-equal, with the reference
+    at exit 40 and its refusal. A sparse 1000-bytes-over file must state its own length.
+    `--json --network devnet verify <file> --live` with `ANTSEAL_DEVNET_ENV` removed expects 23
+    (`network-failure`) in a default build and 2 (`usage`) under
+    `cfg!(feature = "ant-backend")`. Each child runs under `ulimit -v` inside its own `sh`, so no
+    other test carries the limit.
+  - Green: *"test result: ok. 28 passed; 0 failed; …"*, with the closed-reach scan,
+    `verifys_handler_reaches_no_prompt_capable_call_site_over_a_closed_scan`, among them.
+  - Plants, each exit 101 and red by message:
+    - **P119a** (`ab7226f`'s unbounded `std::fs::read`) → *"2 of 6 runs failed"*: `/dev/zero` got
+      *"error: I/O error: reading /dev/zero: out of memory"* where the reference's exit 40 was
+      expected.
+    - **P119b** (the refusal returned at the read, ahead of the seam) → *"1 of 6 runs failed"*:
+      *"--network devnet --live over an oversize file: expected exit 23 (network-failure) before
+      any verdict, got Some(40)"*.
+    - **P119c** (no regular-file branch) → *"1 of 6 runs failed"*: the 1000-bytes-over file
+      stated *"268435457 b…"* instead of its own length.
+  - The test's `ant-backend` arm was written from reading the code, and no lane built it; the
+    gate's heavy tier only compiles, so the orchestrator ran it before the commit: `cargo test -p
+    antseal-cli --features ant-backend --test verify_command`, 29 passed, 0 failed (exit 0).
+
+No ruling of this record moves; §3 R2's table now holds for an endless input too. The text above
+this addendum is not edited.

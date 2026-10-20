@@ -390,15 +390,15 @@ impl WorkStatus {
         let receipt = recorded_receipt(store, seal_id)
             .map_err(CliError::from)?
             .map(|receipt| {
-                let mut block_numbers: Vec<u64> = receipt
-                    .txs
-                    .iter()
-                    .filter_map(|tx| tx.block_number)
-                    .collect();
+                // D208 R12: only the transactions that paid a quote — never
+                // a revert's or a never-mined one's evidence record.
+                let paying = crate::pipeline::journal::paying_txs(&receipt);
+                let mut block_numbers: Vec<u64> =
+                    paying.iter().filter_map(|tx| tx.block_number).collect();
                 block_numbers.sort_unstable();
                 block_numbers.dedup();
                 ReceiptRow {
-                    transactions: receipt.txs.len(),
+                    transactions: paying.len(),
                     block_numbers,
                 }
             });

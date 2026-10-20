@@ -550,3 +550,143 @@ ran in the shared target under the locks.
 It adds one refusal to `init` and a clause to one document, inside the wave's own commits.
 Nothing in it authorises a push, a workflow dispatch, a deploy or any other outward act; each of
 those needs the maintainer's express consent naming the action, the destination and the account.
+
+## Addendum — 2026-10-20 (U112, and U117's text for C5): a `vault.header` link that cannot be followed gets its own refusal, a folder at a path `init` writes counts, and copy-back is offered only for a real `config.toml`
+
+§6's *"Left open"* (`:527-539`) hands two odd entries to `U112`. Wave 41 rules `U112` under this
+record, with no record of its own, and lane L-INIT2 lands it. This addendum records what was
+built, the one wording the lane tightened, what stays D39's, and the one text of §6 that wave 41's
+`U117` changed. Line numbers are the wave's working tree. `crates/antseal-cli/src/init.rs`,
+`crates/antseal-cli/tests/init_command.rs` and `docs/config.md` hash to the sha256 values the lane
+reported.
+
+Wave 41's planning lane P3 ran `--json --passphrase-fd 0 init` through the `ab7226f` binary, with
+the passphrase on stdin, and its cases made the second half of `U112` a binary defect, not an
+in-process one. The row said that dispatch refuses an empty folder at `config.toml` first (exit 4)
+and creates nothing. That holds for `config.toml` only (C5). An empty folder at **`store/check`**
+(C6) failed with exit 4, *"I/O error: writing …/store/check: Is a directory (os error 21)"*, after
+the passphrase and the KDF, against §2 R1's *"before the passphrase"*. One at **`store/wallet`**
+(C7) failed the same way after the vault was created: `vault.header` and `store/check` were
+written, with no wallet record and no `config.toml`, and `list` then unlocked that vault.
+
+- **R1: a `vault.header` link that cannot be followed is refused in its own words, after D39's
+  check.** D39's check is untouched (`init.rs:417-420`; `:418` is still `if header.exists() {`),
+  as D155 §2 R1 requires, so the citation of *"`init.rs:418`"* in `tests/vault_keyfile.rs:672`
+  holds. Directly after it (`:421-429`), `std::fs::symlink_metadata(&header).is_ok()` returns
+  `unfollowable_header_refusal` (`:656-673`): class `usage`, exit 2. After `CliError::Usage`'s
+  *"usage error: "*, word for word as ruled:
+
+  > *"{root}/vault.header is a link that antseal cannot follow, so it cannot tell whether {root}
+  > holds a vault — and it never writes over one. Move {root} aside instead of deleting it — a
+  > moved directory keeps everything — then run `antseal init` again."*
+
+  The check is reached only when `exists()`, which follows links, found nothing to follow: a link
+  to nothing, a loop, or a link into a place the process cannot reach. Per the lane's report, on
+  Linux that is always a link whose target cannot be resolved, so *"is a link"* holds. Before
+  this check, the walk named such a link under *"there is no vault.header"* and contradicted
+  itself (C1). D205's text is unchanged and is now true wherever it is reached, because both
+  header checks run before the walk.
+- **R2: every file `init` writes counts, whatever its type, from one function.**
+  `paths_init_writes` (`:792-805`) returns `config.toml`, `store/check` and `store/wallet`;
+  `vault.header` belongs to the header checks. `first_file_without_a_vault` (`:748`) looks at
+  those three first, with `symlink_metadata(&path).is_ok()` (`:749-753`), so a folder there
+  counts. `config.toml` comes first, so a hand-written one is still the entry named. Elsewhere,
+  directories still do not count: `scripts/stage0.sh`'s empty vault directory and the
+  `store/works/` a KDF failure leaves (§1.8) stay allowed. The list is pinned by a census of the
+  writers, not of names: G112-2 runs a real `init` and reads off disk the files it leaves, so a
+  file a future `init` writes that the list misses turns the test red. Per the lane's report, an
+  `lstat` error other than `NotFound` in that loop (`EACCES` on `store/`, `ENOTDIR` when `store`
+  is a file) is not itself a refusal: the walk then meets the same place and names the file or
+  returns this record's `io-error`, so no unreadable path passes silently.
+- **R3: the copy-back clause only for a regular `config.toml`.** It is keyed on
+  `is_config && found.is_file()` (`:695`). `is_file()` follows links, so a link to a real file
+  keeps the advice. A folder or a dangling link named `config.toml` gets none, because neither has
+  settings to copy back.
+- **Deviation D1, under §2 R2's licence: a folder reads *"which it cannot do over a folder"*, not
+  *"replacing any it finds"*.** When `{found}` is itself a folder
+  (`symlink_metadata(found).is_ok_and(|meta| meta.is_dir())`, `:700-704`, which does not follow
+  links), the refusal reads:
+
+  > *"{root} holds no vault (there is no vault.header) but is not empty — {found} is in it — and
+  > `antseal init` writes its own config.toml and store records there, which it cannot do over a
+  > folder. Move {root} aside instead of deleting it — a moved directory keeps everything — then
+  > run `antseal init` again."*
+
+  The ground, per the lane's report: `atomic_write` writes a temporary file and renames it over
+  the target, and a rename over a directory fails (C6 and C7 at `ab7226f`, *"Is a directory (os
+  error 21)"*), so *"replacing"* was false for that one shape. A link (dangling, or to a folder),
+  a FIFO and a socket at those paths are replaced by the rename, and keep D205's words. The walk
+  never returns a directory, so a folder `{found}` always stands at a path `init` writes.
+- **R4: C2–C4 keep D39's refusal and its text, as recorded residue under D155 §2 R1.** A
+  directory at `vault.header` (C2), a link to a directory there (C3) and a FIFO there (C4) still
+  exit 2 with *"a vault already exists at {root} — antseal never overwrites a vault, …"*. Their
+  *"a vault already exists"* is not literally true, but the refusal and its remedy are right, and
+  the state is self-inflicted. Changing it would move `:418`'s predicate or its order, which D155
+  §2 R1 rules untouched. In G112-2, the folder at `vault.header` is C2 and passes through D39.
+- **R5: documents and doc comments.** `docs/config.md:16-18` now reads *"… Empty folders, and
+  the `vault.lock` antseal itself creates there, do not count as files, except a folder in the
+  place of a file `init` writes, which it cannot write over."* The next sentence keeps its words
+  and was reflowed, so lines 16–19 stay four lines and no citation into the file moves. In
+  `init.rs`, the walk's doc now reads *"Directories, except at a path `init` writes"* (`:729`);
+  the copy-back paragraph of `non_empty_directory_refusal`'s doc is rewritten (`:686-692`); the
+  call-site comment that ended *"Directories alone and the lockfile do not count."* is rewritten
+  (`:430-435`); and `run_init`'s `# Errors` adds *"a `vault.header` link it cannot follow
+  (U112)"* in its seven lines (`:396-402`), so `init.rs:1-420` does not move.
+- **R6: tests**, appended at the end of `crates/antseal-cli/tests/init_command.rs` (+261, none
+  removed; its first 1390 lines are byte-identical to `ab7226f`'s). Per the lane's report, the
+  spawned test and every plant ran in a shadow copy with a private target.
+  - G112-1, `init_over_a_dangling_vault_header_link_refuses_naming_the_link` (`:1442`,
+    `#[cfg(unix)]`): two link shapes, a link to nothing and a link to itself, each with and
+    without a `config.toml` beside it, the run count asserted. Each run asserts class `usage`,
+    exit 2, *"cannot follow"* and *"aside"*, neither *"there is no vault.header"* nor *"already
+    exists"*, an unchanged listing and unchanged `config.toml` bytes.
+  - G112-2, `init_refuses_a_directory_at_every_path_it_writes` (`:1534`): the census above. Then,
+    for each path found, a fresh directory with an empty folder there must refuse with `usage`
+    before the passphrase, with *"aside"*, no copy-back, no *"replacing"* and an unchanged
+    listing. Per the lane's report, the listing check is a regression guard that no plant
+    reaches, because in-process with no passphrase channel nothing can be written before the
+    passphrase step; G112-3 carries *"nothing written"* through the binary.
+  - G112-3, `the_binary_refuses_init_over_a_directory_at_store_wallet` (`:1620`, spawned): exit
+    2, `ok: false`, class `usage`, `exit_code` 2, the path named, *"aside"*, no copy-back, and the
+    tree afterwards exactly `store/`, `store/wallet/` and `vault.lock`.
+  - Red first against `ab7226f`'s `init.rs`: exit 101, *"0 passed; 3 failed"*. Green on the final
+    files: *"28 passed; 0 failed"*, 25 → 28, with this record's G105-1..5 among them. With wave
+    41's `U117` also in the tree, the in-process tests gave *"24 passed; 0 failed; … 4 filtered
+    out"*, the four filtered being the spawned tests.
+  - Plants, each exit 101 and red by message; this record's five tests stayed green under every
+    one:
+    - **P112a** (the link check removed) → *"7 passed; 1 failed"*: G112-1 only.
+    - **P112b** (`ab7226f`'s config-only predicate) → *"6 passed; 2 failed"*: G112-2 *"3 of 4
+      obstacles: … got PassphraseUnavailable"*, and G112-3 *"left: Some(4) right: Some(2)"*.
+    - **P112c** (`store/wallet` dropped from the list) → *"6 passed; 2 failed"*: G112-2 *"1 of 4
+      obstacles: store/wallet: expected a usage refusal, got PassphraseUnavailable"*, and G112-3.
+    - **P112d** (copy-back without `is_file()`) → *"7 passed; 1 failed"*: G112-2 *"1 of 4
+      obstacles: config.toml: a directory has no settings to copy back"*.
+    - **P112e**, the lane's own (the folder clause dropped) → *"7 passed; 1 failed"*: G112-2
+      *"3 of 4 obstacles: config.toml: init cannot write over a directory, so it replaces
+      nothing"*.
+- **C6 and C7, through the binary.** Per the lane's report, P3's probe was re-run unchanged
+  against the lane's binary, and all sixteen exit codes equal those of P3's variant. C6 (a folder
+  at `store/check`) and C7 (a folder at `store/wallet`) now exit 2 with D205's text and the folder
+  clause, before any passphrase, and nothing is written: the tree afterwards holds the folder,
+  `store/` and `vault.lock`. C1 and C1b exit 2 with R1's sentence, the link and any `config.toml`
+  kept. C9 (a dangling link at `config.toml`) exits 2 with D205's words and no copy-back. The
+  lane's tree binary, with `U117` in it, gives the same for C1, C6, C7 and C9.
+- **Superseded in §6, by line (not edited): the exit-4 text at `:536`.** §6 quotes dispatch's
+  refusal of a folder at `config.toml` (C5) as *"I/O error: reading …/vault/config.toml: Is a
+  directory (os error 21)"*. Since wave 41's `U117`, dispatch's `config::load()` refuses a
+  `config.toml` that is not a regular file before opening it (`load_from`'s read,
+  `crates/antseal-cli/src/config.rs:314`, through `read_vault_file`,
+  `crates/antseal-cli/src/vault/session.rs:489-497`). The text is now *"I/O error: reading
+  …/vault/config.toml: not a regular file: antseal reads only a regular file here, and refuses a
+  directory, FIFO, socket or device rather than opening it"*. Exit 4 and `io-error` are
+  unchanged, and nothing is created. Lane L-INIT2 measured it through the tree's binary with
+  `U117` in it. `U117`'s row rules it, and it takes no record of its own.
+- **Also superseded, by line (not edited).** `:206` and `:419` (*"directories alone do not
+  count"*, *"Directories never count"*) now hold except at the three paths `init` writes. `:417`
+  (the walk counts *"any non-directory"* at `config.toml`) now reads: any entry, at each of the
+  three. `:440` (copy-back *"only when `{found}` is `config.toml`"*) now also needs a regular
+  file. `:450-452` quote `docs/config.md`'s clause as it stood before R5's exception. This
+  addendum answers §6's *"Left open"* `U112` entry (`:527-539`).
+
+The text above this addendum is not edited.

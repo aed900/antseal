@@ -2075,10 +2075,10 @@ fn every_full_schema_key_is_refused_outside_its_home() {
 /// unterminated quote — is named by its position, counted from 0, in the house
 /// form "`{key}` entry {N}: …", for every list key the subset parses; and
 /// `rpc_endpoints`, whose refusal is a sentence of its own, carries the
-/// position into it. Never the value: the unquoted entry carries the canary in
-/// its userinfo. An unquoted bare value is not a list and has no entry to
-/// name, so its refusal stays unnumbered. Every case is judged and every
-/// failure kept, so the report shows which keys and positions broke.
+/// position and the subset's reason into it (U111). Never the value: the
+/// unquoted entry carries the canary in its userinfo. An unquoted bare value is
+/// not a list and has no entry to name, so its refusal stays unnumbered. Every
+/// case is judged and every failure kept, so the report shows what broke.
 #[test]
 fn an_array_entry_outside_the_subset_is_named_by_its_position() {
     let c = URL_CANARY;
@@ -2161,30 +2161,58 @@ fn an_array_entry_outside_the_subset_is_named_by_its_position() {
             true,
         ));
     }
-    // `rpc_endpoints`' own sentence, under both networks.
+    // `rpc_endpoints`' own sentence, under both networks: a refused entry is
+    // named by its position and the subset's own reason (U111), and the whole
+    // refusal is pinned, so it says exactly once that the value is withheld.
     let pair = "takes a one-line array of exactly two quoted endpoint URLs";
+    let withheld = "the value is not repeated here, because an RPC URL often carries an API key";
+    let unquoted = "the value is not a quoted string, a [\"…\"] array, or a bare true/false \
+                    (integers, dates, and inline tables are outside the antseal config subset)";
     for network in ["arbitrum-one", "arbitrum-sepolia"] {
         let sentence = format!("`rpc_endpoints` under [verify.{network}] {pair}");
         for (shape, value, tail, numbered) in [
             (
                 "an unquoted second entry",
                 format!("[\"https://a.example/\", {hostile}]"),
-                ", and entry 1 is not one;",
+                format!(", and entry 1 is not one: {unquoted}; {withheld}"),
                 true,
             ),
             (
                 "an unquoted first entry",
                 format!("[{hostile}, \"https://b.example/\"]"),
-                ", and entry 0 is not one;",
+                format!(", and entry 0 is not one: {unquoted}; {withheld}"),
                 true,
             ),
             (
                 "a boolean as the second entry",
                 "[\"https://a.example/\", true]".to_owned(),
-                ", and entry 1 is not one;",
+                format!(
+                    ", and entry 1 is not one: array entries must be quoted strings: a boolean \
+                     inside an array is outside the config subset; {withheld}"
+                ),
                 true,
             ),
-            ("an unquoted bare value", hostile.clone(), ";", false),
+            (
+                "an escape sequence as the second entry",
+                format!("[\"https://a.example/\", \"https://b.example/{c}\\t\"]"),
+                format!(
+                    ", and entry 1 is not one: escape sequences are outside the antseal config \
+                     subset (use a literal '…' string); {withheld}"
+                ),
+                true,
+            ),
+            (
+                "a stray quote in the second entry",
+                format!("[\"https://a.example/\", \"https://b.example/{c}\" \"x\"]"),
+                format!(", and entry 1 is not one: stray \" inside a \"-quoted string; {withheld}"),
+                true,
+            ),
+            (
+                "an unquoted bare value",
+                hostile.clone(),
+                format!("; {withheld}"),
+                false,
+            ),
         ] {
             cases.push((
                 format!("`rpc_endpoints` under [verify.{network}], {shape}"),
@@ -2194,10 +2222,13 @@ fn an_array_entry_outside_the_subset_is_named_by_its_position() {
             ));
         }
     }
+    // 30 = the four list keys in three shapes (12) + six more `tsa_urls`
+    // reasons (6) + `rpc_endpoints` in six shapes under two networks (12).
+    // A nested array of two elements is U118's own test.
     assert_eq!(
         cases.len(),
-        4 * 3 + 6 + 2 * 4,
-        "four list keys in three shapes, six more reasons, and rpc_endpoints in four \
+        4 * 3 + 6 + 2 * 6,
+        "four list keys in three shapes, six more reasons, and rpc_endpoints in six \
          shapes under two networks"
     );
 
@@ -2209,6 +2240,11 @@ fn an_array_entry_outside_the_subset_is_named_by_its_position() {
             // First, so a restored echo fails on the echo and not on wording.
             Err(err) if err.detail.contains(c) || err.detail.contains("example") => Some(format!(
                 "{label}: the refusal must not carry the value: {}",
+                err.detail
+            )),
+            // Before the wording, so a doubled clause fails on its own name.
+            Err(err) if err.detail.matches("not repeated").count() > 1 => Some(format!(
+                "{label}: the refusal says twice that the value is withheld: {:?}",
                 err.detail
             )),
             Err(err) if !err.detail.contains(needle.as_str()) => {
@@ -2423,5 +2459,232 @@ fn an_rpc_url_key_in_any_table_is_exit_17_before_any_command_runs() {
         stderr.contains("unknown key `future_knob` under [verify.arbitrum-one]")
             && !stderr.contains(c),
         "{stderr}"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U118 — a nested array is refused with its true reason under every key
+// ─────────────────────────────────────────────────────────────────────
+
+/// **U118.** The quote-aware splitter cuts a nested array of two elements at
+/// its inner comma, and at `ab7226f` the first piece was refused as "array
+/// value must open and close on one line in this config" — false: the array
+/// does. Every key whose refusal carries the subset's reason must name entry 1
+/// as a nested array, on the key's line, without the value: the five that use
+/// the house form (`default_network`, `bootstrap`, `tsa_urls`,
+/// `ots_calendars`, `bitcoin_endpoints`), and `rpc_endpoints` under both
+/// networks, whose sentence carries the subset's reason since U111. The count
+/// is the array's type.
+#[test]
+fn a_nested_array_entry_is_named_as_one_under_every_key() {
+    let c = URL_CANARY;
+    let nested = format!("[\"https://b.example/{c}\", \"https://c.example/\"]");
+    let reason = "nested arrays are outside the config subset";
+    let rpc = |network: &str| {
+        format!(
+            "`rpc_endpoints` under [verify.{network}] takes a one-line array of exactly two \
+             quoted endpoint URLs, and entry 1 is not one: {reason}; the value is not repeated \
+             here, because an RPC URL often carries an API key"
+        )
+    };
+    let cases: [(&str, String, String); 7] = [
+        (
+            "default_network",
+            format!("\ndefault_network = [\"devnet\", {nested}]\n"),
+            format!("`default_network` entry 1: {reason}"),
+        ),
+        (
+            "bootstrap",
+            format!("[networks.arbitrum-one]\nbootstrap = [\"192.0.2.10:10000\", {nested}]\n"),
+            format!("`bootstrap` entry 1: {reason}"),
+        ),
+        (
+            "tsa_urls",
+            format!("[anchors]\ntsa_urls = [\"https://a.example/\", {nested}]\n"),
+            format!("`tsa_urls` entry 1: {reason}"),
+        ),
+        (
+            "ots_calendars",
+            format!("[anchors]\nots_calendars = [\"https://a.example/\", {nested}]\n"),
+            format!("`ots_calendars` entry 1: {reason}"),
+        ),
+        (
+            "bitcoin_endpoints",
+            format!("[verify]\nbitcoin_endpoints = [\"https://a.example/\", {nested}]\n"),
+            format!("`bitcoin_endpoints` entry 1: {reason}"),
+        ),
+        (
+            "rpc_endpoints under [verify.arbitrum-one]",
+            format!("[verify.arbitrum-one]\nrpc_endpoints = [\"https://a.example/\", {nested}]\n"),
+            rpc("arbitrum-one"),
+        ),
+        (
+            "rpc_endpoints under [verify.arbitrum-sepolia]",
+            format!(
+                "[verify.arbitrum-sepolia]\nrpc_endpoints = [\"https://a.example/\", {nested}]\n"
+            ),
+            rpc("arbitrum-sepolia"),
+        ),
+    ];
+
+    let mut failures = Vec::new();
+    for (label, text, needle) in &cases {
+        let failure = match parse(text) {
+            Ok(_) => Some(format!("{label}: must be refused")),
+            Err(err) if err.line != 2 => Some(format!("{label}: the key's line is 2: {err:?}")),
+            Err(err) if err.detail.contains(c) || err.detail.contains("example") => Some(format!(
+                "{label}: the refusal must not carry the value: {}",
+                err.detail
+            )),
+            Err(err) if !err.detail.contains(needle.as_str()) => {
+                Some(format!("{label}: expected {needle:?} in {:?}", err.detail))
+            }
+            Err(_) => None,
+        };
+        failures.extend(failure);
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} cases failed:\n{}",
+        failures.len(),
+        cases.len(),
+        failures.join("\n")
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// U117 — antseal reads its own files only when they are regular files
+// ─────────────────────────────────────────────────────────────────────
+
+/// **U117.** A non-regular file where antseal reads one of its own files —
+/// `config.toml`, `vault.header`, the key-check record `store/check` — is
+/// refused by type before it is opened, as an I/O error (4) that names the
+/// path. At `ab7226f` a FIFO there blocked the open forever (every command
+/// loads `config.toml` first; every unlock reads the header), a socket failed
+/// with ENXIO and a directory with EISDIR. Each read runs on a worker thread
+/// with a deadline, so a regression fails here by message instead of hanging
+/// the suite. The FIFO comes from the `mkfifo` command (std cannot make one
+/// without `unsafe`, which the workspace denies). A socket bind that a sandbox
+/// refuses is the one case that may be skipped, as D46's socket test does in
+/// `seal_plan.rs`; every other case must be built and run.
+#[cfg(unix)]
+#[test]
+fn a_non_regular_config_or_header_is_refused_before_it_is_opened() {
+    use antseal_cli::vault::kdf::KdfSelection;
+    use antseal_cli::vault::session::{create_vault, unlock_vault};
+    use antseal_core::crypto::secrets::SecretBuf;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// A worker that never returns is the hang this row is about.
+    const DEADLINE: Duration = Duration::from_secs(20);
+    // NON-SECRET: a fixture passphrase, as everywhere in this suite.
+    let passphrase = || SecretBuf::new(b"correct horse battery staple fixture".to_vec());
+
+    // The key-check record is read only after the header decodes and the KDF
+    // runs, so its cases need a real vault; one serves all three kinds.
+    let vault_dir = TestDir::new("nonreg-check");
+    let vault_layout = VaultLayout::at(vault_dir.path().join("vault"));
+    let mut rng = ChaCha20Rng::from_seed([0x42u8; 32]);
+    drop(
+        create_vault(
+            &vault_layout,
+            &passphrase(),
+            KdfSelection::Argon2id,
+            &mut rng,
+        )
+        .expect("create the vault whose key check is replaced"),
+    );
+
+    let targets = ["config.toml", "vault.header", "store/check"];
+    // The FIFO last: a regression leaves its worker blocked in `open`.
+    let kinds = ["directory", "socket", "fifo"];
+    let mut failures = Vec::new();
+    let mut ran = 0usize;
+    let mut skipped = Vec::new();
+    for target in targets {
+        for kind in kinds {
+            let label = format!("{target} as a {kind}");
+            let case_dir = TestDir::new(&format!("nonreg-{kind}"));
+            let layout = match target {
+                "store/check" => vault_layout.clone(),
+                _ => layout_with_config(&case_dir, None),
+            };
+            let path = match target {
+                "config.toml" => layout.beside_path(BesideFile::Config),
+                "vault.header" => layout.beside_path(BesideFile::Header),
+                _ => layout.check_record_path(),
+            };
+            // Whatever stands there (the real record, or the last kind's
+            // node) makes way for this kind's node.
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_dir(&path);
+            let mut bound = None;
+            match kind {
+                "directory" => std::fs::create_dir(&path).expect("make the directory"),
+                "socket" => match std::os::unix::net::UnixListener::bind(&path) {
+                    Ok(listener) => bound = Some(listener),
+                    Err(err) => {
+                        skipped.push(format!("{label}: the bind was refused: {err}"));
+                        continue;
+                    }
+                },
+                _ => {
+                    let made = std::process::Command::new("mkfifo")
+                        .arg(&path)
+                        .status()
+                        .expect("run mkfifo");
+                    assert!(made.success(), "{label}: mkfifo failed: {made}");
+                }
+            }
+            ran += 1;
+
+            let (tx, rx) = mpsc::channel();
+            let worker_layout = layout.clone();
+            let is_config = target == "config.toml";
+            let worker_passphrase = passphrase();
+            std::thread::spawn(move || {
+                let result = if is_config {
+                    load_from(&worker_layout).map(drop)
+                } else {
+                    unlock_vault(&worker_layout, &worker_passphrase).map(drop)
+                };
+                let _ = tx.send(result.map_err(|err| (err.class(), err.to_string())));
+            });
+            let shown = path.display().to_string();
+            match rx.recv_timeout(DEADLINE) {
+                Err(_) => failures.push(format!(
+                    "{label}: the read did not return within {} s",
+                    DEADLINE.as_secs()
+                )),
+                Ok(Ok(())) => failures.push(format!("{label}: it was read")),
+                Ok(Err((class, message))) => {
+                    let named = message.contains(&format!("reading {shown}: not a regular file"));
+                    let why = message.contains("antseal reads only a regular file here");
+                    if class != ErrorClass::IoError || !named || !why {
+                        failures.push(format!("{label}: {class:?}: {message}"));
+                    }
+                }
+            }
+            drop(bound);
+        }
+    }
+    eprintln!("U117: {ran} of 9 cases ran; skipped: {skipped:?}");
+    assert_eq!(
+        ran + skipped.len(),
+        targets.len() * kinds.len(),
+        "every case is run or skipped by name"
+    );
+    assert!(
+        skipped.iter().all(|why| why.contains("as a socket")),
+        "only a refused socket bind may skip: {skipped:?}"
+    );
+    assert!(
+        failures.is_empty(),
+        "{} of {ran} cases failed:\n{}",
+        failures.len(),
+        failures.join("\n")
     );
 }

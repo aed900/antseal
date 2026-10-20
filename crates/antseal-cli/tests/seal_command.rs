@@ -1351,12 +1351,19 @@ fn a_paid_work_is_refused_and_the_receipt_is_the_authority_not_the_tag() {
         .expect_err("a paid work is never abandoned on request");
     assert_eq!(err.class(), ErrorClass::Usage);
     let rendered = err.to_string();
-    assert!(rendered.contains("already been paid for"), "{rendered}");
-    assert!(rendered.contains("forfeit that payment"), "{rendered}");
-    // It offers the real way forward: finish it, buying no quote the receipt
-    // already maps — true of a partly paid work too (D203 M6c).
     assert!(
-        rendered.contains("no quote the receipt already maps is paid again"),
+        rendered.starts_with("usage error: a payment is recorded for work "),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("would give that payment up for good"),
+        "{rendered}"
+    );
+    // It offers the real way forward: finish it, buying only what the
+    // receipt does not cover — true of a partly paid work too (D203 M6c,
+    // D210 R3).
+    assert!(
+        rendered.contains("pays only for what the receipt does not cover"),
         "{rendered}"
     );
     assert!(rendered.contains("antseal seal a.txt"), "{rendered}");
@@ -1612,7 +1619,7 @@ fn a_paid_work_is_refused_through_the_abandon_surface_and_nothing_changes() {
         assert_eq!(err.class(), ErrorClass::Usage);
         assert_eq!(err.exit_code(), 2);
         let text = err.to_string();
-        assert!(text.contains("already been paid for"), "{text}");
+        assert!(text.contains("a payment is recorded for work"), "{text}");
         assert!(
             text.contains("antseal seal a.txt"),
             "the refusal names the command that finishes it: {text}"
@@ -2774,7 +2781,7 @@ fn an_unplanned_work_with_a_receipt_is_never_restarted_and_never_paid_again() {
     ))
     .expect_err("there is no plan to resume from");
     assert_eq!(backend.calls(Method::Pay), 0, "nothing is paid again");
-    // The resume's own refusal — not the engine's "already been paid for",
+    // The resume's own refusal — not abandon's rule 2 ("a payment is recorded"),
     // which only a (wrongly) restarted run would reach.
     assert_eq!(
         err.to_string(),
@@ -3351,7 +3358,7 @@ mod d203 {
 
         let err = abandon(&unlocked, &seal_id).expect_err("a paid work is never abandoned");
         assert!(
-            err.to_string().contains("has already been paid for"),
+            err.to_string().contains("a payment is recorded for work"),
             "{err}"
         );
     }
@@ -4180,10 +4187,14 @@ mod u110 {
 
     /// D203 M4's two lines for an `Anchored` work whose vault records a
     /// payment: true of a receipt that covers every blob (a kill between
-    /// the receipt and the `Paid` tag) and of one that covers some.
-    const PLAN_PAYMENT_RECORDED: [&str; 2] = [
+    /// the receipt and the `Paid` tag) and of one that covers some — then
+    /// `list`'s proof clock, which every plan over a recorded payment closes
+    /// on (D210 R2).
+    const PLAN_PAYMENT_RECORDED: [&str; 3] = [
         "    staged:    staged and past its anchor step; a payment is recorded",
         "    remaining: pay the rest, if any, then upload",
+        "    RESUME PROMPTLY: a payment for this seal is recorded, and its payment proofs stay \
+         usable for uploading only about a day — after that, finishing it costs a second payment",
     ];
     /// D203 M4's two lines for an `Anchored` work whose vault records none.
     const PLAN_NO_PAYMENT: [&str; 2] = [
@@ -4371,7 +4382,7 @@ mod u110 {
         assert_eq!(tag(&session, &seal_id), Some(SealState::Anchored));
 
         let plan_c = dry_run_plan(&session, &work).expect("(c) rehearses");
-        assert_eq!(plan_c.len(), 3, "(c): {plan_c:?}");
+        assert_eq!(plan_c.len(), 4, "(c): {plan_c:?}");
         assert_eq!(&plan_c[1..], &PLAN_PAYMENT_RECORDED[..], "(c)");
 
         // (c2): the exact re-run, DECLINED at the remainder's consent.
@@ -4749,13 +4760,13 @@ mod u110 {
             "the refusal tells a partly paid work's owner that finishing it needs no further \
              payment, while the rest is owed (D203 M6c):\n{text}"
         );
-        assert!(text.contains("already been paid for"), "{text}");
+        assert!(text.contains("a payment is recorded for work"), "{text}");
         assert!(
             text.contains("Finish it instead by re-running `antseal seal a.txt"),
             "{text}"
         );
         assert!(
-            text.contains("no quote the receipt already maps is paid again"),
+            text.contains("pays only for what the receipt does not cover"),
             "{text}"
         );
     }

@@ -163,6 +163,59 @@ pub(super) fn merge_receipts(prior: PaymentReceipt, fresh: PaymentReceipt) -> Pa
     merged
 }
 
+/// What a proofs-expired re-payment carries forward from the receipt it
+/// replaces — the prior it folds into every receipt it journals (S53, S55).
+///
+/// - **Every total.** The receipt's `storage_cost_atto` is what the work has
+///   cost in total ([`merge_receipts`]); an expired payment's money is spent
+///   all the same, and carrying nothing made the vault forget it (S53).
+/// - **The records of `keep`**, with their quote→tx entries and their
+///   transactions: blobs this run paid for, minutes old, which D179's age
+///   clause can never call expired (S55).
+/// - **Every mapping no record uses**, with its transaction: a record-less
+///   `Submitted` mapping is a payment no run saw land, and a later resume
+///   must still be able to ask the chain about it (S54).
+///
+/// It drops only the replaced records, their entries, and the transactions
+/// that paid nothing else: a replaced record merged into its replacement
+/// would leave `finalize_batch` matching a stale proof first (D37, Decision
+/// 5 as extended by S31). With `keep` empty, it is S53's case.
+pub(super) fn carry_forward(
+    replaced: &PaymentReceipt,
+    keep: &std::collections::BTreeSet<antseal_net::Address>,
+) -> PaymentReceipt {
+    let mut blobs = Vec::new();
+    let mut stale = std::collections::BTreeSet::new();
+    for record in &replaced.blobs {
+        if keep.contains(&record.address) {
+            blobs.push(record.clone());
+        } else {
+            stale.extend(record.payments.iter().map(|line| line.quote_hash));
+        }
+    }
+    let tx_map = replaced
+        .tx_map
+        .iter()
+        .filter(|(quote, _)| !stale.contains(*quote))
+        .map(|(quote, tx)| (*quote, *tx))
+        .collect();
+    let txs = replaced
+        .txs
+        .iter()
+        .filter(|tx| {
+            tx.quote_hashes.is_empty() || !tx.quote_hashes.iter().all(|q| stale.contains(q))
+        })
+        .cloned()
+        .collect();
+    PaymentReceipt {
+        blobs,
+        tx_map,
+        txs,
+        storage_cost_atto: replaced.storage_cost_atto,
+        gas: replaced.gas,
+    }
+}
+
 /// Why a capture did not become durable.
 ///
 /// Carries no receipt content and no key material — a fault is a
@@ -213,12 +266,14 @@ impl std::fmt::Display for ReceiptSinkFault {
 /// makes that requirement honest rather than assumed.
 struct SinkState {
     target: Option<SealId>,
-    /// Records an **earlier** invocation already paid for, which every
-    /// capture of the current `pay` must be folded into before it is
-    /// written. Without this, a remainder payment's first capture would
-    /// overwrite the durable partial the previous crash left, and a second
-    /// crash would strand everything the first one had bought — the exact
-    /// hazard this sink exists to remove, one invocation deeper.
+    /// What the work had **already** paid, which every capture of the
+    /// current `pay` must be folded into before it is written. Without this,
+    /// a remainder payment's first capture would overwrite the durable
+    /// partial the previous crash left, and a second crash would strand
+    /// everything the first one had bought — the exact hazard this sink
+    /// exists to remove, one invocation deeper. On the proofs-expired
+    /// re-payment it holds what the replaced receipt carries forward
+    /// (`carry_forward`, S53, S55), so a capture never drops what was paid.
     prior: Option<PaymentReceipt>,
     writes: usize,
     fault: Option<ReceiptSinkFault>,
@@ -331,11 +386,12 @@ impl VaultReceiptSink {
     /// already-durable records every write must preserve.
     ///
     /// The pipeline calls this immediately before **every** `pay`, so on
-    /// the production path it cannot be forgotten. `prior` is `Some` only
-    /// on the unpaid-remainder path, where an earlier invocation's
-    /// payments are on disk and this `pay` covers the rest; it is `None`
-    /// for a fresh seal and — deliberately — for the proofs-expired
-    /// re-payment, where the old records are what is being replaced.
+    /// the production path it cannot be forgotten. `prior` is `None` for a
+    /// fresh seal. On the unpaid-remainder path it is the partial receipt an
+    /// earlier invocation left on disk, records and all, and this `pay`
+    /// covers the rest. On the proofs-expired re-payment it is what the
+    /// replaced receipt carries forward (`carry_forward`, S53, S55): every
+    /// total and the records this run paid for, never a replaced record.
     ///
     /// Re-arming the same work is silent and simply refreshes `prior`
     /// (one command can pay twice for one work: the remainder, then a
@@ -872,5 +928,241 @@ mod tests {
             1,
             "the sink leaked a vault handle — the key would outlive the command"
         );
+    }
+
+    /// A blob record whose one payment line pays `quote` — the shape the
+    /// pipeline writes: a record's non-zero lines are what the map maps.
+    fn paid_record(
+        tag: u8,
+        quote: antseal_net::QuoteHash,
+        amount_atto: u128,
+    ) -> antseal_net::BlobPaymentRecord {
+        let mut record = blob_record(tag);
+        record.payments = vec![antseal_net::QuotePaymentEntry {
+            quote_hash: quote,
+            rewards_address: antseal_net::RewardsAddress::from_bytes([tag; 20]),
+            amount_atto,
+            price_atto: amount_atto,
+        }];
+        record
+    }
+
+    fn qh(n: u8) -> antseal_net::QuoteHash {
+        antseal_net::QuoteHash::from_bytes([n; 32])
+    }
+
+    fn tx(n: u8) -> antseal_net::TxHash {
+        antseal_net::TxHash::from_bytes([n; 32])
+    }
+
+    fn tx_record(
+        n: u8,
+        status: antseal_net::TxStatus,
+        quotes: &[antseal_net::QuoteHash],
+    ) -> antseal_net::TxRecord {
+        antseal_net::TxRecord {
+            tx_hash: tx(n),
+            block_number: (status != antseal_net::TxStatus::Submitted).then_some(u64::from(n)),
+            status,
+            quote_hashes: quotes.to_vec(),
+        }
+    }
+
+    /// **S53 + S55 (D209 R1, R6): with nothing kept, an expired payment's
+    /// totals and its record-less mappings ride into the replacement, and
+    /// none of its records do.** `carry_forward` is the prior the
+    /// proofs-expired re-payment arms this sink with (and merges at its final
+    /// write). A capture of the replacement then writes the fresh records
+    /// alone under the work's cumulative cost and gas — plus the record-less
+    /// `Submitted` mapping, which a later resume must still be able to ask the
+    /// chain about (S54). The fresh record covers the SAME address as an
+    /// expired one under a different proof: a stale proof that survived would
+    /// be the one `finalize_batch` matches first (D37).
+    #[test]
+    fn an_expired_payment_carries_its_totals_and_none_of_its_records() {
+        use antseal_net::TxStatus::{Confirmed, Submitted};
+
+        let mut expired = receipt(5_517);
+        expired.gas.gas_cost_wei = 21_000;
+        expired
+            .blobs
+            .extend([paid_record(1, qh(1), 2_000), paid_record(2, qh(2), 3_517)]);
+        expired.tx_map = [(qh(1), tx(1)), (qh(2), tx(1)), (qh(9), tx(9))]
+            .into_iter()
+            .collect();
+        expired.txs = vec![
+            tx_record(1, Confirmed, &[qh(1), qh(2)]),
+            tx_record(9, Submitted, &[qh(9)]),
+        ];
+        assert!(expired.covers_all_paid_quotes(), "fixture: a real receipt");
+
+        let carried = super::carry_forward(&expired, &std::collections::BTreeSet::new());
+        assert!(
+            carried.blobs.is_empty(),
+            "an expired payment's records were carried (D37: never merge expired records)"
+        );
+        assert_eq!(
+            carried.tx_map.iter().collect::<Vec<_>>(),
+            vec![(&qh(9), &tx(9))],
+            "only the record-less mapping is carried"
+        );
+        assert_eq!(
+            carried.txs,
+            vec![tx_record(9, Submitted, &[qh(9)])],
+            "the transaction that paid only replaced records is dropped; the \
+             record-less one is kept"
+        );
+        assert_eq!(carried.storage_cost_atto, 5_517, "what it cost is carried");
+        assert_eq!(carried.gas.gas_cost_wei, 21_000, "its gas is carried");
+
+        let fx = Fixture::new("carry-forward");
+        let sink = VaultReceiptSink::new(Arc::clone(&fx.vault));
+        sink.arm(&fx.seal_id, Some(&carried));
+        // The replacement's first sub-batch: blob 1 again, under a fresh proof.
+        let mut fresh = receipt(1_839);
+        fresh.gas.gas_cost_wei = 26_000;
+        let mut record = paid_record(1, qh(0x91), 1_839);
+        record.proof_bytes = vec![0x91];
+        fresh.blobs.push(record);
+        fresh.tx_map.insert(qh(0x91), tx(0x91));
+        fresh.txs.push(tx_record(0x91, Confirmed, &[qh(0x91)]));
+        assert_eq!(sink.capture(&fresh), CaptureOutcome::Durable);
+
+        let mut rng = crate::rng::OsEntropy;
+        let reader = VaultJournal::new(WorkStore::new(fx.vault.as_ref()), &mut rng);
+        let written = reader
+            .receipt(&fx.seal_id)
+            .expect("read")
+            .expect("journaled");
+        assert_eq!(
+            written.storage_cost_atto, 7_356,
+            "the capture forgot what the expired payment cost (S53)"
+        );
+        assert_eq!(written.gas.gas_cost_wei, 47_000, "gas is a sum too");
+        assert_eq!(
+            written.blobs, fresh.blobs,
+            "an expired record survived into the replacement (D37: never merge expired records)"
+        );
+        assert_eq!(
+            written.tx_map.keys().copied().collect::<Vec<_>>(),
+            vec![qh(9), qh(0x91)],
+            "the record-less mapping survives the capture; the expired ones do not"
+        );
+        assert_eq!(
+            written.txs.iter().map(|t| t.tx_hash).collect::<Vec<_>>(),
+            vec![tx(9), tx(0x91)]
+        );
+        assert!(written.covers_all_paid_quotes());
+    }
+
+    /// **S55 (D209 R6, R7): the records this run paid for are carried with
+    /// their entries and transactions; everything else of the replaced
+    /// payment goes, except what no record uses.** A transaction that paid a
+    /// kept record and a replaced one stays (it still pays the kept one); one
+    /// that paid only replaced records goes; a reverted transaction, which
+    /// maps nothing and completes no record, stays as the gas evidence it is.
+    #[test]
+    fn carry_forward_keeps_this_runs_records_with_their_entries_and_transactions() {
+        use antseal_net::TxStatus::{Confirmed, Reverted};
+
+        let mut replaced = receipt(10_000);
+        replaced.gas.gas_cost_wei = 84_000;
+        replaced.blobs = vec![
+            paid_record(1, qh(1), 1_000),
+            paid_record(2, qh(2), 2_000),
+            paid_record(3, qh(3), 3_000),
+            paid_record(4, qh(4), 4_000),
+        ];
+        replaced.tx_map = [
+            (qh(1), tx(1)),
+            (qh(2), tx(2)),
+            (qh(3), tx(3)),
+            (qh(4), tx(3)),
+        ]
+        .into_iter()
+        .collect();
+        replaced.txs = vec![
+            tx_record(1, Confirmed, &[qh(1)]),
+            tx_record(2, Confirmed, &[qh(2)]),
+            tx_record(3, Confirmed, &[qh(3), qh(4)]),
+            tx_record(5, Reverted, &[qh(5)]),
+        ];
+        assert!(replaced.covers_all_paid_quotes(), "fixture: a real receipt");
+        let keep: std::collections::BTreeSet<antseal_net::Address> = [2_u8, 3]
+            .into_iter()
+            .map(|tag| antseal_net::Address::from([tag; 32]))
+            .collect();
+        assert_eq!(keep.len(), 2, "anti-vacuity: two records kept");
+
+        let carried = super::carry_forward(&replaced, &keep);
+        assert_eq!(
+            carried.blobs,
+            vec![paid_record(2, qh(2), 2_000), paid_record(3, qh(3), 3_000)],
+            "exactly the kept records, in order"
+        );
+        assert_eq!(
+            carried.tx_map.iter().collect::<Vec<_>>(),
+            vec![(&qh(2), &tx(2)), (&qh(3), &tx(3))],
+            "the kept records' entries, and no replaced one"
+        );
+        assert_eq!(
+            carried.txs.iter().map(|t| t.tx_hash).collect::<Vec<_>>(),
+            vec![tx(2), tx(3), tx(5)],
+            "tx 1 paid only a replaced record; tx 3 still pays a kept one; tx 5 \
+             reverted and maps nothing"
+        );
+        assert_eq!(carried.storage_cost_atto, 10_000, "every total is carried");
+        assert_eq!(carried.gas.gas_cost_wei, 84_000);
+        assert!(
+            carried.covers_all_paid_quotes(),
+            "a kept record must keep every entry it needs to finalize"
+        );
+    }
+
+    /// **D209 R6, as clarified (the records lane's question): only a
+    /// transaction that paid ONLY replaced records is dropped.** A receipt
+    /// holding a replaced record, a kept record, a record-less `Submitted`
+    /// mapping and a `Reverted` record that maps no quote carries exactly the
+    /// last three: the kept record's transaction still pays it, the
+    /// record-less mapping's may have paid (S54 asks the chain), and the
+    /// revert is evidence of gas that D208 R12 already keeps out of every
+    /// published count. Totals are carried whole.
+    #[test]
+    fn carry_forward_drops_only_the_transactions_that_paid_only_replaced_records() {
+        use antseal_net::TxStatus::{Confirmed, Reverted, Submitted};
+
+        let mut replaced = receipt(6_000);
+        replaced.gas.gas_cost_wei = 63_000;
+        replaced.blobs = vec![paid_record(1, qh(1), 2_000), paid_record(2, qh(2), 4_000)];
+        replaced.tx_map = [(qh(1), tx(1)), (qh(2), tx(2)), (qh(9), tx(9))]
+            .into_iter()
+            .collect();
+        replaced.txs = vec![
+            tx_record(1, Confirmed, &[qh(1)]),
+            tx_record(2, Confirmed, &[qh(2)]),
+            tx_record(9, Submitted, &[qh(9)]),
+            tx_record(7, Reverted, &[qh(7)]),
+        ];
+        assert!(replaced.covers_all_paid_quotes(), "fixture: a real receipt");
+        assert!(
+            !replaced.tx_map.contains_key(&qh(7)),
+            "fixture: the revert maps no quote"
+        );
+        let keep = std::iter::once(antseal_net::Address::from([2; 32])).collect();
+
+        let carried = super::carry_forward(&replaced, &keep);
+        assert_eq!(
+            carried.txs.iter().map(|t| t.tx_hash).collect::<Vec<_>>(),
+            vec![tx(2), tx(9), tx(7)],
+            "exactly the kept record's, the record-less mapping's and the revert's \
+             transactions survive; the one that paid only a replaced record goes"
+        );
+        assert_eq!(carried.blobs, vec![paid_record(2, qh(2), 4_000)]);
+        assert_eq!(
+            carried.tx_map.iter().collect::<Vec<_>>(),
+            vec![(&qh(2), &tx(2)), (&qh(9), &tx(9))]
+        );
+        assert_eq!(carried.storage_cost_atto, 6_000, "every total is carried");
+        assert_eq!(carried.gas.gas_cost_wei, 63_000);
     }
 }

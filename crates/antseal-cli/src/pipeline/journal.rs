@@ -1150,12 +1150,13 @@ pub const fn effective_work_state(fine: Option<SealState>, mirror: WorkState) ->
 /// Whether the vault records a payment for a work: it holds a receipt that
 /// maps at least one quote to a transaction (**D203 M1**, U109).
 ///
-/// That is exactly the set of quotes a resume will not buy again (D37
-/// Decision 5), and what exit 28 promises. A mapping to a `Submitted`
-/// transaction — an unobserved landing — counts, because money *may* have
-/// moved. A `Reverted` transaction is never mapped, so a receipt that
-/// journaled nothing but a reverted first sub-batch (written before S50)
-/// answers `false`.
+/// A mapping to a `Submitted` transaction — an unobserved landing — counts,
+/// because money *may* have moved. A resume asks the chain about it before
+/// buying anything (S54, D208 R9) and prunes it if the transaction was never
+/// mined or reverted; the mapped quotes left are exactly the ones it will not
+/// buy again (D37 Decision 5), and what exit 28 promises. A `Reverted`
+/// transaction is never mapped, so a receipt that journaled nothing but a
+/// reverted first sub-batch (written before S50) answers `false`.
 ///
 /// `false` is not "nothing was paid". After an exit 37 with no durable
 /// capture the vault holds no record that money moved at all, and a consent
@@ -1165,6 +1166,27 @@ pub const fn effective_work_state(fine: Option<SealState>, mirror: WorkState) ->
 #[must_use]
 pub fn payment_recorded(receipt: Option<&PaymentReceipt>) -> bool {
     receipt.is_some_and(|receipt| !receipt.tx_map.is_empty())
+}
+
+/// The transactions a receipt presents as its payment: those whose hash
+/// maps at least one quote, in capture order (**D208 R12**: a transaction is
+/// part of the payment iff it paid a quote).
+///
+/// A reverted transaction is never mapped — it paid no quote — and one the
+/// resume found was never mined keeps its record as evidence with its
+/// mappings pruned (S54). Neither paid anything, so every reader that
+/// names, counts or enriches a payment's transactions takes them from here:
+/// `reveal`'s §7.10 record, `status`, the block-number backfill, and the
+/// resume's own resolution step.
+#[must_use]
+pub fn paying_txs(receipt: &PaymentReceipt) -> Vec<&antseal_net::TxRecord> {
+    let paying: std::collections::BTreeSet<antseal_net::TxHash> =
+        receipt.tx_map.values().copied().collect();
+    receipt
+        .txs
+        .iter()
+        .filter(|tx| paying.contains(&tx.tx_hash))
+        .collect()
 }
 
 /// The journaled [`SealPlan`], read straight from U9's store — the
@@ -1533,5 +1555,56 @@ mod tests {
             }
             other => panic!("expected the strict-schema refusal, got {other:?}"),
         }
+    }
+
+    /// **D208 R12**: a transaction is part of the payment iff it paid a
+    /// quote. A receipt holding a confirmed transaction and an unobserved
+    /// `Submitted` one (both mapped), beside a never-mined `Submitted` record
+    /// the resume kept as evidence and a reverted one (both unmapped),
+    /// presents exactly the two mapped ones, in capture order — and a receipt
+    /// that maps nothing presents none.
+    #[test]
+    fn a_transaction_is_part_of_the_payment_iff_it_paid_a_quote() {
+        use antseal_net::{GasSummary, QuoteHash, TxHash, TxRecord, TxStatus};
+
+        let hash = |n: u8| TxHash::from_bytes([n; 32]);
+        let quote = |n: u8| QuoteHash::from_bytes([n; 32]);
+        let tx = |n: u8, status: TxStatus| TxRecord {
+            tx_hash: hash(n),
+            block_number: (status != TxStatus::Submitted).then_some(u64::from(n)),
+            status,
+            quote_hashes: vec![quote(n)],
+        };
+        let receipt = PaymentReceipt {
+            blobs: Vec::new(),
+            tx_map: [(quote(1), hash(1)), (quote(4), hash(4))]
+                .into_iter()
+                .collect(),
+            txs: vec![
+                tx(1, TxStatus::Confirmed),
+                tx(2, TxStatus::Submitted),
+                tx(3, TxStatus::Reverted),
+                tx(4, TxStatus::Submitted),
+            ],
+            storage_cost_atto: 0,
+            gas: GasSummary { gas_cost_wei: 0 },
+        };
+        assert_eq!(receipt.txs.len(), 4, "anti-vacuity: four records");
+        assert_eq!(
+            paying_txs(&receipt)
+                .iter()
+                .map(|tx| tx.tx_hash)
+                .collect::<Vec<_>>(),
+            vec![hash(1), hash(4)],
+            "an unmapped record was presented as part of the payment"
+        );
+        let unmapped = PaymentReceipt {
+            tx_map: std::collections::BTreeMap::new(),
+            ..receipt
+        };
+        assert!(
+            paying_txs(&unmapped).is_empty(),
+            "a receipt that maps nothing presents no payment"
+        );
     }
 }

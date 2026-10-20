@@ -1580,3 +1580,67 @@ fn the_three_unanchored_predicates_answer_three_questions_and_may_not_collapse()
         "\"no nag\" has four different meanings; both doc comments say so in words"
     );
 }
+
+/// **D208 R12, the reader census (`status`).** `status` counts and lists
+/// only the transactions that paid a quote. Beside two confirmed
+/// transactions, the receipt holds a never-mined `Submitted` record the
+/// resume kept as evidence, a reverted first sub-batch kept with its block,
+/// and a reverted later sub-batch as S50's in-band arm journals it — none
+/// mapped. The text says "paid in 2 transaction(s)" with the two paying
+/// blocks only, and `--json` carries the same values under the same keys.
+#[test]
+fn status_counts_only_the_transactions_that_paid_a_quote() {
+    use antseal_net::{QuoteHash, TxHash, TxRecord, TxStatus};
+
+    let quote = |n: u8| QuoteHash::from_bytes([n; 32]);
+    let record = |n: u8, block_number: Option<u64>, status: TxStatus| TxRecord {
+        tx_hash: TxHash::from_bytes([n; 32]),
+        block_number,
+        status,
+        quote_hashes: vec![quote(n)],
+    };
+    let mut receipt = fixture_receipt();
+    receipt.txs = vec![
+        record(1, Some(100), TxStatus::Reverted),
+        record(2, None, TxStatus::Submitted),
+        record(3, Some(300), TxStatus::Confirmed),
+        record(4, Some(400), TxStatus::Reverted),
+        record(5, Some(500), TxStatus::Confirmed),
+    ];
+    receipt.tx_map = [
+        (quote(3), TxHash::from_bytes([3; 32])),
+        (quote(5), TxHash::from_bytes([5; 32])),
+    ]
+    .into_iter()
+    .collect();
+
+    let vault = fixture_vault();
+    let unlocked = vault.unlock();
+    let store = WorkStore::new(&unlocked);
+    let mut rng = ChaCha20Rng::from_seed([0x5A; 32]);
+    VaultJournal::new(WorkStore::new(&unlocked), &mut rng)
+        .put_receipt(&seal_id(0x01), &receipt)
+        .expect("receipt");
+
+    let status = status_of(&store, 0x01);
+    let row = status.receipt.as_ref().expect("a receipt row");
+    assert_eq!(
+        (row.transactions, row.block_numbers.clone()),
+        (2, vec![300, 500]),
+        "an unmapped evidence record was counted as a payment transaction"
+    );
+    assert!(
+        status
+            .render()
+            .iter()
+            .any(|line| line.contains("paid in 2 transaction(s); Arbitrum block 300, 500")),
+        "{:#?}",
+        status.render()
+    );
+    let json = status.json();
+    assert_eq!(json["receipt"]["transactions"], 2);
+    assert_eq!(
+        json["receipt"]["block_numbers"],
+        serde_json::json!([300, 500])
+    );
+}

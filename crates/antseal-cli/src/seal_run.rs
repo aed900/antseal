@@ -621,6 +621,7 @@ pub fn dry_run_outcome<P: ConsentPrompt>(
         seal_id: SealId::from_bytes([0; 16]),
         quote: &dry.quote,
         blob_count: dry.blob_count,
+        work_blob_count: dry.blob_count,
         prior: None,
         resume: false,
         proofs_expired: false,

@@ -100,7 +100,10 @@ fn one_endpoint_down_is_unavailable_and_the_survivor_is_not_the_answer() {
     let down = StubServer::spawn(esplora(&EsploraBehaviour::Down));
 
     let outcome = fetch_agreed_header(&client(), &pair(&up, &down), RECORDED_HEIGHT);
-    assert_eq!(outcome.failed(), 1, "{outcome:?}");
+    assert!(
+        matches!(&outcome, Agreement::Unavailable { failures } if failures.len() == 1),
+        "{outcome:?}"
+    );
     assert_eq!(outcome.agreed(), None);
     assert_eq!(into_online_block_result(&outcome), None);
 }
@@ -138,7 +141,10 @@ fn a_wrong_path_404_is_a_failure_and_never_an_agreed_absence() {
     let second = StubServer::spawn(esplora(&EsploraBehaviour::WrongPath));
 
     let outcome = fetch_agreed_header(&client(), &pair(&first, &second), RECORDED_HEIGHT);
-    assert_eq!(outcome.failed(), 2, "{outcome:?}");
+    assert!(
+        matches!(&outcome, Agreement::Unavailable { failures } if failures.len() == 2),
+        "{outcome:?}"
+    );
     assert_eq!(
         into_online_block_result(&outcome),
         None,

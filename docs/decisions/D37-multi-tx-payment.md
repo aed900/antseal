@@ -501,3 +501,70 @@ owed"*, *"A sink write that fails is recorded, not surfaced"*, was answered by D
 37); D198 adds the stop. Separately, `StorageError::StrandedPayment`'s rustdoc cited Decision
 3, the native fallback the adapter does not drive; D198 §2 R4 makes it cite Decisions 2 and 7.
 The decisions above are not rewritten.
+
+## Addendum — 2026-10-20 (D208 §2 R1–R5, R9): Decision 2's send is signed first and resolved by its own hash, and the S31 amendment's "every blob is paid for exactly once" holds again for an unobserved landing
+
+D208 (`S51`, `S54`) changes two things this record decided or claimed.
+
+- **Decision 2's submission.** Decision 2 has `pay()` submit each sub-batch and journal it as it
+  lands, so that a crash loses at most the one transaction inside the pay→journal window
+  (D37:102-109). Until D208 the adapter filled, signed and broadcast in one call and classed every
+  failure of that call by the error: a reply lost after the node already held the transaction was
+  `Payment` (exit 23, "retry"), and a retry paid again (D208 §1.2, executed). D208 §2 R1–R4: each
+  transaction is filled and signed first and its hash computed locally; the signed bytes are
+  broadcast under a 30 s deadline; an acknowledged broadcast is awaited by the local hash under
+  120 s and is never `Payment`; an unacknowledged one is resolved by that hash for a 120 s window —
+  a receipt is the landed path, an answered absence (no receipt, and nothing by hash) is `Payment`,
+  and a held or unaskable outcome is the unobserved-landing shape (`StrandedPayment`).
+- **The bound stands, and the window is kept.** A kill between the broadcast and the capture still
+  journals nothing. That is Decision 2's accepted window, widened only by the resolution window and
+  only after a failed broadcast. D208 keeps it because the only shape that closes it for money —
+  journaling the signed transaction and its records before the broadcast, then re-broadcasting at
+  the resume — needs a vault receipt format version (D208 §1.7, O4), while journaling the hash
+  alone would protect evidence, not money (D208 §2 R7).
+- **The S31 amendment's claim.** *"so every blob is paid for exactly once across the crash"*
+  (D37:395-396) was false for an unobserved landing. That branch mapped the sub-batch's quotes to a
+  `Submitted` hash but built no blob record, and the resume's remainder is keyed on records, so a
+  re-run re-bought every blob of the sub-batch under fresh quotes (executed at `ab7226f`: 10 quotes
+  paid for 5 blobs; D208 §1.4). Decision 5's guarantee held per quote hash and failed per blob.
+  D208 §2 R5 builds the records over the local hash at the branch, and §2 R9 resolves every
+  `Submitted` transaction before the resume's money branch: a landed one is never re-bought, and a
+  reverted or never-mined one is pruned, its `TxRecord` kept as evidence, and its blobs bought once
+  through the remainder arm. With both, the claim holds again, except for unobserved-landing
+  captures journaled before D208, which hold no records (D208 §2 R10; developer vaults only).
+
+The decisions above are not rewritten.
+
+## Addendum — 2026-10-20 (D209 §2 R1, R6, R7, R9): the expired path now carries the replaced totals and record-less mappings and keeps the current run's records, and Decision 6's re-quote prices only what this invocation has not just paid for
+
+D209 (`S53`, `S55`) changes two things this record decided.
+
+- **Decision 5's extension, on the expired path.** The S31 amendment ruled that the proofs-expired
+  re-payment path *"deliberately does **not** merge — at the captures or at the end: there the
+  prior proofs are the thing being replaced, and merging would leave `finalize_batch` matching a
+  stale record first"* (D37:412-415). Its reason is the replaced RECORDS, and D209 keeps it: the
+  replaced records, their quote→tx entries and the transactions that paid only those are still
+  never merged. But the path now merges something, through the same `merge_receipts` and at every
+  capture as well as at the end: a prior built by `carry_forward(replaced, keep)`, holding the
+  replaced receipt's totals (`storage_cost_atto` and gas), every mapping that no record uses with
+  its transaction, and the records the current invocation paid for (`keep`) with their entries and
+  transactions (D209 §2 R1, R6, R7). Without the totals the vault forgot money it had spent:
+  executed at `ab7226f`, 3678 atto-ANT recorded of 9195 spent, and 5517 of 11 034 (D209 §1.3).
+  The stale-record hazard cannot come back through the kept records, because they are disjoint
+  from the blobs the arm re-buys, so each unstored blob still has exactly one record (D209 §1.8).
+- **Decision 6's re-payment re-quotes only what this invocation has not just paid for.** Decision 6
+  has completing the seal require a re-payment once the proofs expire. The code carried that out by
+  re-quoting every staged blob (`quote_batch(&blobs)`,
+  `crates/antseal-cli/src/pipeline/resume.rs:296` at `ab7226f`; its module doc: *"the pipeline
+  re-quotes and re-runs the consent gate"*, `:45-46`), so a resume that paid a remainder and then
+  met an expired earlier payment bought the remainder's blobs a second time in the same run (D209
+  §1.8, T1: two of three blobs paid twice). Under D209 §2 R7 the records this invocation paid for
+  are never treated as expired — a payment minutes old cannot meet D179's age clause — so the arm
+  keeps them and re-quotes only the staged blobs outside them, with one consent and one payment.
+- **The cross-run residue is row `S56`.** A record that a previous invocation paid, an hour ago say,
+  is still re-bought when an older payment expires in a later run (D209 §1.8, T2). Its closer —
+  re-asking `finalize_batch` once per group of unstored blobs that share their paying transactions,
+  and re-buying only the groups it refuses as expired — would itself take a Decision 6 addendum: a
+  re-probe before a re-payment (D209 §2 R9).
+
+The decisions above are not rewritten.

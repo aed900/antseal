@@ -102,9 +102,9 @@ pub struct BlobPaymentRecord {
 /// directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TxStatus {
-    /// Submitted; landing not yet observed (the journal-first record —
-    /// the hash is durable even if the receipt await is interrupted,
-    /// D33 Decision 2). Backfill resolves it to one of the other arms.
+    /// Sent, its landing not observed (D208): journaled with its sub-batch's records when
+    /// the landing went unseen or the broadcast's fate stayed unknown; a kill before that
+    /// capture journals nothing (D37 Decision 2's window). Resume and backfill ask the chain.
     Submitted,
     /// The awaited transaction receipt reports the tx mined successfully.
     Confirmed,

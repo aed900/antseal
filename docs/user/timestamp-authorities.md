@@ -105,7 +105,7 @@ list — nothing else changes, and FreeTSA is HTTPS.
 By contrast, the endpoints under `[verify]` in your config **must** be
 `https://`, and antseal refuses the file at load if one is not. Their replies
 carry no signature of their own, so transport is their only integrity control
-(`docs/config.md:127-131, 189-194`; `crates/antseal-cli/src/config.rs:1253-1291`).
+(`docs/config.md:127-131, 189-194`; `crates/antseal-cli/src/config.rs:1275-1313`).
 
 ---
 
@@ -201,7 +201,7 @@ store buys you extra HTTP requests and no extra evidence — and it costs you
 something. Beside a pinned authority, an unpinned or quarantined one
 (GlobalSign, Certum, SwissSign) fails as `untrusted-chain` on every run, so
 **every seal is recorded degraded**, even when the pinned authority answered
-(`crates/antseal-anchor/src/submit.rs:128-136`). With no pinned authority in
+(`crates/antseal-anchor/src/submit.rs:122-130`). With no pinned authority in
 the list at all, the seal aborts before payment instead (§5). If you want one
 of them to count, that is a root-store change — a reviewed, versioned append
 with its own provenance record (`docs/anchors/root-store-update.md`), not a
@@ -234,7 +234,7 @@ The behaviour, read off the implementation rather than off intent:
   (`crates/antseal-anchor/src/tsa.rs:112-126`).
 - **Every entry is parsed at config load**, through the same endpoint parser
   the HTTP client uses, under a policy that allows plain HTTP because DigiCert
-  requires it (`crates/antseal-cli/src/config.rs:1109-1142, 1213-1219`). A URL with
+  requires it (`crates/antseal-cli/src/config.rs:1131-1164, 1235-1241`). A URL with
   no host (`http:///tsr`), an unusable scheme, or embedded credentials
   (`http://user:pw@host/`) is refused **at load**, naming the key and the line
   — exit code **17**, class `malformed-config` — rather than surfacing as a
@@ -296,9 +296,9 @@ The gate is one line of policy and it is worth stating plainly:
 > verification. Otherwise it aborts — **before** anything is paid or uploaded.
 
 The threshold is a named constant, `MIN_VERIFIED_TSA_TOKENS = 1`
-(`crates/antseal-anchor/src/submit.rs:292`), and the gate compares it against
+(`crates/antseal-anchor/src/submit.rs:286`), and the gate compares it against
 the count of tokens that verified in core, never against the number of
-endpoints tried (`crates/antseal-anchor/src/submit.rs:252-283`). The
+endpoints tried (`crates/antseal-anchor/src/submit.rs:246-277`). The
 Sectigo/Entrust collapse of §3 does not change the threshold — two endpoints
 resolving to one authority still clear a threshold of one — it changes what
 the report is allowed to claim.
@@ -325,7 +325,7 @@ that failed, verbatim and with its failure class in brackets, because your next
 action is to look at those URLs, and it says what has become of the work
 (`crates/antseal-cli/src/error.rs:719-764`; each entry is built at
 `crates/antseal-cli/src/pipeline/error.rs:378-420` from the gate's own failure
-form, `crates/antseal-anchor/src/gate.rs:149-161`):
+form, `crates/antseal-anchor/src/gate.rs:143-155`):
 
 ```
 error: no RFC 3161 timestamp token that counts toward the anchor gate was obtained, so the seal stopped before anything was paid or uploaded. What failed: tsa <url> [<class>] <detail> (<elapsed> ms); <each further failed endpoint, the same way>. The work is left staged: running this exact command again resumes it — it quotes again and asks for your consent again — once a timestamp authority returns a token that counts. --force-degraded cannot be added to that re-run, because the flags are part of the recorded command; to seal with a loudly recorded degraded anchor set instead, discard the work with `antseal abandon <seal-id>` and run the command again with --force-degraded
@@ -408,7 +408,7 @@ What you get instead:
 refused on a permanent network at three independent layers, so a paid permanent
 seal can never be minted with the gate bypassed
 (`crates/antseal-anchor/src/submit.rs:39-45`). `--force-degraded` carries no
-such restriction (`crates/antseal-anchor/src/submit.rs:252-283`): you can spend
+such restriction (`crates/antseal-anchor/src/submit.rs:246-277`): you can spend
 real money on a permanent seal that establishes no time. That is a deliberate
 escape hatch for the case where you would rather have a dated-by-nothing
 permanent record than none at all, and it is your judgement to make.
@@ -418,7 +418,7 @@ cheap, reversible and usually transient, and an aborted seal leaves a staged
 work that **the same command — same files, same flags —** resumes rather than
 sealing a second time (`crates/antseal-cli/src/seal_resume.rs:52-56`). The
 resume quotes again and asks for your consent again
-(`crates/antseal-cli/src/pipeline/resume.rs:189-202`). The gate's message says
+(`crates/antseal-cli/src/pipeline/resume.rs:209-225`). The gate's message says
 so.
 
 **`--force-degraded` cannot be added to that re-run.** The seal-shaping flags,
@@ -532,9 +532,9 @@ Nothing above is asserted from memory. The primary sources:
 | the four pinned roots, asserted as data | `crates/antseal-core/src/anchor/roots/mod.rs:360-376` |
 | SwissSign's quarantine and its user-visible cost | `crates/antseal-core/src/anchor/roots/PROVENANCE.md:251-297` |
 | Apple's SHA-1 refusal, by name | `crates/antseal-core/tests/anchor_real_tokens.rs:273-310` |
-| the gate, its threshold and its ordering | `crates/antseal-anchor/src/submit.rs:31-48, 252-292` |
+| the gate, its threshold and its ordering | `crates/antseal-anchor/src/submit.rs:31-48, 246-286` |
 | a `429` is never re-sent; a `503` at most twice | `crates/antseal-anchor/src/http/retry.rs` (`classify`); `crates/antseal-anchor/src/http.rs:117-125` |
 | the degraded rendering, byte for byte | `crates/antseal-cli/tests/snapshots/seal-degraded-report.txt` |
-| the config slot and its validation | `crates/antseal-cli/src/config.rs:186-191, 1109-1142, 1213-1219`; `docs/config.md:87-204` |
+| the config slot and its validation | `crates/antseal-cli/src/config.rs:186-191, 1131-1164, 1235-1241`; `docs/config.md:87-204` |
 | root-store update procedure | `docs/anchors/root-store-update.md` |
 | how a real-endpoint run is conducted | `docs/anchors/real-smoke-runbook.md` |

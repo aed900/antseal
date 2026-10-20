@@ -2311,7 +2311,7 @@ fn the_manifest_verdict_agrees_with_build_plan_on_every_shape() {
 /// A NON-SECRET fixture payment receipt: one quote mapped to one confirmed
 /// transaction, `storage_cost_atto` as given, every hash an obviously
 /// synthetic byte pattern. The `Paid` walks above journal it first.
-// Pipeline order mirrored: pipeline/resume.rs:554 put_receipt precedes :571 set_state(Paid).
+// Pipeline order mirrored: pipeline/resume.rs:622 put_receipt precedes :639 set_state(Paid).
 fn fixture_receipt(storage_cost_atto: u128) -> antseal_net::PaymentReceipt {
     use antseal_net::{GasSummary, PaymentReceipt, QuoteHash, TxHash, TxRecord, TxStatus};
 

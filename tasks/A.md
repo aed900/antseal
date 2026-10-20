@@ -1700,3 +1700,4 @@
 - Do: per item, delete it (test sites move to `matches!` or the reasoned form) or keep it with a recorded reason; retiring `upgrade_uri_allowed` takes a D54 addendum; edit `anchor_stage.rs`'s list if `defaults` goes. No standing checker (its textual recall is 4 of 8).
 - Accept:
   - A re-run of the census shows no production `pub fn` without a production use except the `test-util` seams and items whose kept reason is recorded; the anchor suite and clippy stay green.
+- Notes: **[2026-10-20, wave 41 — TICKED (ruled without a new record, lane L-ANCHOR4).]** Captures on the `TODO.md` row; the lane report's deviations are summarised on the row; D54's 2026-10-20 addendum records what was built.

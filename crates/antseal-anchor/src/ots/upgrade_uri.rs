@@ -97,17 +97,16 @@ pub enum UpgradeUriRefusal {
     HostNotAllowed,
 }
 
-/// Whether `uri` may be contacted for an upgrade — D54 §6.2's ruled signature.
+/// Whether `uri` may be contacted for an upgrade and, when it may not, which
+/// rule it broke — D54 §6.2's ruled decision.
+///
+/// D54 names that decision as the bool `upgrade_uri_allowed(uri, configured)`,
+/// which is this function's `is_ok()`; A143 retired that wrapper, which no
+/// production code called.
 ///
 /// `configured` is the user's calendar list (`[anchors] ots_calendars`, U44 —
 /// the same list the seal stage submits to, U64); each entry widens the
 /// allowlist to **that host and its subdomains only**.
-#[must_use]
-pub fn upgrade_uri_allowed(uri: &str, configured: &[String]) -> bool {
-    classify_upgrade_uri(uri, configured).is_ok()
-}
-
-/// The same decision, with the reason.
 ///
 /// # Errors
 ///
@@ -220,21 +219,22 @@ mod tests {
     #[test]
     fn the_allowlist_table_accepts_and_refuses_exactly_the_ruled_rows() {
         for uri in REAL_PENDING_URIS {
-            assert!(
-                upgrade_uri_allowed(uri, &none()),
+            assert_eq!(
+                classify_upgrade_uri(uri, &none()),
+                Ok(()),
                 "{uri} is a real pending URI and must be accepted"
             );
         }
 
         // Uppercase: accepted, normalised. DNS is case-insensitive.
-        assert!(upgrade_uri_allowed(
-            "https://ALICE.BTC.Calendar.OpenTimestamps.ORG",
-            &none()
-        ));
-        assert!(upgrade_uri_allowed(
-            "HTTPS://btc.calendar.catallaxy.com",
-            &none()
-        ));
+        assert_eq!(
+            classify_upgrade_uri("https://ALICE.BTC.Calendar.OpenTimestamps.ORG", &none()),
+            Ok(())
+        );
+        assert_eq!(
+            classify_upgrade_uri("HTTPS://btc.calendar.catallaxy.com", &none()),
+            Ok(())
+        );
 
         let refused: &[(&str, UpgradeUriRefusal)] = &[
             // The bare suffix, with no dot boundary — A42's named case.
@@ -323,11 +323,14 @@ mod tests {
     fn a_configured_calendar_widens_the_allowlist_only_to_itself() {
         let configured = vec!["https://cal.example.com".to_owned()];
 
-        assert!(upgrade_uri_allowed("https://cal.example.com", &configured));
-        assert!(upgrade_uri_allowed(
-            "https://sub.cal.example.com",
-            &configured
-        ));
+        assert_eq!(
+            classify_upgrade_uri("https://cal.example.com", &configured),
+            Ok(())
+        );
+        assert_eq!(
+            classify_upgrade_uri("https://sub.cal.example.com", &configured),
+            Ok(())
+        );
 
         for refused in [
             // A different registrable name entirely.
@@ -341,15 +344,19 @@ mod tests {
             // The parent domain is not widened.
             "https://example.com",
         ] {
-            assert!(
-                !upgrade_uri_allowed(refused, &configured),
+            assert_eq!(
+                classify_upgrade_uri(refused, &configured),
+                Err(UpgradeUriRefusal::HostNotAllowed),
                 "{refused} must not be admitted by configuring cal.example.com"
             );
         }
 
         // And configuring nothing widens nothing: the same URIs that the
         // configured list admits are refused without it.
-        assert!(!upgrade_uri_allowed("https://cal.example.com", &none()));
+        assert_eq!(
+            classify_upgrade_uri("https://cal.example.com", &none()),
+            Err(UpgradeUriRefusal::HostNotAllowed)
+        );
     }
 
     /// A configured entry with a path — which a submit URL legitimately has —
@@ -357,15 +364,18 @@ mod tests {
     #[test]
     fn a_configured_calendar_with_a_path_still_widens_by_host() {
         let configured = vec!["https://ots.btc.catallaxy.com/submit".to_owned()];
-        assert!(upgrade_uri_allowed(
-            "https://ots.btc.catallaxy.com",
-            &configured
-        ));
-        assert!(upgrade_uri_allowed(
-            "https://a.ots.btc.catallaxy.com",
-            &configured
-        ));
-        assert!(!upgrade_uri_allowed("https://catallaxy.com", &configured));
+        assert_eq!(
+            classify_upgrade_uri("https://ots.btc.catallaxy.com", &configured),
+            Ok(())
+        );
+        assert_eq!(
+            classify_upgrade_uri("https://a.ots.btc.catallaxy.com", &configured),
+            Ok(())
+        );
+        assert_eq!(
+            classify_upgrade_uri("https://catallaxy.com", &configured),
+            Err(UpgradeUriRefusal::HostNotAllowed)
+        );
     }
 
     /// An unparseable configured entry widens **nothing** — never everything.
@@ -377,16 +387,18 @@ mod tests {
     fn a_malformed_configured_entry_widens_nothing() {
         for junk in ["", "not a url", "https://", "://", "ftp://"] {
             let configured = vec![junk.to_owned()];
-            assert!(
-                !upgrade_uri_allowed("https://attacker.example", &configured),
+            assert_eq!(
+                classify_upgrade_uri("https://attacker.example", &configured),
+                Err(UpgradeUriRefusal::HostNotAllowed),
                 "{junk:?} must not widen the allowlist"
             );
             // …and the pinned suffixes still work, so the junk entry has not
             // broken the list either.
-            assert!(upgrade_uri_allowed(
-                "https://btc.calendar.catallaxy.com",
-                &configured
-            ));
+            assert_eq!(
+                classify_upgrade_uri("https://btc.calendar.catallaxy.com", &configured),
+                Ok(()),
+                "{junk:?} must not break the pinned list"
+            );
         }
     }
 
@@ -440,8 +452,9 @@ mod tests {
                 .chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '/'))
                 .collect();
-            assert!(
-                upgrade_uri_allowed(&uri, &none()),
+            assert_eq!(
+                classify_upgrade_uri(&uri, &none()),
+                Ok(()),
                 "the real pending URI {uri:?} must be admitted"
             );
             found += 1;

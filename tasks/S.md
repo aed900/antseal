@@ -741,6 +741,7 @@
 - Do: rule between (a) signing locally and journaling the hash as `Submitted` before broadcasting (D33's journal-first rule, extended to the send), so backfill resolves it, and (b) classing post-broadcast transport errors as `StrandedPayment` ("may have moved"); implement and test the ruled shape.
 - Accept:
   - A JSON-RPC stub that accepts `eth_sendRawTransaction` and drops the reply drives the first sub-batch's submission; the ruled class and journal state follow (a retry does not pay a quote the vault records as possibly paid), asserted by message, with a plant restoring today's `Payment` reddening it.
+- Notes: **[2026-10-20, wave 41 — TICKED (D208, lane L-NET4).]** Captures on the `TODO.md` row; the Accept was judged as D208 §3 restates it (P1 §2 (g)); D208 §6 records what was built and every deviation.
 
 ### S52 — A work paid in one run and finished by a resume never records its cost, and `complete()` writes the `Complete` tag before its outcome
 - Milestone: M4
@@ -764,3 +765,65 @@
 - Do: rule between a cumulative spent-atto field in the meta written at each `put_receipt` and keeping replaced receipts as history; implement and test it.
 - Accept:
   - A work whose proofs expired and was re-paid records both payments (or their sum) where `list` and the cost line read them, asserted through the expired-proof seam; a plant restoring the overwrite reddens it by message.
+- Notes: **[2026-10-20, wave 41 — TICKED (D209, lane L-RESUME3).]** Captures on the `TODO.md` row; D209 §6 records what was built and every deviation.
+
+### S54 — An unobserved landing exits 28, whose contract is false for it: a re-run buys that sub-batch's blobs again
+- Milestone: M4
+- Size: M (plus a decision — D208)
+- Deps: after S51 (D208's lifted unobserved-landing helper and its resolution read)
+- Spec: D37 Decision 2 and its S31 amendment (*"every blob is paid for exactly once across the crash"*); D147 and D186 (exit 28's contract: *"re-pays no quote the receipt already maps"*); D203 M1 (`payment_recorded`); S16 (the receipt is the money authority)
+- Discovered by: wave-41 planning lanes P1 (code-traced, then executed in its challenge round) and P2 (executed independently), 2026-10-20. Id assigned centrally.
+- Problem: the pay loop's unobserved-landing branch (`crates/antseal-net/src/ant_backend.rs`, the arm taken when a sub-batch's receipt await fails) journals a `Submitted` transaction and maps the sub-batch's quotes to it, but builds no blob record (finalize runs only in the Confirmed arm), so the capture's cost is 0 and the resume's remainder — keyed on records (`uncovered_blobs`, `crates/antseal-cli/src/pipeline/resume.rs`) — re-quotes and re-buys every blob of that sub-batch. EXECUTED at HEAD (P1, in-process over `MockBackend`, the pay double capturing exactly that shape through the real `VaultReceiptSink`): exit 28 (*"… money has already moved: re-run … which re-pays no quote the receipt already maps"*), then the re-run asked consent for the full price again (22 902 atto-ANT both times) and paid 10 quotes for 5 blobs, the vault recording 22 902 of the 45 804 paid. `list` printed *"cost: 0 atto-ANT so far"* beside *"RESUME PROMPTLY … its payment proofs stay usable …"* (no proof existed), and `antseal abandon` refused the work. `MockBackend::double_paid()` read 0: it keys on quote hash, and the re-purchase used fresh quotes.
+- Do: D208 R5 and R8–R11 — build the sub-batch's blob records over the local hash at the branch; give `StorageBackend` a resolution read whose default body answers "could not ask" (`AntCoreBackend` over its provider; `MockBackend` from the transactions it mined, with never-mined and unaskable faults; `SealBackend` delegating); and in `Pipeline::resume`, before the money branch, resolve every `Submitted` transaction: landed → status and block filled, carry on; reverted, or absent (no receipt and nothing by hash) → its mappings and records pruned (its cost with them), its `TxRecord` kept, and the pruned blobs re-quoted through the remainder arm with the pruned receipt as `prior`; pending or unaskable → a retryable refusal that pays nothing (exit 23 class).
+- Accept:
+  - The executed shape (an unobserved first landing whose transaction was mined) resumes to `Complete` with each blob paid exactly once, asserted per ADDRESS (not by `double_paid()`), and no consent asked; a plant skipping the resolution reddens it by message.
+  - A never-mined `Submitted` transaction is pruned (its `TxRecord` kept), its blobs re-quoted and asked for, and the recorded cost equals what moved; a reverted one the same, with status `Reverted`; a pending or unaskable one ends in the exit-23 class with no consent and nothing paid — each by message, with a plant for each arm.
+  - Every reader that publishes transaction hashes or counts (`reveal`'s receipt payload, `status`, `list`) is measured against a kept-but-unmapped record and does not present it as a payment.
+- Notes: **[2026-10-20, wave 41 — TICKED (D208, lanes L-NET4 and L-RESUME3).]** Captures on the `TODO.md` row; D208 §6 records what was built and every deviation.
+
+### S55 — An expired-proof re-payment re-buys blobs whose payment is minutes old
+- Milestone: M4
+- Size: S–M (plus a decision — D209)
+- Deps: after S53 (the same arm; D209's carry of totals)
+- Spec: D37 Decision 5 (the remainder) and Decision 6 (the proof clock); D179 (expiry needs a declining majority and a day-old payment)
+- Discovered by: wave-41 planning lane P2, 2026-10-20 (executed). Id assigned centrally.
+- Problem: when a resume pays a remainder and `finalize` then meets an earlier partial whose proofs have expired, the expired-proof arm (`crates/antseal-cli/src/pipeline/resume.rs`) re-quotes ALL staged blobs (`quote_batch(&blobs)`), so the blobs the same run bought seconds earlier are bought again. EXECUTED at HEAD (P2, in-process over `MockBackend`, the S53-B shape): consent #0 paid 3 678 atto-ANT for the 2-blob remainder; consent #1 then asked 5 517 for all 3 blobs (`priced=3`) — two blobs bought twice in one run, with `double_paid()` 0 (fresh quote hashes). The consent warning says only *"That payment is stranded"* (`crates/antseal-cli/src/seal_consent.rs`).
+- Do: rule (D209) which blobs the expired arm re-buys — at most the blobs whose payment has expired, never one the same run paid — and implement and test it with D209's carry of totals.
+- Accept:
+  - The S53-B shape pays each blob at most once per run, asserted per address (not by `double_paid()`), with the recorded cost equal to what moved; a plant restoring `quote_batch(&blobs)` on the arm reddens it by message.
+- Notes: **[2026-10-20, wave 41 — TICKED (D209, lane L-RESUME3).]** Captures on the `TODO.md` row; D209 §6 records what was built and every deviation.
+
+### S56 — An expired-proof re-payment still re-buys blobs a previous run paid for when an older payment expires
+- Milestone: M4
+- Size: M
+- Deps: after S55 (D209 R7 keeps only the current run's records)
+- Spec: D37 Decision 6 (the proof clock); D179 (expiry needs a declining majority and a day-old payment)
+- Discovered by: wave-41 planning lane P2, 2026-10-20 (executed in its challenge round, shape T2). Id assigned centrally.
+- Problem: D209 R7 keeps the records the CURRENT run paid for, because those cannot be a day old; a record a previous run paid (an hour ago) is still re-bought when an older payment's proofs expire in a later run. EXECUTED (T2): run A pays the remainder and fails retryably (exit 23); run B, with the earlier partial's transaction expired, prices all three blobs both at HEAD and under D209 (D209 records the true total, 11 034 atto-ANT against HEAD's 5 517).
+- Do: judge expiry per paying transaction by re-asking `finalize_batch` once per group of unstored blobs that share their records' paying transactions (`put_policy::paying_txs`, which needs only the receipt); re-quote only the groups it refuses as expired, and keep every other record in the carry; a D37 Decision 6 addendum (a re-probe before a re-payment); `ExpiringOnce`'s two tests move to a per-transaction double.
+- Accept:
+  - The T2 shape pays each blob at most once across the two runs (asserted per address), and a group whose re-probe stores is not re-bought; a plant restoring the whole-work re-quote reddens it by message.
+
+### S57 — Payment-RPC error reasons outside the submission step echo the RPC URL, which can carry a credential
+- Milestone: M4
+- Size: S
+- Deps: after S51 (D208's `redact_rpc_error`)
+- Spec: the adapter's hygiene rule (`crates/antseal-net/src/ant_backend.rs` module doc: no key material ever enters an error message); D195 (no refusal repeats a URL, because an RPC URL often carries an API key)
+- Discovered by: wave-41 implementation lane L-NET4, 2026-10-20 (executed for the transport-error text). Id assigned centrally.
+- Problem: `chain_id_guard` (*"payment RPC unreachable (eth_chainId): {e}"*), `fill_block_numbers` (*"eth_getTransactionReceipt failed: {e}"*), `estimate_gas_wei` (*"eth_gasPrice failed: {e}"*) and `raw_balances` (*"ANT/ETH balance query failed: {e}"*) pass alloy's error text through unredacted, and a transport error names the URL (*"error sending request for url (http://127.0.0.1:…/)"*, measured against a loopback stub). A private RPC URL can carry a credential in its path. S51's reasons already pass `redact_rpc_error` (URLs, then 16+-hex runs).
+- Do: route every payment-RPC `{e}` in `ant_backend.rs` through `redact_rpc_error`, and pin one site per call with a test whose stub URL carries a canary path.
+- Accept:
+  - Each listed site's reason, produced against a loopback stub whose URL path carries a canary, contains neither the canary nor the URL; a plant restoring the unredacted `{e}` at one site reddens that site's test by message.
+- Notes: **[2026-10-20, wave 41 — TICKED (D208 R13, lane L-NET4).]** Captures on the `TODO.md` row; D208 §6 records what was built and every deviation.
+
+### S58 — Payment-RPC reads outside the submission step have no deadline
+- Milestone: M4
+- Size: S
+- Deps: after S51 (D208's deadline helper)
+- Spec: D208 R7 (adapter deadlines); D179 R3 (an unreadable block time counts as not expired)
+- Discovered by: wave-41 implementation lane L-NET4, 2026-10-20 (code-traced; the hang class was executed by planner P1's probe for the broadcast). Id assigned centrally.
+- Problem: `chain_id_guard` (connect), `estimate_gas_wei` (quote), `raw_balances` and the allowance read (preflight), `fill_block_numbers` (backfill) and `paying_block_time` (finalize's proof-age read) in `crates/antseal-net/src/ant_backend.rs` await alloy calls over evmlib's reqwest client, which has no request timeout, so a gateway that accepts and never answers hangs the command. None moves money; the hang is S51's class at the other call sites.
+- Do: bound each read with D208's deadline helper (`BROADCAST_DEADLINE`, 30 s) and map a deadline to the call's existing failure class — a timed-out proof-age read counts as unreadable, i.e. not expired (D179 R3); a timed-out backfill read is a silent skip (non-gating, U67).
+- Accept:
+  - Against a stub that accepts and never answers, each listed read returns within the deadline (millisecond deadlines in tests) in its existing class; a plant removing one bound makes that read's test time out, reddening it by message.
+- Notes: **[2026-10-20, wave 41 — TICKED (D208 R14, lane L-NET4).]** Captures on the `TODO.md` row; D208 §6 records what was built and every deviation, and R14 its backfill clarification by message.

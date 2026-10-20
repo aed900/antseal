@@ -47,9 +47,7 @@ pub use upgrade::{
     HeaderError, MergeError, MergedUpgrade, PendingRef, UpgradePoll, UpgradeTarget, confirm_header,
     merge_upgrade, pending_refs, poll_upgrade,
 };
-pub use upgrade_uri::{
-    OTS_UPGRADE_HOST_SUFFIXES, UpgradeUriRefusal, classify_upgrade_uri, upgrade_uri_allowed,
-};
+pub use upgrade_uri::{OTS_UPGRADE_HOST_SUFFIXES, UpgradeUriRefusal, classify_upgrade_uri};
 
 /// The per-response body ceiling for **one** calendar HTTP exchange (submit
 /// or upgrade), in bytes. Task **A42**; decision D54 §6.1/§8b.

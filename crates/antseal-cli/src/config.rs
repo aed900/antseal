@@ -163,7 +163,7 @@ use antseal_net::NetworkId;
 use crate::cli::Network;
 use crate::error::CliError;
 use crate::vault::layout::{BesideFile, VaultLayout};
-use crate::vault::session::read_bounded;
+use crate::vault::session::read_vault_file;
 
 /// Byte cap on the config file (D10 discipline; also the export-embed
 /// cap — `vault/export.rs` references this same constant).
@@ -311,7 +311,7 @@ pub fn load() -> Result<Config, CliError> {
 /// As [`load`].
 pub fn load_from(layout: &VaultLayout) -> Result<Config, CliError> {
     let path = layout.beside_path(BesideFile::Config);
-    let bytes = match read_bounded(&path, MAX_CONFIG_BYTES + 1) {
+    let bytes = match read_vault_file(&path, MAX_CONFIG_BYTES + 1) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Config::default()),
         Err(source) => {
@@ -563,15 +563,23 @@ fn parse_value(raw: &str) -> Result<Value, SubsetError> {
             // array takes the outer position: that is the entry a user can
             // count to on the line.
             for (index, part) in split_array_items(trimmed)?.into_iter().enumerate() {
-                let entry = parse_value(part.trim())
-                    .map_err(|refusal| SubsetError::at_entry(index, refusal.reason))?;
+                let piece = part.trim();
+                let entry = parse_value(piece).map_err(|refusal| {
+                    // U118: the splitter cuts a nested array of two or more
+                    // elements at its own commas, so its first piece fails as
+                    // an array that does not close on one line, which is
+                    // false. A piece that opens an array is a nested array.
+                    let reason = if piece.starts_with('[') {
+                        NESTED_ARRAY_REASON.to_owned()
+                    } else {
+                        refusal.reason
+                    };
+                    SubsetError::at_entry(index, reason)
+                })?;
                 match entry {
                     Value::Str(s) => items.push(s),
                     Value::Array(_) => {
-                        return Err(SubsetError::at_entry(
-                            index,
-                            "nested arrays are outside the config subset",
-                        ));
+                        return Err(SubsetError::at_entry(index, NESTED_ARRAY_REASON));
                     }
                     Value::Bool(_) => {
                         return Err(SubsetError::at_entry(
@@ -644,12 +652,11 @@ fn parse_string(raw: &str) -> Result<String, String> {
     // it, for every key — a URL-list entry written without quotes can carry a
     // credential, and nothing here knows which key the value belongs to.
     // `apply` names the key in front of it, `parse_value` the entry (U108).
-    Err(
+    Err(format!(
         "the value is not a quoted string, a [\"…\"] array, or a bare true/false \
-         (integers, dates, and inline tables are outside the antseal config subset); \
-         it is not repeated here"
-            .to_owned(),
-    )
+         (integers, dates, and inline tables are outside the antseal config subset)\
+         {SUBSET_VALUE_NOT_REPEATED}"
+    ))
 }
 
 fn http_url_shape(value: &str) -> bool {
@@ -903,19 +910,34 @@ const RPC_VALUE_NOT_REPEATED: &str =
 const URL_VALUE_NOT_REPEATED: &str =
     "the value is not repeated here, because a URL can carry a credential";
 
+/// The subset's own withheld-value clause (U99, D195 R4), which ends the one
+/// subset refusal that met its input: `parse_string`'s message is built from
+/// it, and `rpc_endpoints_value` strips it, because that key's sentence ends
+/// with its own form of the clause — so every refusal says it once (U111).
+const SUBSET_VALUE_NOT_REPEATED: &str = "; it is not repeated here";
+
+/// Why an array entry that is itself an array is refused (U118): one reason
+/// for a nested array of one element and of several, under every key.
+const NESTED_ARRAY_REASON: &str = "nested arrays are outside the config subset";
+
 /// The `rpc_endpoints` value as a list, parsed **without ever repeating it**
 /// (D188 R5): every failure here is one sentence naming the table and the
 /// accepted shape — and, when the subset refused one entry, that entry's
-/// position (U108, D195 §2 R4), so this key's refusals name the position too.
-/// Written while the subset's own refusals still quoted what they rejected
-/// (U99 made them value-free, D195 R4), and kept because it says more than the
-/// subset's generic sentence.
+/// position and the subset's reason for it (U108, U111; D195 §2 R4). The
+/// sentence ends with this key's own withheld-value clause, so the reason
+/// carries the subset's without its `SUBSET_VALUE_NOT_REPEATED` tail.
 fn rpc_endpoints_value(raw: &str, network: NetworkId) -> Result<Vec<String>, String> {
     let entry = match parse_value(raw) {
         Ok(Value::Array(items)) => return Ok(items),
         Err(SubsetError {
-            entry: Some(index), ..
-        }) => format!(", and entry {index} is not one"),
+            entry: Some(index),
+            reason,
+        }) => {
+            let reason = reason
+                .strip_suffix(SUBSET_VALUE_NOT_REPEATED)
+                .unwrap_or(&reason);
+            format!(", and entry {index} is not one: {reason}")
+        }
         Ok(Value::Str(_) | Value::Bool(_)) | Err(SubsetError { entry: None, .. }) => String::new(),
     };
     Err(format!(

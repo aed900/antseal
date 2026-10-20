@@ -57,7 +57,9 @@ use crate::quote::{
     QuotePreimage, RewardsAddress, TxHash,
 };
 use crate::receipt::{BlobPaymentRecord, GasSummary, PaymentReceipt, TxRecord, TxStatus};
-use crate::{Address, BalanceReport, Blob, EvmAddress20, StorageBackend, StorageError};
+use crate::{
+    Address, BalanceReport, Blob, EvmAddress20, PaymentTxState, StorageBackend, StorageError,
+};
 
 /// Default sub-batch cap: upstream `MAX_TRANSFERS_PER_TRANSACTION = 256`
 /// (`evmlib-0.9.0/src/contract/payment_vault/mod.rs:11`). One non-zero
@@ -92,6 +94,9 @@ pub enum Method {
     /// `balances` (D89: on the trait since U14's gate must read both
     /// balances through the seam, never off a concrete backend).
     Balances,
+    /// `payment_tx_state` (D208 R8: the resume's read of what the chain did
+    /// with an unobserved payment transaction).
+    PaymentTxState,
 }
 
 /// One armed, one-shot fault. Each fires the first time execution
@@ -120,8 +125,35 @@ pub enum Fault {
     /// the store.
     DuringGetData,
     /// The named method fails with [`StorageError::Network`] on entry,
-    /// before any state change.
+    /// before any state change — `payment_tx_state`, which returns no error,
+    /// answers [`PaymentTxState::Unaskable`] with that reason instead.
     NetworkOn(Method),
+    /// `pay` lands sub-batches `0..sub_batch` as usual, broadcasts sub-batch
+    /// `sub_batch` without observing its landing (D208's unobserved shape),
+    /// and stops there. `chain` is what the chain did with that transaction:
+    /// [`TxStatus::Confirmed`] — mined, its ANT moved; [`TxStatus::Reverted`] —
+    /// mined and reverted, no ANT moved; [`TxStatus::Submitted`] — never mined,
+    /// nothing moved. `payment_tx_state` answers accordingly.
+    ///
+    /// Returns `Ok` with the receipt the adapter's capture carries at that
+    /// point (D208 R5): the landed sub-batches, plus the unobserved one as a
+    /// `Submitted` record with no block number, its quotes mapped, its blobs'
+    /// records built over its hash — because the mock has no capture hook. A
+    /// test double standing in for the adapter journals that receipt and
+    /// returns [`StorageError::StrandedPayment`] with `landed_tx_count =
+    /// sub_batch`, as the adapter does. The mock's `finalize_batch` checks no
+    /// payment on chain, so finalizing such a receipt directly proves nothing.
+    /// Never fires if the payment needs ≤ `sub_batch` txs (stays armed).
+    Unobserved {
+        /// The index of the sub-batch whose landing is not observed.
+        sub_batch: usize,
+        /// What the chain did with that sub-batch's transaction.
+        chain: TxStatus,
+    },
+    /// The next `payment_tx_state` about a transaction the mock never mined
+    /// answers [`PaymentTxState::Pending`]: the payment RPC holds it, unmined
+    /// (D208 R8). Stays armed while it is asked about mined ones.
+    PaymentTxHeld,
 }
 
 /// One call-log entry. The record's position in
@@ -452,6 +484,20 @@ impl StorageBackend for MockBackend {
                 _ => None,
             });
 
+        // D208's unobserved landing: which sub-batch, and what the chain did
+        // with its transaction. Fewer txs than that: re-armed, as above.
+        let unobserved = Self::take_fault(&mut inner, |f| matches!(f, Fault::Unobserved { .. }))
+            .and_then(|f| match f {
+                Fault::Unobserved { sub_batch, chain } if sub_batch < sub_batches.len() => {
+                    Some((sub_batch, chain))
+                }
+                Fault::Unobserved { .. } => {
+                    inner.faults.push(f);
+                    None
+                }
+                _ => None,
+            });
+
         let mut txs = Vec::with_capacity(sub_batches.len());
         for (index, sub_batch) in sub_batches.iter().enumerate() {
             if stop_after == Some(index) {
@@ -460,16 +506,26 @@ impl StorageBackend for MockBackend {
                     reason: "injected fault: killed between payment sub-batch txs".into(),
                 });
             }
-            inner.tx_counter += 1;
-            let tx_hash = TxHash::from_bytes(mock_digest_tagged(
-                b"mock-tx",
-                &[&inner.tx_counter.to_le_bytes()],
-            ));
-            for quote_hash in *sub_batch {
-                if inner.paid.insert(*quote_hash, tx_hash).is_some() {
-                    inner.double_paid.push(*quote_hash);
-                }
+            if let Some((_, chain)) = unobserved.filter(|&(at, _)| at == index) {
+                let tx_hash = match chain {
+                    TxStatus::Confirmed => mine(&mut inner, sub_batch),
+                    // Mined and reverted: gas spent, no quote paid.
+                    TxStatus::Reverted => {
+                        inner.tx_counter += 1;
+                        reverted_tx_hash(inner.tx_counter)
+                    }
+                    // Never mined: nothing reached the chain.
+                    TxStatus::Submitted => unmined_tx_hash(index, sub_batch),
+                };
+                txs.push(TxRecord {
+                    tx_hash,
+                    block_number: None,
+                    status: TxStatus::Submitted,
+                    quote_hashes: sub_batch.to_vec(),
+                });
+                return Ok(receipt_so_far(quote, txs));
             }
+            let tx_hash = mine(&mut inner, sub_batch);
             txs.push(TxRecord {
                 tx_hash,
                 // "Landed instantly": the block number is available from
@@ -643,6 +699,49 @@ impl StorageBackend for MockBackend {
         }
         Ok(inner.balances)
     }
+
+    /// Answers from the transactions this mock mined (D208 R8): a mined one is
+    /// [`PaymentTxState::Landed`] with its block — `confirmed: false` for a
+    /// [`Fault::Unobserved`] revert — and any other hash is
+    /// [`PaymentTxState::Absent`], or [`PaymentTxState::Pending`] under
+    /// [`Fault::PaymentTxHeld`]. `Fault::NetworkOn(Method::PaymentTxState)`
+    /// makes the next read [`PaymentTxState::Unaskable`].
+    async fn payment_tx_state(&self, tx_hash: &TxHash) -> PaymentTxState {
+        let mut inner = self.lock();
+        let digest = mock_digest_tagged(b"log-payment_tx_state", &[tx_hash.as_bytes()]);
+        inner.log.push(CallRecord {
+            method: Method::PaymentTxState,
+            args_digest: digest,
+        });
+        if let Some(err) =
+            Self::network_fault(&mut inner, Method::PaymentTxState, "payment_tx_state")
+        {
+            let reason = match err {
+                StorageError::Network { reason } => reason,
+                other => other.to_string(),
+            };
+            return PaymentTxState::Unaskable { reason };
+        }
+        for counter in 1..=inner.tx_counter {
+            let block_number = Some(1_000_000 + counter);
+            if *tx_hash == mined_tx_hash(counter) {
+                return PaymentTxState::Landed {
+                    block_number,
+                    confirmed: true,
+                };
+            }
+            if *tx_hash == reverted_tx_hash(counter) {
+                return PaymentTxState::Landed {
+                    block_number,
+                    confirmed: false,
+                };
+            }
+        }
+        if Self::take_fault(&mut inner, |f| f == Fault::PaymentTxHeld).is_some() {
+            return PaymentTxState::Pending;
+        }
+        PaymentTxState::Absent
+    }
 }
 
 impl MockBackend {
@@ -756,6 +855,97 @@ fn synthetic_proof_bytes(address: Address, tx_map: &BTreeMap<QuoteHash, TxHash>)
     let mut bytes = b"ANTSEAL-MOCK-PROOF\x00".to_vec();
     bytes.extend_from_slice(&digest);
     bytes
+}
+
+/// Land one sub-batch: mint the next mined tx (its block is `1_000_000 +` the
+/// counter) and pay its quotes — money moves, and a quote paid twice is
+/// recorded in `double_paid`.
+fn mine(inner: &mut Inner, sub_batch: &[QuoteHash]) -> TxHash {
+    inner.tx_counter += 1;
+    let tx_hash = mined_tx_hash(inner.tx_counter);
+    for quote_hash in sub_batch {
+        if inner.paid.insert(*quote_hash, tx_hash).is_some() {
+            inner.double_paid.push(*quote_hash);
+        }
+    }
+    tx_hash
+}
+
+/// The hash of the `counter`-th transaction the mock mined successfully.
+fn mined_tx_hash(counter: u64) -> TxHash {
+    TxHash::from_bytes(mock_digest_tagged(b"mock-tx", &[&counter.to_le_bytes()]))
+}
+
+/// The hash of a transaction the mock mined as the `counter`-th, reverted
+/// ([`Fault::Unobserved`] with [`TxStatus::Reverted`]): a separate tag, so it
+/// is never a successful one's hash.
+fn reverted_tx_hash(counter: u64) -> TxHash {
+    TxHash::from_bytes(mock_digest_tagged(
+        b"mock-tx-reverted",
+        &[&counter.to_le_bytes()],
+    ))
+}
+
+/// The hash of sub-batch `index`'s transaction that never reached the chain
+/// ([`Fault::Unobserved`] with [`TxStatus::Submitted`]) — over its quotes,
+/// which are fresh every quote round, so no mined hash can equal it.
+fn unmined_tx_hash(index: usize, sub_batch: &[QuoteHash]) -> TxHash {
+    let index = (index as u64).to_le_bytes();
+    let mut parts: Vec<&[u8]> = vec![index.as_slice()];
+    parts.extend(
+        sub_batch
+            .iter()
+            .map(|quote_hash| quote_hash.as_bytes().as_slice()),
+    );
+    TxHash::from_bytes(mock_digest_tagged(b"mock-tx-unmined", &parts))
+}
+
+/// The receipt the adapter's capture carries after `txs` (D208 R5): every
+/// quote of every tx mapped — an unobserved one's too — a record for each
+/// priced blob whose non-zero lines are all mapped, and the storage cost those
+/// records' mapped lines sum to (the adapter's `emit_capture` rule).
+fn receipt_so_far(quote: &CostQuote, txs: Vec<TxRecord>) -> PaymentReceipt {
+    let tx_map: BTreeMap<QuoteHash, TxHash> = txs
+        .iter()
+        .flat_map(|tx| tx.quote_hashes.iter().map(|qh| (*qh, tx.tx_hash)))
+        .collect();
+    let blobs: Vec<BlobPaymentRecord> = quote
+        .blobs
+        .iter()
+        .filter_map(|line| match &line.cost {
+            BlobCost::AlreadyStored => None,
+            BlobCost::Priced {
+                payments,
+                peer_quotes,
+                commitment_sidecars,
+            } => payments
+                .iter()
+                .filter(|p| p.amount_atto > 0)
+                .all(|p| tx_map.contains_key(&p.quote_hash))
+                .then(|| BlobPaymentRecord {
+                    address: line.address,
+                    payments: payments.clone(),
+                    peer_quotes: peer_quotes.clone(),
+                    commitment_sidecars: commitment_sidecars.clone(),
+                    proof_bytes: synthetic_proof_bytes(line.address, &tx_map),
+                }),
+        })
+        .collect();
+    let storage_cost_atto = blobs
+        .iter()
+        .flat_map(|record| record.payments.iter())
+        .filter(|line| tx_map.contains_key(&line.quote_hash))
+        .map(|line| line.amount_atto)
+        .sum();
+    PaymentReceipt {
+        blobs,
+        tx_map,
+        txs,
+        storage_cost_atto,
+        gas: GasSummary {
+            gas_cost_wei: quote.gas_estimate_wei,
+        },
+    }
 }
 
 /// The default blob→address function: **the real network rule** — S4's
@@ -1131,5 +1321,210 @@ mod tests {
             log[0].args_digest, log[2].args_digest,
             "different args, different digest"
         );
+    }
+
+    // ── S54 (D208 R8): the resolution read and its fault modes ─────────────
+
+    /// The one receipt a [`Fault::Unobserved`] pay returns, and what the
+    /// mock's chain then says about its unobserved transaction.
+    fn unobserved(mock: &MockBackend, batch: &[Blob], chain: TxStatus) -> PaymentReceipt {
+        mock.arm_fault(Fault::Unobserved {
+            sub_batch: 0,
+            chain,
+        });
+        let quote = block_on(mock.quote_batch(batch)).expect("quote");
+        let receipt = block_on(mock.pay(&quote)).expect("the unobserved shape is returned");
+        assert_eq!(mock.armed_faults(), 0, "the fault fired");
+        assert_eq!(receipt.txs.len(), 1, "one sub-batch, unobserved");
+        assert_eq!(receipt.txs[0].status, TxStatus::Submitted);
+        assert_eq!(receipt.txs[0].block_number, None);
+        assert_eq!(
+            receipt.blobs.len(),
+            batch.len(),
+            "the unobserved sub-batch's records are built over its hash (D208 R5)"
+        );
+        assert_eq!(receipt.tx_map.len(), batch.len(), "every quote mapped");
+        assert!(receipt.covers_all_paid_quotes());
+        assert!(
+            receipt
+                .tx_map
+                .values()
+                .all(|tx_hash| *tx_hash == receipt.txs[0].tx_hash),
+            "mapped to the unobserved hash"
+        );
+        assert_eq!(
+            receipt.storage_cost_atto, quote.total_ant_atto,
+            "the capture's cost is its mapped records' (emit_capture's rule)"
+        );
+        receipt
+    }
+
+    /// **Landed.** Every transaction a plain pay mined reads as landed, with
+    /// the block its record carries; a hash the mock never minted is absent.
+    /// Each read is logged.
+    #[test]
+    fn s54_a_mined_payment_reads_as_landed_and_a_stranger_as_absent() {
+        let mock = MockBackend::new().with_max_transfers_per_tx(1);
+        let batch = blobs(&[(1, 10), (2, 20)]);
+        let quote = block_on(mock.quote_batch(&batch)).expect("quote");
+        let receipt = block_on(mock.pay(&quote)).expect("pay");
+        assert_eq!(receipt.txs.len(), 2, "one tx per blob at cap 1");
+        for tx in &receipt.txs {
+            assert_eq!(
+                block_on(mock.payment_tx_state(&tx.tx_hash)),
+                PaymentTxState::Landed {
+                    block_number: tx.block_number,
+                    confirmed: true,
+                }
+            );
+        }
+        let stranger = TxHash::from_bytes([0x5E; 32]);
+        assert_eq!(
+            block_on(mock.payment_tx_state(&stranger)),
+            PaymentTxState::Absent
+        );
+        assert_eq!(
+            mock.calls(Method::PaymentTxState),
+            3,
+            "every read is logged"
+        );
+        assert!(
+            mock.first_index_of(Method::Pay) < mock.first_index_of(Method::PaymentTxState),
+            "logged in invocation order"
+        );
+    }
+
+    /// **Landed, unobserved.** The chain mined the transaction whose landing
+    /// pay did not observe: its ANT moved, and the read says so with the block.
+    #[test]
+    fn s54_an_unobserved_landing_the_chain_mined_reads_as_landed() {
+        let mock = MockBackend::new();
+        let batch = blobs(&[(1, 10), (2, 20)]);
+        let receipt = unobserved(&mock, &batch, TxStatus::Confirmed);
+        assert_eq!(mock.payment_tx_count(), 1, "the transaction was mined");
+        assert_eq!(mock.paid_map(), receipt.tx_map, "and its quotes are paid");
+        assert_eq!(
+            block_on(mock.payment_tx_state(&receipt.txs[0].tx_hash)),
+            PaymentTxState::Landed {
+                block_number: Some(1_000_001),
+                confirmed: true,
+            }
+        );
+    }
+
+    /// **Reverted.** Mined, reverted: landed but not confirmed, and no quote
+    /// was paid.
+    #[test]
+    fn s54_an_unobserved_revert_reads_as_landed_unconfirmed_and_paid_nothing() {
+        let mock = MockBackend::new();
+        let batch = blobs(&[(3, 30)]);
+        let receipt = unobserved(&mock, &batch, TxStatus::Reverted);
+        assert!(mock.paid_map().is_empty(), "a revert moves no ANT");
+        assert_eq!(
+            block_on(mock.payment_tx_state(&receipt.txs[0].tx_hash)),
+            PaymentTxState::Landed {
+                block_number: Some(1_000_001),
+                confirmed: false,
+            }
+        );
+    }
+
+    /// **Never mined.** Nothing reached the chain: absent, and nothing was
+    /// paid — or pending, once, while [`Fault::PaymentTxHeld`] says the RPC
+    /// holds it.
+    #[test]
+    fn s54_a_transaction_never_mined_reads_as_absent_or_held() {
+        let mock = MockBackend::new();
+        let batch = blobs(&[(4, 40), (5, 50)]);
+        let receipt = unobserved(&mock, &batch, TxStatus::Submitted);
+        let tx_hash = receipt.txs[0].tx_hash;
+        assert_eq!(mock.payment_tx_count(), 0, "nothing was mined");
+        assert!(mock.paid_map().is_empty(), "and nothing paid");
+        assert_eq!(
+            block_on(mock.payment_tx_state(&tx_hash)),
+            PaymentTxState::Absent
+        );
+        mock.arm_fault(Fault::PaymentTxHeld);
+        assert_eq!(
+            block_on(mock.payment_tx_state(&tx_hash)),
+            PaymentTxState::Pending
+        );
+        assert_eq!(
+            block_on(mock.payment_tx_state(&tx_hash)),
+            PaymentTxState::Absent,
+            "the held fault is one-shot"
+        );
+    }
+
+    /// **Unaskable.** A network fault on the read answers "could not ask",
+    /// once; a held fault is not consumed by a mined transaction's read.
+    #[test]
+    fn s54_an_unaskable_read_is_one_shot_and_a_held_fault_waits_for_an_unmined_hash() {
+        let mock = MockBackend::new();
+        let batch = blobs(&[(6, 60)]);
+        let quote = block_on(mock.quote_batch(&batch)).expect("quote");
+        let mined = block_on(mock.pay(&quote)).expect("pay").txs[0].tx_hash;
+        mock.arm_fault(Fault::NetworkOn(Method::PaymentTxState));
+        assert_eq!(
+            block_on(mock.payment_tx_state(&mined)),
+            PaymentTxState::Unaskable {
+                reason: "injected network fault: payment_tx_state".to_owned(),
+            }
+        );
+        mock.arm_fault(Fault::PaymentTxHeld);
+        let landed = PaymentTxState::Landed {
+            block_number: Some(1_000_001),
+            confirmed: true,
+        };
+        assert_eq!(block_on(mock.payment_tx_state(&mined)), landed);
+        assert_eq!(mock.armed_faults(), 1, "the held fault waits");
+        assert_eq!(
+            block_on(mock.payment_tx_state(&TxHash::from_bytes([0x11; 32]))),
+            PaymentTxState::Pending
+        );
+        assert_eq!(mock.armed_faults(), 0);
+    }
+
+    /// **A later sub-batch.** Sub-batches before the unobserved one land as
+    /// usual and the ones after it are never submitted; the receipt is the
+    /// capture at that point: the landed records plus the unobserved one's.
+    /// A fault for a sub-batch the payment does not have stays armed.
+    #[test]
+    fn s54_an_unobserved_later_sub_batch_carries_the_landed_ones() {
+        let mock = MockBackend::new().with_max_transfers_per_tx(2);
+        let batch = blobs(&[(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]);
+        let quote = block_on(mock.quote_batch(&batch)).expect("quote");
+        mock.arm_fault(Fault::Unobserved {
+            sub_batch: 1,
+            chain: TxStatus::Confirmed,
+        });
+        let receipt = block_on(mock.pay(&quote)).expect("the capture at sub-batch 1");
+        let statuses: Vec<TxStatus> = receipt.txs.iter().map(|tx| tx.status).collect();
+        assert_eq!(statuses, [TxStatus::Confirmed, TxStatus::Submitted]);
+        assert_eq!(receipt.tx_map.len(), 4, "two sub-batches of two quotes");
+        assert_eq!(
+            receipt.blobs.len(),
+            4,
+            "the third sub-batch's blob has none"
+        );
+        let mapped: u128 = receipt
+            .blobs
+            .iter()
+            .flat_map(|record| record.payments.iter())
+            .map(|line| line.amount_atto)
+            .sum();
+        assert_eq!(receipt.storage_cost_atto, mapped);
+        assert!(receipt.storage_cost_atto < quote.total_ant_atto);
+        assert_eq!(mock.payment_tx_count(), 2, "the third was never submitted");
+        assert_eq!(mock.paid_map().len(), 4);
+
+        let one_tx = block_on(mock.quote_batch(&blobs(&[(9, 9)]))).expect("quote");
+        mock.arm_fault(Fault::Unobserved {
+            sub_batch: 1,
+            chain: TxStatus::Submitted,
+        });
+        let plain = block_on(mock.pay(&one_tx)).expect("pay");
+        assert_eq!(plain.txs[0].status, TxStatus::Confirmed, "did not fire");
+        assert_eq!(mock.armed_faults(), 1, "re-armed");
     }
 }

@@ -532,26 +532,64 @@ pub fn abandon_pre_pay<J: crate::pipeline::SealJournal>(
     let paid = payment_recorded(journal.receipt(seal_id).map_err(CliError::from)?.as_ref())
         || state == WorkState::IncompletePostPay;
     if paid {
-        // The way forward is true of a partly paid work as of a fully paid
-        // one (D203 M6c): a payment that stranded part-way leaves a remainder
-        // the re-run asks to pay, so it cannot promise "no further payment";
-        // what it can promise is what the resume guarantees — no quote the
-        // receipt maps is bought again (D37 Decision 5).
-        return Err(CliError::Usage {
-            message: format!(
-                "work {} has already been paid for — a payment receipt is journaled for it. \
-                 Abandoning it would forfeit that payment permanently, and antseal will not \
-                 do that on request. Finish it instead by re-running `{}`: no quote the \
-                 receipt already maps is paid again, and the network's payment proofs stay \
-                 usable for uploading only about a day",
-                hex_seal(seal_id),
-                crate::listing::seal_invocation(
-                    &meta.input_paths_as_given,
-                    &meta.shaping,
-                    &meta.network
-                ),
-            ),
-        });
+        // The predicate above decides WHICH works are refused, and stays
+        // D203's byte for byte (D210 R3). The words say which of its two
+        // clauses refused, so the receipt is read again for them: the vault
+        // lock the handler holds for the whole run keeps it the same record.
+        let receipt = journal.receipt(seal_id).map_err(CliError::from)?;
+        let id = hex_seal(seal_id);
+        let rerun = crate::listing::seal_invocation(
+            &meta.input_paths_as_given,
+            &meta.shaping,
+            &meta.network,
+        );
+        let message = if payment_recorded(receipt.as_ref()) {
+            // The receipt clause (U115). It says what the vault records — a
+            // payment — not that the work is paid for: a partly paid work
+            // still owes the rest (D203 M6c). The way forward is what the
+            // re-run does for every payment this clause covers: it asks
+            // first and buys only what the receipt does not cover — nothing
+            // for a fully paid work, the rest for a partly paid one, every
+            // blob of a batch whose landing nobody observed (a receipt covers
+            // a blob only through a record) — and the clause after "but" is
+            // the expired-proof arm, which buys everything again.
+            format!(
+                "a payment is recorded for work {id} — its payment receipt maps quotes to \
+                 transactions. Abandoning it would give that payment up for good, and antseal \
+                 will not do that on request. Finish it instead by re-running `{rerun}`, which \
+                 asks before any payment and pays only for what the receipt does not cover — \
+                 but its payment proofs stay usable for uploading only about a day, and after \
+                 that finishing it costs a second payment"
+            )
+        } else {
+            // The state clause (U115): a post-pay tag over no recorded
+            // payment — a vault written before D203 M5 or S50, a zero-payment
+            // seal whose upload failed, or a journal missing its receipt
+            // (D210 §1.2). It says exactly that and claims no payment.
+            let journaled = previous_state.map_or_else(String::new, |tag| {
+                format!(" (the journal records `{}`)", tag.name())
+            });
+            let forward = if receipt.is_some() {
+                format!(
+                    "Finish it instead by re-running `{rerun}`, which quotes whatever is not yet \
+                     stored and asks before any payment"
+                )
+            } else {
+                // No receipt at all: no writer leaves a post-pay tag without
+                // one (the payment step journals the receipt before it moves
+                // the tag), and the resume stops at that read (`Corrupt`), so
+                // this offers no re-run it cannot keep.
+                format!(
+                    "Its journal holds no payment receipt, so re-running `{rerun}` cannot finish \
+                     it either: a resume past the payment step needs that receipt"
+                )
+            };
+            format!(
+                "work {id} is past its payment step{journaled}, but no payment is recorded for \
+                 it, and antseal does not abandon a work in that state on request. {forward}"
+            )
+        };
+        return Err(CliError::Usage { message });
     }
 
     journal
@@ -908,26 +946,37 @@ pub fn staging_never_finished(store: &WorkStore<'_>, seal_id: &SealId) -> bool {
 /// rather than re-encrypts if those bytes are gone, and duplicating that
 /// judgement in a renderer would let the two disagree).
 ///
-/// # Money comes from the receipt (D203 M4)
+/// # Money comes from the receipt, in every arm (D203 M4, D210 R1)
 ///
-/// `receipt` is the matched work's journaled receipt, and the money lines
-/// of a work on its anchor tag follow [`payment_recorded`], never the tag:
-/// a payment that stranded part-way, or one killed between its receipt and
-/// the `Paid` tag, leaves `Anchored` over money already moved. Neither line
-/// presumes which: "a payment is recorded" is true of a receipt that covers
-/// every blob and of one that covers some, and "pay the rest, if any" is what
-/// the resume does in both (it quotes what the receipt does not cover and
-/// asks only if that prices something). Where no payment is recorded the
-/// line says exactly that — not "nothing paid", which an exit 37 with no
-/// durable capture leaves the vault unable to know (D203 M1). The step is
-/// "past its anchor step", not "anchored": the tag is written even when
-/// `--no-anchor` skipped the step.
+/// `receipt` is the matched work's journaled receipt, and every money line
+/// follows [`payment_recorded`], never the tag. The tag says how far the work
+/// got, not whether its money covers it: a payment that stranded part-way, or
+/// one killed between its receipt and the `Paid` tag, leaves `Anchored` over
+/// money already moved; and a post-pay tag can sit over a payment that no
+/// longer covers the work — an expired-proof re-consent that was declined, or a
+/// re-payment that stranded (both written by the pipeline itself), and in a
+/// vault written before D203 M5 or S50 a declined remainder or a receipt that
+/// maps nothing. So no line presumes: "a payment is recorded" is true of a
+/// receipt that covers every blob and of one that covers some, and "pay the
+/// rest, if any" is what the resume does in both (it quotes what the receipt
+/// does not cover and asks only if that prices something). Where no payment is
+/// recorded the line says exactly that — not "nothing paid", which an exit 37
+/// with no durable capture leaves the vault unable to know (D203 M1) — and
+/// where a post-pay tag has no receipt at all, which no writer leaves, it says
+/// the resume fails there (its receipt read is `Corrupt`). The step is "past
+/// its anchor step", not "anchored": the tag is written even when `--no-anchor`
+/// skipped the step.
 ///
-/// The post-pay tags need no receipt: `Paid` is written only once nothing
-/// remains to buy (D203 M5). A vault written before M5 can hold the older
-/// early repair's `Paid` over a declined remainder; its resume still quotes
-/// and asks for that remainder, but this line cannot see it (D203's
-/// recorded residue).
+/// # The proof clock is `list`'s own sentence (D210 R2)
+///
+/// Wherever a payment is recorded, in any arm, the last line is `list`'s
+/// time-boxed note ([`ResumeClock::TimeBoxed`](crate::listing::ResumeClock))
+/// — one source, keyed on the same predicate `list` keys it on (D203 M2),
+/// so the two surfaces cannot drift. It is what covers expiry: no record
+/// says whether the payment proofs still buy an upload (only the network's
+/// answer does), so the plan states the clock instead of promising "no
+/// further payment" — a promise an expired proof or an unpaid remainder
+/// breaks on the very consent screen that shows these lines above a quote.
 #[must_use]
 pub fn resume_plan_lines(
     candidate: &ResumeCandidate,
@@ -937,12 +986,13 @@ pub fn resume_plan_lines(
         "  Resuming interrupted seal {}",
         hex_seal(&candidate.seal_id)
     )];
+    let recorded = payment_recorded(receipt);
     let (staged, remaining) = match candidate.journal_state {
         Some(SealState::Staged) => (
             "encrypted units and manifest are staged in the vault",
             "anchor, pay, upload",
         ),
-        Some(SealState::Anchored) if payment_recorded(receipt) => (
+        Some(SealState::Anchored) if recorded => (
             "staged and past its anchor step; a payment is recorded",
             "pay the rest, if any, then upload",
         ),
@@ -950,13 +1000,21 @@ pub fn resume_plan_lines(
             "staged and past its anchor step; no payment recorded",
             "pay, upload",
         ),
-        Some(SealState::Paid) => (
-            "PAID — the payment receipt is journaled",
-            "upload only (no further payment)",
+        Some(SealState::Paid) if recorded => (
+            "a payment is recorded; the upload has not started",
+            "pay the rest, if any, then upload",
         ),
-        Some(SealState::Finalizing) => (
-            "PAID — upload was interrupted part-way",
-            "resume the upload (no further payment)",
+        Some(SealState::Finalizing) if recorded => (
+            "a payment is recorded; the upload was interrupted",
+            "pay the rest, if any, then resume the upload",
+        ),
+        Some(SealState::Paid | SealState::Finalizing) if receipt.is_some() => (
+            "past its payment step, but no payment is recorded",
+            "pay, if anything is priced, then upload",
+        ),
+        Some(SealState::Paid | SealState::Finalizing) => (
+            "past its payment step, but no payment receipt is journaled",
+            "none — resuming fails without that receipt",
         ),
         // Terminal tags cannot be candidates, and a missing tag is a work
         // whose journal was never written. Say so rather than guess.
@@ -967,12 +1025,11 @@ pub fn resume_plan_lines(
     };
     out.push(format!("    staged:    {staged}"));
     out.push(format!("    remaining: {remaining}"));
-    if candidate.state == WorkState::IncompletePostPay {
-        out.push(
-            "    This seal is already paid for. Finishing it needs no further payment, \
-             and its payment proofs stay usable for uploading only about a day."
-                .to_owned(),
-        );
+    if recorded {
+        out.push(format!(
+            "    {}",
+            crate::listing::ResumeClock::TimeBoxed.note()
+        ));
     }
     out
 }
@@ -1169,14 +1226,32 @@ mod tests {
             "{lines}"
         );
         assert!(!lines.contains("no further payment"), "{lines}");
+        // ... and, a payment being recorded, `list`'s proof clock (U115).
+        assert!(
+            lines.ends_with(crate::listing::ResumeClock::TimeBoxed.note()),
+            "{lines}"
+        );
 
         let mut post_pay = candidate(0xB2, &["a.txt"], shaping(None));
         post_pay.state = WorkState::IncompletePostPay;
         post_pay.journal_state = Some(SealState::Paid);
+        // A post-pay tag takes its money from the receipt too (D210 R1): the
+        // tag cannot say whether the payment covers the work, so the plan
+        // promises no free finish, and closes on `list`'s proof clock.
         let lines = resume_plan_lines(&post_pay, Some(&stranded)).join("\n");
-        assert!(lines.contains("PAID"), "{lines}");
-        assert!(lines.contains("no further payment"), "{lines}");
-        assert!(lines.contains("about a day"), "{lines}");
+        assert!(
+            lines.contains("staged:    a payment is recorded; the upload has not started"),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("remaining: pay the rest, if any, then upload"),
+            "{lines}"
+        );
+        assert!(!lines.contains("no further payment"), "{lines}");
+        assert!(
+            lines.ends_with(crate::listing::ResumeClock::TimeBoxed.note()),
+            "{lines}"
+        );
 
         // A work with no journal tag renders honestly rather than guessing.
         let mut untagged = candidate(0xB3, &["a.txt"], shaping(None));
@@ -1239,5 +1314,173 @@ mod tests {
             matches!(decision, ResumeDecision::Resume(_)),
             "{decision:?}"
         );
+    }
+
+    /// A candidate on `tag`, its coarse state the tag's own (D203 R1).
+    fn on_tag(seal: u8, tag: Option<SealState>) -> ResumeCandidate {
+        let mut c = candidate(seal, &["a.txt"], shaping(None));
+        c.journal_state = tag;
+        c.state = tag.map_or(WorkState::IncompletePrePay, SealState::work_state);
+        c
+    }
+
+    /// A NON-SECRET synthetic receipt whose one mapping is to a transaction
+    /// nobody saw land — `Submitted`, no block — which still records a
+    /// payment ([`payment_recorded`]: money may have moved).
+    fn submitted_receipt() -> PaymentReceipt {
+        let mut submitted = receipt(true);
+        for tx in &mut submitted.txs {
+            tx.status = antseal_net::TxStatus::Submitted;
+            tx.block_number = None;
+        }
+        submitted
+    }
+
+    /// **D210 R1 (U114)**: every arm takes its money from the receipt, the
+    /// post-pay arms included, and none promises that the resume will not
+    /// charge. Each row is checked over every receipt shape its clauses must
+    /// stay true of: a confirmed mapping (fully or partly paid — the plan
+    /// cannot tell the two apart, and says nothing that needs to; an expired
+    /// payment is a confirmed mapping too, which the clock covers), a
+    /// `Submitted` mapping, a receipt that maps nothing, and none at all.
+    #[test]
+    fn every_arm_takes_its_money_from_the_receipt() {
+        let confirmed = receipt(true);
+        let submitted = submitted_receipt();
+        let maps_nothing = receipt(false);
+        let recorded = [Some(&confirmed), Some(&submitted)];
+        let unrecorded = [Some(&maps_nothing), None];
+        let clock = format!("    {}", crate::listing::ResumeClock::TimeBoxed.note());
+        type Row<'r> = (
+            SealState,
+            &'r [Option<&'r PaymentReceipt>],
+            &'r str,
+            &'r str,
+        );
+        let rows: [Row<'_>; 9] = [
+            (
+                SealState::Staged,
+                &unrecorded,
+                "encrypted units and manifest are staged in the vault",
+                "anchor, pay, upload",
+            ),
+            (
+                SealState::Anchored,
+                &recorded,
+                "staged and past its anchor step; a payment is recorded",
+                "pay the rest, if any, then upload",
+            ),
+            (
+                SealState::Anchored,
+                &unrecorded,
+                "staged and past its anchor step; no payment recorded",
+                "pay, upload",
+            ),
+            (
+                SealState::Paid,
+                &recorded,
+                "a payment is recorded; the upload has not started",
+                "pay the rest, if any, then upload",
+            ),
+            (
+                SealState::Finalizing,
+                &recorded,
+                "a payment is recorded; the upload was interrupted",
+                "pay the rest, if any, then resume the upload",
+            ),
+            (
+                SealState::Paid,
+                &unrecorded[..1],
+                "past its payment step, but no payment is recorded",
+                "pay, if anything is priced, then upload",
+            ),
+            (
+                SealState::Finalizing,
+                &unrecorded[..1],
+                "past its payment step, but no payment is recorded",
+                "pay, if anything is priced, then upload",
+            ),
+            (
+                SealState::Paid,
+                &unrecorded[1..],
+                "past its payment step, but no payment receipt is journaled",
+                "none — resuming fails without that receipt",
+            ),
+            (
+                SealState::Finalizing,
+                &unrecorded[1..],
+                "past its payment step, but no payment receipt is journaled",
+                "none — resuming fails without that receipt",
+            ),
+        ];
+        let mut checked = 0;
+        for (tag, receipts, staged, remaining) in rows {
+            for journaled in receipts {
+                let lines = resume_plan_lines(&on_tag(0xB4, Some(tag)), *journaled);
+                let mut expected = vec![
+                    format!("  Resuming interrupted seal {}", "b4".repeat(16)),
+                    format!("    staged:    {staged}"),
+                    format!("    remaining: {remaining}"),
+                ];
+                if payment_recorded(*journaled) {
+                    expected.push(clock.clone());
+                }
+                assert_eq!(lines, expected, "{tag:?} over {journaled:?}");
+                for promise in ["no further payment", "already paid for", "PAID"] {
+                    assert!(
+                        !lines.join("\n").contains(promise),
+                        "{tag:?}: {promise:?} in {lines:#?}"
+                    );
+                }
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 14, "every row, over every receipt shape it lists");
+    }
+
+    /// **D210 R2 (U115)**: the proof clock is `list`'s own sentence, read from
+    /// its one source, and it follows the receipt alone — present in EVERY
+    /// arm wherever a payment is recorded, absent wherever none is, and never
+    /// a second "about a day" sentence beside it.
+    #[test]
+    fn the_proof_clock_follows_the_receipt_in_every_arm() {
+        let clock = format!("    {}", crate::listing::ResumeClock::TimeBoxed.note());
+        let confirmed = receipt(true);
+        let submitted = submitted_receipt();
+        let maps_nothing = receipt(false);
+        let shapes = [
+            (Some(&confirmed), true),
+            (Some(&submitted), true),
+            (Some(&maps_nothing), false),
+            (None, false),
+        ];
+        let tags = [
+            None,
+            Some(SealState::Staged),
+            Some(SealState::Anchored),
+            Some(SealState::Paid),
+            Some(SealState::Finalizing),
+        ];
+        let mut checked = 0;
+        for tag in tags {
+            for (journaled, recorded) in shapes {
+                let lines = resume_plan_lines(&on_tag(0xB5, tag), journaled);
+                assert_eq!(
+                    lines.last() == Some(&clock),
+                    recorded,
+                    "{tag:?} over {journaled:?}: {lines:#?}"
+                );
+                assert_eq!(
+                    lines
+                        .iter()
+                        .filter(|line| line.contains("about a day"))
+                        .count(),
+                    usize::from(recorded),
+                    "{tag:?} over {journaled:?}: {lines:#?}"
+                );
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 20, "five arms, four receipt shapes");
     }
 }

@@ -733,3 +733,37 @@ It changes the payment loop's handling of a failure after each awaited sub-batch
 `StorageError` Display, three rustdoc paragraphs and a comment, inside the wave's own commits.
 Nothing in it authorises a push, a workflow dispatch, a deploy or any other outward act; each of
 those needs the maintainer's express consent naming the action, the destination and the account.
+
+## Addendum — 2026-10-20 (D208 §2 R1–R4, R6): `S51` is ruled, and `Payment` means "before any ANT moved" for the submission step too
+
+D208 rules `S51`, the one producer for which this record's new definition could be false.
+
+- **§4's `S51` item is ruled.** §4 named two fix shapes: journal the hash as `Submitted` before
+  broadcasting, or classify post-broadcast transport errors as stranded and let backfill resolve
+  them. D208 takes neither. The adapter signs first and computes the hash locally (§2 R1),
+  broadcasts the signed bytes under a deadline (R2), never calls an acknowledged broadcast
+  `Payment` (R3), and resolves an unacknowledged one by the local hash for a window, not by the
+  error (R4): an `ErrorResp` can be a transaction the node holds (*"already known"*) as well as a
+  refusal (D208 §1.2, executed). Journaling first is refused because it protects evidence, not
+  money (R7), and backfill cannot resolve a hash the chain never saw (D208 §1.5).
+- **§1.7's list of zero-ANT `Payment` producers changes.** The submission step (`:710` at
+  `6e1cab3`) becomes two producers, both before any ANT moved: a failure while preparing — the gas
+  estimate, fee history, nonce, chain id or signing — which sent nothing (*"sub-batch tx could not
+  be prepared: …"*), and R4's answered-and-absent arm, where the broadcast was not acknowledged,
+  every receipt lookup in the window answered with none, and the by-hash lookup answered null
+  (*"the payment transaction was not accepted (…), and the chain did not show it within {W} s"*). A
+  broadcast the chain still holds, or could not be asked about, is not `Payment`: it takes the
+  unobserved-landing shape, `StrandedPayment` at the confirmed count (exit 28, or 37 by the capture
+  split).
+- **§2 R4's sentence is now true for `S51`'s producer.** §2 R4's *Why* and §6 kept the
+  qualification that *"before any ANT moved"* could be false for the submission error until `S51`
+  was ruled. Under D208 §2 R4 it holds for every `Payment` producer, within one bounded residual: a
+  transaction mined after the resolution window, at most one sub-batch, the bound D37 Decision 2
+  accepts for a kill (D208 §4). `Payment`'s rustdoc names its zero-ANT producers, R4's absent arm
+  included (D208 §2 R6); its Display does not move.
+- **One producer changes class within the table.** A first broadcast whose fate the chain could not
+  be asked, or that it still holds, moves from 23 to 28 (37 when the capture was not durable), as
+  §2 R3 moved the zero-count revert from 28 to 23. No exit code is minted, and
+  `cli-errors.display.txt` does not change.
+
+The text above is history and stays as written.

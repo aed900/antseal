@@ -21,7 +21,7 @@
 //! [`preflight`] that every implementation shares.
 
 use crate::network::EvmAddress20;
-use crate::{Address, Blob, CostQuote, PaymentReceipt, StorageError};
+use crate::{Address, Blob, CostQuote, PaymentReceipt, StorageError, TxHash};
 
 /// The session wallet's balances (task S8) — structured data for U14's
 /// consent render and `--json` (serde-serializable; no secret material:
@@ -188,7 +188,7 @@ pub fn allowance_to_approve(current_atto: u128, total_atto: u128) -> Option<u128
 ///
 /// # Object safety / `async fn` (deliberate, argued)
 ///
-/// The four operations are native `async fn`s (Rust 1.92; no `Box<dyn
+/// The operations are native `async fn`s (Rust 1.92; no `Box<dyn
 /// Future>` indirection, no runtime dependency in this crate), which
 /// makes the trait **not dyn-compatible**. That is acceptable by design:
 /// the one consumer is the seal/restore orchestration in
@@ -292,6 +292,64 @@ pub trait StorageBackend {
     ///
     /// [`StorageError::Network`] when either balance cannot be read.
     async fn balances(&self) -> Result<BalanceReport, StorageError>;
+
+    /// What the payment chain says about one payment transaction, asked by its
+    /// hash (D208 R8) — read-only: no payment, no store, no journal.
+    ///
+    /// A journaled [`TxStatus::Submitted`] record is a transaction whose landing
+    /// `pay` could not observe: it may have paid for its blobs, or never reached
+    /// the chain. A resume asks this for every such record **before it buys
+    /// anything** (D208 R9), because only the chain can say which — the error
+    /// that stopped `pay` cannot (D208).
+    ///
+    /// Infallible by shape: a lookup that fails is the answer
+    /// [`PaymentTxState::Unaskable`], from which a caller may conclude nothing.
+    /// The **default body** gives exactly that answer, for a backend with no
+    /// payment RPC to ask; a backend that pays overrides it.
+    ///
+    /// [`TxStatus::Submitted`]: crate::TxStatus::Submitted
+    async fn payment_tx_state(&self, tx_hash: &TxHash) -> PaymentTxState {
+        let _ = tx_hash;
+        PaymentTxState::Unaskable {
+            reason: "this backend has no payment RPC to ask".to_owned(),
+        }
+    }
+}
+
+/// What the payment chain says about one payment transaction —
+/// [`StorageBackend::payment_tx_state`]'s answer (D208 R8).
+///
+/// Only [`Landed`](Self::Landed) and [`Absent`](Self::Absent) say anything
+/// about money: a mined transaction moved ANT exactly when `confirmed`, and an
+/// absent one moved none. [`Pending`](Self::Pending) and
+/// [`Unaskable`](Self::Unaskable) leave the question open, and a caller that
+/// would act on money must not.
+///
+/// Hygiene: no variant carries the hash or any other receipt field, and
+/// [`Unaskable`](Self::Unaskable)'s reason is redacted text, so an answer may
+/// enter a message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaymentTxState {
+    /// A receipt was read: the transaction is mined. `confirmed` is the
+    /// receipt's status — `false` is a mined transaction that reverted, which
+    /// moved no ANT. `block_number` is the receipt's block, when it names one.
+    Landed {
+        /// The block the receipt names, if it names one.
+        block_number: Option<u64>,
+        /// The receipt's status: mined successfully (`true`) or reverted.
+        confirmed: bool,
+    },
+    /// No receipt, but the payment RPC returns the transaction by hash: it is
+    /// held, not yet mined, and may still move money.
+    Pending,
+    /// No receipt, and the payment RPC does not return the transaction by hash
+    /// either: it is not on the chain, and the RPC holds no copy of it.
+    Absent,
+    /// A lookup could not be answered, so nothing is known.
+    Unaskable {
+        /// Why — redacted: no hash-shaped text.
+        reason: String,
+    },
 }
 
 #[cfg(test)]
@@ -467,5 +525,27 @@ mod tests {
                 available_atto: u128::MAX - 1,
             }
         );
+    }
+
+    /// **S54 (D208 R8).** A backend that does not override the resolution read
+    /// — here the canned [`NullBackend`], which has no payment RPC — answers
+    /// [`PaymentTxState::Unaskable`] through the default body: "could not ask",
+    /// the one answer that lets a caller conclude nothing about money. Driven
+    /// through a generic consumer, the D34 shape the resume uses.
+    #[test]
+    fn s54_the_default_resolution_read_could_not_ask() {
+        async fn resolve<B: StorageBackend>(backend: &B, tx_hash: &TxHash) -> PaymentTxState {
+            backend.payment_tx_state(tx_hash).await
+        }
+        let hashes = [TxHash::from_bytes([0x5A; 32]), TxHash::from_bytes([0; 32])];
+        assert_eq!(hashes.len(), 2, "two hashes, one answer");
+        for tx_hash in &hashes {
+            match block_on(resolve(&NullBackend, tx_hash)) {
+                PaymentTxState::Unaskable { reason } => {
+                    assert_eq!(reason, "this backend has no payment RPC to ask");
+                }
+                other => panic!("the default body must answer Unaskable, got {other:?}"),
+            }
+        }
     }
 }

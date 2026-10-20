@@ -275,6 +275,9 @@ impl AnchorGate for RecordingGate {
 pub struct SeenConsent {
     pub quote: CostQuote,
     pub blob_count: usize,
+    /// The whole seal's blob count (U120, D209 R8): larger than
+    /// `blob_count` when the quote is a remainder or a partial re-payment.
+    pub work_blob_count: usize,
     pub resume: bool,
     pub proofs_expired: bool,
     pub had_prior: bool,
@@ -333,6 +336,7 @@ impl ConsentHook for ScriptedConsent {
         self.seen.borrow_mut().push(SeenConsent {
             quote: request.quote.clone(),
             blob_count: request.blob_count,
+            work_blob_count: request.work_blob_count,
             resume: request.resume,
             proofs_expired: request.proofs_expired,
             had_prior: request.prior.is_some(),

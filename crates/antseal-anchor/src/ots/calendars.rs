@@ -145,8 +145,9 @@ mod tests {
     #[test]
     fn the_submit_list_and_the_upgrade_allowlist_are_not_the_same_list() {
         for calendar in DEFAULT_OTS_CALENDARS {
-            assert!(
-                !crate::ots::upgrade_uri_allowed(calendar, &[]),
+            assert_eq!(
+                crate::ots::classify_upgrade_uri(calendar, &[]),
+                Err(crate::ots::UpgradeUriRefusal::HostNotAllowed),
                 "{calendar} is a submit alias, not a pending-attestation host"
             );
         }

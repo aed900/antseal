@@ -198,3 +198,40 @@ spec edit is made by this record.
    moving its alloy major forces the lockstep alloy re-pin. Both are
    contained by S20's bump procedure to the adapter crate; the trait
    boundary and mock tests are unaffected.
+
+## Addendum — 2026-10-20 (D208 §2 R1–R4, R6, R7): residual risk 2's "hash journaled at submission" was journaled only by a failed await in a live process; D208 keeps D37 Decision 2's kill window, and says why
+
+Residual risk 2 (D33:191-194) says the RPC-availability failures of `pay()` are *"Covered by S7's
+mandated split: hash journaled at submission, landing/enrichment retried"*, and Decision 2
+(D33:126-130) keeps *"the tx-hash record with block number absent"* when the receipt read fails or
+the await is interrupted. As built at `ab7226f`, the hash was journaled only when the receipt await
+returned an error while the process lived: the unobserved-landing branch
+(`crates/antseal-net/src/ant_backend.rs:721-756`) pushes the `Submitted` record and delivers the
+capture. A kill during the await, or a broadcast whose reply was lost, journaled nothing, and
+neither the broadcast nor the await had a deadline (D208 §1.3). `TxStatus::Submitted`'s rustdoc
+made the same claim (*"the hash is durable even if the receipt await is interrupted"*,
+`crates/antseal-net/src/receipt.rs:105-107`). S7's mandate is to journal each sub-batch *as it
+lands*, strictly before any finalize call; it does not require a write before the broadcast, and
+D37 Decision 2 accepts the one-transaction window.
+
+D208 (`S51`) changes three things and keeps one:
+- the hash is computed locally before the broadcast, and the journaled hash is always the local
+  one, never the node's echo (§2 R1, R2);
+- the broadcast and the await have deadlines (30 s and 120 s), and an unacknowledged broadcast is
+  resolved by the local hash for 120 s (§2 R3, R4, R7), so a lost reply whose transaction lands is
+  an ordinary landing;
+- `TxStatus::Submitted`'s rustdoc says when the record is journaled, and that a kill before the
+  capture journals nothing (§2 R6);
+- **kept: the kill window.** Journaling the hash before the broadcast would protect evidence, not
+  money: the resume re-buys a sub-batch whose blobs have no record (D208 §1.4), and it would cost a
+  durable write per sub-batch and a `Submitted` record for every transaction a kill stopped before
+  sending. Only journaling the signed transaction with its records, and re-broadcasting at the
+  resume, closes the window for money, and that needs a vault receipt format version (D208 §1.7,
+  O4; §4).
+
+Decision 2's enrichment clause stands, with one limit D208 records: backfill fills a record only
+when the chain returns a receipt (`fill_block_numbers`), so a transaction that never reached the
+chain stays `Submitted` for good. D208 §2 R9 resolves such records at the resume, by hash, before
+anything is bought again.
+
+This record is not rewritten.

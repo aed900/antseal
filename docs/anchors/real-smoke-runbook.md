@@ -150,7 +150,7 @@ which prints those constants.
    **`antseal verify --online <bundle>`** (U30), in every build:
    `crates/antseal-cli/src/run.rs:92-96` hands `Command::Verify` to
    `commands::verify` (`crates/antseal-cli/src/commands.rs:973`), whose
-   `--online` arm (`crates/antseal-cli/src/commands.rs:1017-1029`) takes the
+   `--online` arm (`crates/antseal-cli/src/commands.rs:1045-1057`) takes the
    esplora pair from `[verify] bitcoin_endpoints`, or from
    `DEFAULT_ESPLORA_ENDPOINTS` when the config sets none
    (`crates/antseal-cli/src/verify_host.rs:332-342`), and asks both endpoints

@@ -1177,20 +1177,20 @@ fn bundle_tsa_anchor(artifact: &AnchorArtifact) -> Result<TsaAnchor, String> {
 /// the same encoder every vault write uses, so the capture round-trips
 /// bit-identically.
 fn bundle_receipt_record(receipt: &PaymentReceipt) -> Result<ReceiptRecord, RevealError> {
-    let tx_hashes: Vec<[u8; 32]> = receipt
-        .txs
-        .iter()
-        .map(|tx| *tx.tx_hash.as_bytes())
-        .collect();
+    // D208 R12: the payment is the transactions that paid a quote. A
+    // reverted one, or one the resume found was never mined, stays in the
+    // vault as evidence and is never named here — nor its block the minimum.
+    let paying = super::journal::paying_txs(receipt);
+    let tx_hashes: Vec<[u8; 32]> = paying.iter().map(|tx| *tx.tx_hash.as_bytes()).collect();
     if tx_hashes.is_empty() {
-        // A zero-cost seal paid nothing on-chain; there is no transaction
-        // to point a counterparty at.
+        // A zero-cost seal paid nothing on-chain, nor did a receipt whose
+        // every transaction reverted or never landed; there is no
+        // transaction to point a counterparty at.
         return Err(RevealError::ReceiptUnavailable {
             detail: "the recorded receipt contains no payment transaction",
         });
     }
-    let block_number = receipt
-        .txs
+    let block_number = paying
         .iter()
         .filter_map(|tx| tx.block_number)
         .min()
@@ -1328,14 +1328,24 @@ mod tests {
             tx_hash: TxHash::from_bytes([seed; 32]),
             block_number,
             status: TxStatus::Confirmed,
-            quote_hashes: Vec::new(),
+            quote_hashes: vec![antseal_net::QuoteHash::from_bytes([seed; 32])],
         }
     }
 
+    /// A receipt as the payment adapter journals one: every transaction's
+    /// quotes are mapped to it (D208 R12 publishes only those).
     fn receipt_with(txs: Vec<TxRecord>) -> PaymentReceipt {
+        let tx_map = txs
+            .iter()
+            .flat_map(|tx| {
+                tx.quote_hashes
+                    .iter()
+                    .map(move |quote| (*quote, tx.tx_hash))
+            })
+            .collect::<BTreeMap<_, _>>();
         PaymentReceipt {
             blobs: Vec::new(),
-            tx_map: BTreeMap::new(),
+            tx_map,
             txs,
             storage_cost_atto: 42,
             gas: GasSummary { gas_cost_wei: 7 },
@@ -1535,5 +1545,60 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **D208 R12, the reader census (§7.10).** The bundle names the
+    /// payment's transactions — those that paid a quote — and takes its
+    /// block from them alone. Beside two confirmed transactions, a receipt
+    /// holds (i) a never-mined `Submitted` record the resume kept as
+    /// evidence, (ii) a reverted FIRST sub-batch kept with its block, which
+    /// is the earliest of all, and (iii) a reverted later sub-batch as S50's
+    /// in-band arm journals it — none of them mapped. Key 0 is the two
+    /// confirmed hashes in capture order, key 1 the earlier of their blocks,
+    /// never the revert's; and a receipt with nothing paying takes the
+    /// existing no-transaction refusal.
+    #[test]
+    fn the_receipt_record_names_only_the_transactions_that_paid_a_quote() {
+        let quote = |n: u8| antseal_net::QuoteHash::from_bytes([n; 32]);
+        let record = |n: u8, block_number: Option<u64>, status: TxStatus| TxRecord {
+            tx_hash: TxHash::from_bytes([n; 32]),
+            block_number,
+            status,
+            quote_hashes: vec![quote(n)],
+        };
+        let mut receipt = receipt_with(vec![
+            record(1, Some(100), TxStatus::Reverted),
+            record(2, None, TxStatus::Submitted),
+            record(3, Some(300), TxStatus::Confirmed),
+            record(4, Some(400), TxStatus::Reverted),
+            record(5, Some(500), TxStatus::Confirmed),
+        ]);
+        receipt.tx_map = [
+            (quote(3), TxHash::from_bytes([3; 32])),
+            (quote(5), TxHash::from_bytes([5; 32])),
+        ]
+        .into_iter()
+        .collect();
+
+        let embedded = bundle_receipt_record(&receipt).expect("embeds");
+        assert_eq!(
+            embedded.tx_hashes(),
+            &[[3u8; 32], [5; 32]],
+            "an unmapped evidence record was presented as a payment transaction"
+        );
+        assert_eq!(
+            embedded.block_number(),
+            300,
+            "key 1 is the earliest PAYING transaction's block, never a revert's (100)"
+        );
+
+        receipt.tx_map.clear();
+        assert!(
+            matches!(
+                bundle_receipt_record(&receipt),
+                Err(RevealError::ReceiptUnavailable { .. })
+            ),
+            "nothing paying takes the existing no-transaction refusal"
+        );
     }
 }

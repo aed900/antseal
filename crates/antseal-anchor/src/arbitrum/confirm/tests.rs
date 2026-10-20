@@ -112,19 +112,19 @@ fn all_five_outcomes_are_reachable_and_distinct() {
         }
     );
     let failure = EndpointFailure::payload(&endpoint("http://127.0.0.1:9/"), "down");
-    assert_eq!(
-        project(Agreement::Unavailable {
-            failures: vec![failure.clone()]
-        })
-        .failed(),
-        1
+    let one = project(Agreement::Unavailable {
+        failures: vec![failure.clone()],
+    });
+    assert!(
+        matches!(&one, ArbitrumConfirmation::Unavailable { failures } if failures.len() == 1),
+        "{one:?}"
     );
-    assert_eq!(
-        project(Agreement::Unavailable {
-            failures: vec![failure.clone(), failure]
-        })
-        .failed(),
-        2
+    let two = project(Agreement::Unavailable {
+        failures: vec![failure.clone(), failure],
+    });
+    assert!(
+        matches!(&two, ArbitrumConfirmation::Unavailable { failures } if failures.len() == 2),
+        "{two:?}"
     );
 }
 
@@ -546,7 +546,10 @@ fn one_endpoint_down_is_unavailable_and_never_promotes_the_survivor() {
         NetworkId::ArbitrumOne,
         &ARBONE_TX,
     );
-    assert_eq!(outcome.failed(), 1, "{outcome:?}");
+    assert!(
+        matches!(&outcome, ArbitrumConfirmation::Unavailable { failures } if failures.len() == 1),
+        "{outcome:?}"
+    );
     assert_eq!(outcome.into_receipt_confirmation(), None);
 }
 
@@ -661,9 +664,8 @@ fn devnet_has_no_overlay_and_the_guard_refuses_rather_than_defaults() {
         NetworkId::Devnet,
         &ARBONE_TX,
     );
-    assert_eq!(
-        outcome.failed(),
-        2,
+    assert!(
+        matches!(&outcome, ArbitrumConfirmation::Unavailable { failures } if failures.len() == 2),
         "no expected chain id must never mean any chain id: {outcome:?}"
     );
 }

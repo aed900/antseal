@@ -493,3 +493,74 @@ D188 (`U44`, `U52`, `U64`) rules it:
 
 §6.3's TOML shape, the `[anchors]` placement, *"Precedence is U4's"* and
 *"Wired by **U44**"* stand. The text above stays as written.
+
+## Addendum — 2026-10-20 (wave 41, A143; D190 §2 R2, D200 §2 R1): §6.2's decision lives in `classify_upgrade_uri`, the bool is retired, and §8's two test names are stale
+
+- **§6.2's bool is retired for want of a production caller.** At `ab7226f`,
+  `upgrade_uri_allowed(uri, configured) -> bool` had 16 hits in `crates/`:
+  its definition (`crates/antseal-anchor/src/ots/upgrade_uri.rs:106`), its
+  re-export (`ots/mod.rs:51`) and 14 test sites — 13 in `upgrade_uri.rs`'s
+  tests and one at `ots/calendars.rs:149`. Production asked the reasoned
+  form: `UpgradeTarget::from_pending_uri` calls
+  `classify_upgrade_uri(uri, configured)?` (`ots/upgrade.rs:112`), and the
+  bool was that call's `is_ok()`. D190 §2 R2 and D200 §2 R1 rule that a
+  public method either has a production caller or does not exist, so `A143`
+  (wave 41, ruled without a record of its own) deleted it, with six other
+  test-only `pub fn`s of `antseal-anchor`.
+- **§6.2's decision now lives in `classify_upgrade_uri(uri, configured) ->
+  Result<(), UpgradeUriRefusal>`.** Its doc absorbed the bool's: *"Whether
+  `uri` may be contacted for an upgrade and, when it may not, which rule it
+  broke — D54 §6.2's ruled decision."*, then *"D54 names that decision as the
+  bool `upgrade_uri_allowed(uri, configured)`, which is this function's
+  `is_ok()`; A143 retired that wrapper, which no production code called."*,
+  then the `configured` paragraph, unchanged. The re-export is now
+  `pub use upgrade_uri::{OTS_UPGRADE_HOST_SUFFIXES, UpgradeUriRefusal,
+  classify_upgrade_uri};`. The 2026-10-17 addendum's *"One source, two
+  roles"* stands: `configured` is `classify_upgrade_uri`'s second parameter.
+- **The rule is unchanged, and its tests are stricter.** The body of
+  `classify_upgrade_uri` is byte-identical to `ab7226f`'s (56 lines), so §4's
+  allowlist and its `configured` widening are untouched. Of the 14 test
+  sites, the 9 accepts became `assert_eq!(classify_upgrade_uri(…), Ok(()))`
+  and the 5 refusals became `assert_eq!(…,
+  Err(UpgradeUriRefusal::HostNotAllowed))`, so a URI refused for the wrong
+  rule now reddens where the bool said only "refused". Every assertion
+  message was kept.
+- **§8's two test names are stale, and have been since A42 built the
+  allowlist** (`ead5db6`, 2026-08-03). The tests are
+  `the_allowlist_table_accepts_and_refuses_exactly_the_ruled_rows`
+  (`upgrade_uri.rs:220`), for §8's `upgrade_uri_outside_the_allowlist_is_refused`,
+  and `a_configured_calendar_widens_the_allowlist_only_to_itself` (`:323`),
+  for §8's `configured_calendar_widens_the_allowlist_only_to_itself`. A
+  word-bounded `git grep -w` for §8's two names finds them only in this
+  record (`:403`, `:404`). §8's *"fails when"* columns hold for the real
+  tests: the table refuses the bare suffix, `http://`, a path, a query, a
+  fragment and a port, each by its reason, and accepts the uppercase host
+  and every recorded pending URI; the second test refuses
+  `https://other.example.org` and `https://cal.example.com.evil.net` under
+  a configured `https://cal.example.com`.
+- **As built (lane L-ANCHOR4).** All seven items were deleted, none kept:
+  `UpgradePoll::is_repollable`, `upgrade_uri_allowed`,
+  `AnchorEndpoints::defaults`, `HttpClient::policy`,
+  `AnchorSubmissionOutcome::is_empty`, `Agreement::failed` and
+  `ArbitrumConfirmation::failed`, with the doc sentence that linked the last
+  (now *"The count is `failures.len()`."*). Their 26 test sites in 8 files
+  moved to the production form inside 17 existing tests, none added or
+  removed; four assertions that their neighbours already implied were
+  dropped (two `is_repollable`, two `is_empty`).
+  `crates/antseal-cli/tests/anchor_stage.rs`'s `DEFAULT_LIST_ROUTES` needle
+  became `"AnchorEndpoints::from_config"`, and its self-test's planted route
+  with it. Greens: the `antseal-anchor` lib *"220 passed; 0 failed; 1
+  ignored"* before and after, with identical verdict sets; clippy with
+  `-D warnings` exit 0; `anchor_stage` *"14 passed"* in a shadow copy. The
+  census on the final tree counted 87 ungated production `pub fn`s
+  (94 − 7) and found `ZERO_CALLS=0`. Three plants, each red: the needle
+  reverted (the scan's self-test, `left: []`); `HttpClient::policy` re-added
+  (`ZERO_CALLS=1`, naming it); a doc link to the deleted `failed`
+  (rustdoc's *"unresolved link to `Self::failed`"*).
+- **Not rewritten:** D99, which names `UpgradePoll::is_repollable()`, and
+  D188, whose §1.2 quotes the bool (`D188:99`), are historical records of
+  their waves. The classification `is_repollable` stated survives as
+  `UpgradePoll::NotFound`'s doc (*"further polling cannot help"*); whether
+  the engine honours it is `U59`'s.
+
+The text above this addendum is not edited.

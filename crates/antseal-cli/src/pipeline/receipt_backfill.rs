@@ -227,18 +227,19 @@ impl BackfillPass {
     }
 }
 
-/// How many of this receipt's transactions carry no block number.
+/// How many of this receipt's paying transactions carry no block number.
 ///
 /// The predicate the whole pass keys on, and the one R16 inverts: registry
 /// §7.10 key 1 is the **minimum** over the recorded block numbers, so a
 /// receipt is embeddable as soon as *one* transaction has one — but a
 /// backfill is worth attempting while *any* is missing, because the minimum
 /// can only fall as slots fill and an under-reported minimum would misstate
-/// when the payment landed.
+/// when the payment landed. Only a transaction that paid a quote counts
+/// (D208 R12): a never-mined record kept as evidence would otherwise make
+/// the receipt read unfilled for ever, at one RPC per pass.
 #[must_use]
 pub fn unfilled_block_numbers(receipt: &PaymentReceipt) -> usize {
-    receipt
-        .txs
+    super::journal::paying_txs(receipt)
         .iter()
         .filter(|tx| tx.block_number.is_none())
         .count()
@@ -580,14 +581,24 @@ mod tests {
             } else {
                 TxStatus::Submitted
             },
-            quote_hashes: Vec::new(),
+            quote_hashes: vec![antseal_net::QuoteHash::from_bytes([tag; 32])],
         }
     }
 
+    /// A receipt as the payment adapter journals one: every transaction's
+    /// quotes are mapped to it (D208 R12 counts only those).
     fn receipt_with(txs: Vec<TxRecord>) -> PaymentReceipt {
+        let tx_map = txs
+            .iter()
+            .flat_map(|tx| {
+                tx.quote_hashes
+                    .iter()
+                    .map(move |quote| (*quote, tx.tx_hash))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
         PaymentReceipt {
             blobs: Vec::new(),
-            tx_map: std::collections::BTreeMap::new(),
+            tx_map,
             txs,
             storage_cost_atto: 11,
             gas: GasSummary { gas_cost_wei: 3 },
@@ -1084,5 +1095,33 @@ mod tests {
             "a receipt with no empty slot still opened a payment-RPC session"
         );
         assert_eq!(pass.skip, Some(BackfillSkip::NothingUnfilled));
+    }
+
+    /// **D208 R12 (iv).** Only a transaction that paid a quote can leave a
+    /// receipt unfilled. A never-mined record the resume kept as evidence has
+    /// no block and never will; counting it would make its receipt read
+    /// unfilled for ever and cost an RPC on every `status` pass. A paying
+    /// transaction with no block still counts.
+    #[test]
+    fn only_a_paying_transaction_can_leave_a_receipt_unfilled() {
+        let quote = |n: u8| antseal_net::QuoteHash::from_bytes([n; 32]);
+        let mut kept = tx(0x11, None);
+        kept.quote_hashes = vec![quote(0x11)];
+        let mut landed = tx(0x22, Some(9));
+        landed.quote_hashes = vec![quote(0x22)];
+        let mut receipt = receipt_with(vec![kept, landed]);
+        receipt.tx_map = std::iter::once((quote(0x22), TxHash::from_bytes([0x22; 32]))).collect();
+        assert_eq!(
+            unfilled_block_numbers(&receipt),
+            0,
+            "a never-mined evidence record made the receipt read unfilled"
+        );
+
+        receipt.txs[1].block_number = None;
+        assert_eq!(
+            unfilled_block_numbers(&receipt),
+            1,
+            "a paying transaction with no block still counts"
+        );
     }
 }

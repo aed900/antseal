@@ -87,12 +87,6 @@ pub enum AnchorSubmissionOutcome {
 }
 
 impl AnchorSubmissionOutcome {
-    /// Whether this outcome carries no anchors at all.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        matches!(self, Self::Empty)
-    }
-
     /// The submission, when there was one.
     #[must_use]
     pub const fn submission(&self) -> Option<&AnchorSubmission> {
@@ -313,7 +307,6 @@ mod tests {
     fn no_anchor_gate_is_a_noop_producing_the_empty_set() {
         let outcome = block_on(NoAnchorGate.run([0xA5; 32])).expect("skip gate cannot fail");
         assert_eq!(outcome, AnchorSubmissionOutcome::Empty);
-        assert!(outcome.is_empty());
     }
 
     /// The abort path is drivable through the trait — the shape S12's

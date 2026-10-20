@@ -1876,6 +1876,13 @@ mod ant {
             async fn balances(&self) -> Result<BalanceReport, StorageError> {
                 self.inner.balances().await
             }
+
+            async fn payment_tx_state(
+                &self,
+                tx_hash: &antseal_net::TxHash,
+            ) -> antseal_net::PaymentTxState {
+                self.inner.payment_tx_state(tx_hash).await
+            }
         }
     }
 }

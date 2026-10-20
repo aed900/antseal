@@ -427,7 +427,6 @@ fn the_wired_gate_runs_both_halves_and_returns_a_populated_outcome() {
 
     let outcome = block_on(gate.run(crate::testing::replay::fixtures::DIGEST_A))
         .expect("--force-degraded proceeds");
-    assert!(!outcome.is_empty());
     let sub = outcome.submission().expect("a populated outcome");
 
     // OTS ran and produced a real pending attestation.
@@ -636,7 +635,7 @@ fn stage_of(captures: Vec<crate::tsa::TsaCapture>) -> TsaCaptureStage {
 
 #[test]
 fn the_default_endpoint_set_is_both_families_defaults() {
-    let defaults = AnchorEndpoints::defaults();
+    let defaults = AnchorEndpoints::from_config(None, None);
     assert_eq!(defaults.tsa_urls, effective_tsa_urls(None));
     assert_eq!(defaults.ots_calendars, effective_calendars(None));
     assert_eq!(defaults.tsa_urls.len(), 2);

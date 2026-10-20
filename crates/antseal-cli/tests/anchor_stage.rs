@@ -1083,7 +1083,7 @@ fn the_tsa_list_is_narrowed_without_losing_plain_http() {
 /// endpoint field is how a test reaches a live service by omission.
 const DEFAULT_LIST_ROUTES: [&str; 5] = [
     "DEFAULT_TSA_URLS",
-    "AnchorEndpoints::defaults",
+    "AnchorEndpoints::from_config",
     "AnchorStageConfig::from_config",
     "effective_tsa_urls",
     "HookContext::production",
@@ -1233,7 +1233,7 @@ fn the_endpoint_scan_reports_planted_violations() {
     // Arm 1: reaches for the production list.
     std::fs::write(
         dir.join("nested/planted_route.rs"),
-        b"fn urls() -> Vec<String> { AnchorEndpoints::defaults().tsa_urls }\n",
+        b"fn urls() -> Vec<String> { AnchorEndpoints::from_config(None, None).tsa_urls }\n",
     )
     .expect("write");
     // Arm 2: builds a stage AND names a live host.

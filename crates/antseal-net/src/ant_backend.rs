@@ -62,14 +62,14 @@
 //! `pay()` submits ⌈non-zero-transfers/256⌉ **sequential** EVM txs
 //! (`MAX_TRANSFERS_PER_TRANSACTION = 256`,
 //! `evmlib-0.9.0/src/contract/payment_vault/mod.rs:11`; one non-zero
-//! transfer per blob under the median-×3 rule ⇒ 256 blobs/tx). Each tx's
-//! receipt is awaited in-band — `block_number`/`status` come from the very
-//! awaited receipt object, no separate RPC read (D33's primary flow) —
-//! and the **capture hook** fires with the cumulative receipt **before
-//! the next sub-batch is submitted** (the journal-write timing S10/S12
-//! build on; the write itself is the pipeline's job). A mid-sequence
-//! failure surfaces as [`StorageError::StrandedPayment`] only after the
-//! hook has delivered every landed sub-batch's record.
+//! transfer per blob under the median-×3 rule ⇒ 256 blobs/tx). Each tx is
+//! signed and its hash computed here before it is broadcast, and its receipt
+//! is read by that hash under three deadlines — the chain, not an RPC error,
+//! settles a broadcast's fate (S51, D208); block and status come from that
+//! receipt (D33's primary flow). The **capture hook** fires with the
+//! cumulative receipt **before the next sub-batch is submitted** (S10/S12),
+//! and a mid-sequence failure surfaces as [`StorageError::StrandedPayment`]
+//! only after the hook has delivered every landed sub-batch's record.
 //!
 //! The ERC-20 allowance for the payment vault is approved with the
 //! **exact quoted total** (never upstream's `U256::MAX`,
@@ -80,9 +80,9 @@
 //! One signing provider is built at [`AntCoreBackend::connect`] from the
 //! re-exported [`Wallet`] (`Wallet::to_provider()`,
 //! `evmlib-0.9.0/src/wallet.rs:213-215`) and type-erased to
-//! [`DynProvider`]; submission, receipt awaits, the chain-id guard, and
-//! the payer's `eth_getTransactionReceipt` backfill all ride it — the same
-//! S5-configured payment RPC endpoint D33 names.
+//! [`DynProvider`]; broadcasts, receipt reads, the chain-id guard and the
+//! backfill ride it, and `pay` signs on a fresh `to_provider()` first, whose
+//! `fill` the erased one lacks (S51) — the same S5-configured RPC D33 names.
 //!
 //! **[D173 §2 R14, 2026-09-15]** This paragraph used to say that no second
 //! provider is constructed, because the backfill could ride this one. That
@@ -107,7 +107,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use alloy::network::TransactionBuilder;
 use alloy::providers::{DynProvider, Provider};
@@ -272,7 +272,7 @@ impl AntCoreBackend {
 
         // Wrong-network guard before anything can pay: eth_chainId must
         // match the pinned/exported id (42161 / 421614 / devnet's 31337).
-        chain_id_guard(&provider, config).await?;
+        chain_id_guard(&provider, config, BROADCAST_DEADLINE).await?;
 
         let client = Client::connect(&config.bootstrap, client_config)
             .await
@@ -335,7 +335,7 @@ impl AntCoreBackend {
         &self,
         receipt: &mut PaymentReceipt,
     ) -> Result<usize, StorageError> {
-        fill_block_numbers(&self.provider, receipt).await
+        fill_block_numbers(&self.provider, receipt, BROADCAST_DEADLINE).await
     }
 
     /// Payment preflight (task S8) over this session's live balances.
@@ -388,13 +388,13 @@ impl AntCoreBackend {
         let sub_batches = priced_blobs.div_ceil(self.max_transfers_per_tx) as u64;
         let units =
             APPROVE_GAS + PER_TX_BASE_GAS * sub_batches + PER_TRANSFER_GAS * (priced_blobs as u64);
-        let gas_price = self
-            .provider
-            .get_gas_price()
-            .await
-            .map_err(|e| StorageError::Network {
-                reason: format!("eth_gasPrice failed: {e}"),
-            })?;
+        // The gas price is a payment-RPC read outside the submission step: it
+        // is bounded and its error redacted in `gas_price_wei` (S57 + S58,
+        // D208 R13-R14), so a gateway that accepts and never answers cannot
+        // hang a quote and a failed read cannot print the RPC's URL, which can
+        // carry a credential in its path. Its failure keeps its class: network.
+        // (The gas model above is unchanged.)
+        let gas_price = gas_price_wei(&self.provider, BROADCAST_DEADLINE).await?;
         Ok(u128::from(units).saturating_mul(gas_price))
     }
 
@@ -403,20 +403,20 @@ impl AntCoreBackend {
     /// stay correct: a saturated balance still covers any representable
     /// requirement).
     async fn raw_balances(&self) -> Result<(u128, u128), StorageError> {
-        let ant = self
-            .wallet
-            .balance_of_tokens()
-            .await
-            .map_err(|e| StorageError::Network {
-                reason: format!("ANT balance query failed: {e}"),
-            })?;
-        let gas = self
-            .wallet
-            .balance_of_gas_tokens()
-            .await
-            .map_err(|e| StorageError::Network {
-                reason: format!("ETH balance query failed: {e}"),
-            })?;
+        // Both balances are payment-RPC reads outside the submission step, so
+        // each is bounded and its error redacted in its own function (S57 +
+        // S58, D208 R13-R14), and each fails in the network class it always
+        // had — the ANT read first, then the gas read, as before. evmlib builds
+        // a fresh key-less provider over the same RPC for each of them
+        // (`evmlib-0.9.0/src/wallet.rs` `balance_of_tokens`), and its reqwest
+        // client sets no request timeout, so this deadline is the only bound
+        // either read has: a gateway that accepts and never answers would
+        // otherwise hold the consent screen (U14) open, or `pay`'s preflight,
+        // forever. A balance above `u128::MAX` still saturates (comparisons
+        // stay correct at saturation: a saturated balance covers any
+        // representable requirement).
+        let ant = ant_balance(&self.wallet, BROADCAST_DEADLINE).await?;
+        let gas = gas_balance(&self.wallet, BROADCAST_DEADLINE).await?;
         Ok((saturate_u256(ant), saturate_u256(gas)))
     }
 
@@ -459,34 +459,34 @@ impl AntCoreBackend {
     /// standing allowance short-circuits exactly as it does at full width.
     async fn ensure_allowance(&self, total_atto: u128) -> Result<u128, StorageError> {
         let vault = vault_address(&self.wallet);
-        let current =
-            self.wallet
-                .token_allowance(vault)
-                .await
-                .map_err(|e| StorageError::Network {
-                    reason: format!("allowance query failed: {e}"),
-                })?;
+        // A payment-RPC read outside the submission step: bounded and its
+        // error redacted in `standing_allowance` (S57 + S58, D208 R13-R14), its
+        // failure the network class it always had. As before, the standing
+        // allowance alone decides below whether an approve is emitted at all,
+        // and the comparison is made at saturation (`saturate_u256`, verdict-
+        // preserving, see this method's docs).
+        let current = standing_allowance(&self.wallet, vault, BROADCAST_DEADLINE).await?;
         let Some(amount_atto) = allowance_to_approve(saturate_u256(current), total_atto) else {
             return Ok(0);
         };
+        // An approve that fails moves no ANT; its reason is redacted like every
+        // payment-RPC error's, URLs included (`approve_failure`, S57).
         let tx_hash = self
             .wallet
             .approve_to_spend_tokens(vault, U256::from(amount_atto))
             .await
-            .map_err(|e| StorageError::Payment {
-                reason: format!("token approve failed: {}", redact_evm_error(&e.to_string())),
-            })?;
+            .map_err(|e| approve_failure(&e))?;
         // The approve's own gas, for the receipt's gas summary — read from
-        // its receipt (the approve is fully awaited by upstream).
-        let receipt = self
-            .provider
-            .get_transaction_receipt(tx_hash)
-            .await
-            .ok()
-            .flatten();
-        Ok(receipt.map_or(0, |r| {
-            u128::from(r.gas_used).saturating_mul(r.effective_gas_price)
-        }))
+        // its receipt (the approve is fully awaited by upstream: evmlib's own
+        // send has a 5 s broadcast timeout and a bounded, retried watch). The
+        // read is a payment-RPC read outside the submission step, so it is
+        // bounded (`approve_gas_wei`, S58, D208 R14): a gateway that accepts
+        // and never answers would otherwise hold the payment between its
+        // approve and its first sub-batch forever. A read that fails, or that
+        // does not answer in time, counts the approve's gas as 0 — what a
+        // failed read always counted — because the gas figure is a summary,
+        // never a money decision.
+        Ok(approve_gas_wei(&self.provider, tx_hash, BROADCAST_DEADLINE).await)
     }
 }
 
@@ -656,21 +656,31 @@ impl StorageBackend for AntCoreBackend {
         let vault = vault_address(&self.wallet);
         let handler = PaymentVaultHandler::new(vault, self.provider.clone());
         let from = self.wallet.address();
+        // S51 (D208 R1): every sub-batch is signed before a byte of it is
+        // sent, on the wallet's own filler stack. `fill` belongs to the
+        // concrete provider `to_provider()` returns and the session's is
+        // type-erased, so the signer is built here, once per payment, over the
+        // same payment RPC; the broadcast and every lookup ride the session's.
+        let signer = self.wallet.to_provider();
 
-        let mut records: Vec<Option<BlobPaymentRecord>> = (0..priced.len()).map(|_| None).collect();
-        let mut remaining: Vec<Option<PricedBlobSlot>> = priced.into_iter().map(Some).collect();
-        let mut tx_map: BTreeMap<QuoteHash, TxHash> = BTreeMap::new();
-        let mut txs: Vec<TxRecord> = Vec::new();
+        let mut so_far = PayLoop {
+            records: (0..priced.len()).map(|_| None).collect(),
+            remaining: priced.into_iter().map(Some).collect(),
+            ready_after,
+            tx_map: BTreeMap::new(),
+            txs: Vec::new(),
+            gas_cost_wei,
+        };
 
         // Blobs with no non-zero transfer (theoretical zero-price quote)
         // are proof-ready immediately, with no tx hashes. This runs before
         // any sub-batch is submitted, so a proof failure here moved no ANT.
         finalize_ready_blobs(
-            &mut remaining,
-            &ready_after,
+            &mut so_far.remaining,
+            &so_far.ready_after,
             usize::MAX,
-            &tx_map,
-            &mut records,
+            &so_far.tx_map,
+            &mut so_far.records,
             &mut lock_staged(&self.staged).paid,
         )
         .map_err(pre_pass_proof_failure)?;
@@ -694,7 +704,7 @@ impl StorageBackend for AntCoreBackend {
                 .collect();
             let (calldata, to) = handler.pay_for_quotes_calldata(entries).map_err(|e| {
                 stranded_or_payment(
-                    txs.len(),
+                    so_far.confirmed(),
                     format!(
                         "calldata build failed: {}",
                         redact_evm_error(&e.to_string())
@@ -702,117 +712,41 @@ impl StorageBackend for AntCoreBackend {
                 )
             })?;
 
-            // Submit and await the landing — the receipt object below IS
-            // the D33 primary-flow capture source (block number in-band).
+            // Sign, broadcast, and settle what the chain says — the receipt
+            // read by the local hash IS the D33 primary-flow capture source
+            // (block number in-band). Journaled via the hook BEFORE the next
+            // submission (S46, S49, S50 — D204; S51, S54 — D208).
             let request = TransactionRequest::default()
                 .with_from(from)
                 .with_to(to)
                 .with_input(calldata);
-            let pending = self.provider.send_transaction(request).await.map_err(|e| {
-                stranded_or_payment(
-                    txs.len(),
-                    format!(
-                        "sub-batch tx submission failed: {}",
-                        redact_evm_error(&e.to_string())
-                    ),
-                )
-            })?;
-            let submitted_hash = TxHash::from_bytes(pending.tx_hash().0);
-            let evm_receipt = match pending.get_receipt().await {
-                Ok(receipt) => receipt,
-                Err(e) => {
-                    // The tx was accepted by the RPC but its landing was
-                    // not observed: journal the hash with `Submitted`
-                    // status (backfill fills the rest) and surface the
-                    // stranded state — money MAY have moved.
-                    txs.push(TxRecord {
-                        tx_hash: submitted_hash,
-                        block_number: None,
-                        status: TxStatus::Submitted,
-                        quote_hashes: batch.iter().map(|(_, qh, ..)| *qh).collect(),
-                    });
-                    for (_, quote_hash, ..) in *batch {
-                        tx_map.insert(*quote_hash, submitted_hash);
-                    }
-                    emit_capture(
-                        self.capture_hook.as_ref(),
-                        &records,
-                        &tx_map,
-                        &txs,
-                        gas_cost_wei,
-                    );
-                    return Err(StorageError::StrandedPayment {
-                        landed_tx_count: txs
-                            .iter()
-                            .filter(|t| t.status == TxStatus::Confirmed)
-                            .count(),
-                        reason: format!(
-                            "sub-batch tx landing not observed: {}",
-                            redact_evm_error(&e.to_string())
-                        ),
-                    });
-                }
-            };
-
-            let landed_hash = TxHash::from_bytes(evm_receipt.transaction_hash.0);
-            let confirmed = evm_receipt.status();
-            gas_cost_wei = gas_cost_wei.saturating_add(
-                u128::from(evm_receipt.gas_used).saturating_mul(evm_receipt.effective_gas_price),
-            );
-            txs.push(TxRecord {
-                tx_hash: landed_hash,
-                block_number: evm_receipt.block_number,
-                status: if confirmed {
-                    TxStatus::Confirmed
-                } else {
-                    TxStatus::Reverted
-                },
+            let sub_batch = SubBatch {
+                index: batch_index,
+                count: sub_batches.len(),
                 quote_hashes: batch.iter().map(|(_, qh, ..)| *qh).collect(),
-            });
-
-            // A reverted payForQuotes moved no ANT: its quotes are NOT mapped
-            // (they are unpaid). A confirmed one maps its quotes and builds
-            // the proofs that became complete with this landing (per-blob
-            // `finalize_batch_payment` — pure, `batch.rs:337-343`); a proof
-            // failure is data here, because after a landing it is not a
-            // payment that moved nothing (S49).
-            let outcome = if confirmed {
-                for (_, quote_hash, ..) in *batch {
-                    tx_map.insert(*quote_hash, landed_hash);
-                }
-                let finalized = finalize_ready_blobs(
-                    &mut remaining,
-                    &ready_after,
-                    batch_index,
-                    &tx_map,
-                    &mut records,
-                    &mut lock_staged(&self.staged).paid,
-                );
-                SubBatchOutcome::Confirmed { finalized }
-            } else {
-                SubBatchOutcome::Reverted
             };
-            // Journal via the hook BEFORE the next submission, and decide
-            // whether the payment goes on (S46, S49, S50 — D204).
-            settle_sub_batch(
-                outcome,
+            pay_sub_batch(
+                &signer,
+                &self.provider,
+                request,
+                &sub_batch,
+                &mut so_far,
+                &self.staged,
                 self.capture_hook.as_ref(),
-                &records,
-                &tx_map,
-                &txs,
-                gas_cost_wei,
-                batch_index,
-                sub_batches.len(),
-            )?;
+                SubmitDeadlines::PAYMENT_RPC,
+            )
+            .await?;
         }
 
-        let blobs: Vec<BlobPaymentRecord> = records.into_iter().flatten().collect();
+        let blobs: Vec<BlobPaymentRecord> = so_far.records.into_iter().flatten().collect();
         let receipt = PaymentReceipt {
             blobs,
-            tx_map,
-            txs,
+            tx_map: so_far.tx_map,
+            txs: so_far.txs,
             storage_cost_atto: total,
-            gas: GasSummary { gas_cost_wei },
+            gas: GasSummary {
+                gas_cost_wei: so_far.gas_cost_wei,
+            },
         };
         debug_assert!(receipt.covers_all_paid_quotes());
         Ok(receipt)
@@ -936,6 +870,13 @@ impl StorageBackend for AntCoreBackend {
             ant_atto,
             gas_wei,
         })
+    }
+
+    /// D208 R8 over this session's payment RPC: the receipt by hash, and —
+    /// when there is none — the transaction by hash, each lookup bounded by
+    /// [`BROADCAST_DEADLINE`] ([`read_payment_tx_state`]).
+    async fn payment_tx_state(&self, tx_hash: &TxHash) -> crate::PaymentTxState {
+        read_payment_tx_state(&self.provider, tx_hash, BROADCAST_DEADLINE).await
     }
 }
 
@@ -1129,7 +1070,7 @@ impl AntCoreReceiptReader {
             reason: format!("the {} payment RPC URL is not a valid URL", config.id),
         })?;
         let provider = http_provider(rpc_url).erased();
-        chain_id_guard(&provider, config).await?;
+        chain_id_guard(&provider, config, BROADCAST_DEADLINE).await?;
         Ok(Self {
             provider,
             config: config.clone(),
@@ -1153,13 +1094,14 @@ impl AntCoreReceiptReader {
     ///
     /// # Errors
     ///
-    /// [`StorageError::Network`] only when the RPC itself is unreachable; an
-    /// individual not-yet-visible receipt is not an error.
+    /// [`StorageError::Network`] only when the RPC itself is unreachable or a
+    /// read does not answer within 30 s (S58, D208 R14); an individual
+    /// not-yet-visible receipt is not an error.
     pub async fn backfill_block_numbers(
         &self,
         receipt: &mut PaymentReceipt,
     ) -> Result<usize, StorageError> {
-        fill_block_numbers(&self.provider, receipt).await
+        fill_block_numbers(&self.provider, receipt, BROADCAST_DEADLINE).await
     }
 }
 
@@ -1239,13 +1181,16 @@ fn client_config(config: &NetworkConfig) -> Result<ClientConfig, StorageError> {
 async fn chain_id_guard(
     provider: &DynProvider,
     config: &NetworkConfig,
+    limit: Duration,
 ) -> Result<(), StorageError> {
-    let chain_id = provider
-        .get_chain_id()
-        .await
-        .map_err(|e| StorageError::Network {
-            reason: format!("payment RPC unreachable (eth_chainId): {e}"),
-        })?;
+    // Bounded and redacted (S57 + S58, D208 R13-R14): the read happens before
+    // any socket of the storage session, so a hung RPC here held `connect`.
+    let chain_id = bounded_read(
+        "payment RPC unreachable (eth_chainId)",
+        limit,
+        provider.get_chain_id(),
+    )
+    .await?;
     if chain_id != config.evm_chain_id {
         return Err(StorageError::Network {
             reason: format!(
@@ -1265,6 +1210,7 @@ async fn chain_id_guard(
 async fn fill_block_numbers(
     provider: &DynProvider,
     receipt: &mut PaymentReceipt,
+    limit: Duration,
 ) -> Result<usize, StorageError> {
     let mut filled = 0usize;
     for tx in &mut receipt.txs {
@@ -1272,13 +1218,16 @@ async fn fill_block_numbers(
             continue;
         }
         let hash = alloy::primitives::B256::from(*tx.tx_hash.as_bytes());
-        let fetched =
-            provider
-                .get_transaction_receipt(hash)
-                .await
-                .map_err(|e| StorageError::Network {
-                    reason: format!("eth_getTransactionReceipt failed: {e}"),
-                })?;
+        // Bounded and redacted (S57 + S58, D208 R13-R14). A read that does not
+        // answer fails like one the RPC refused — the documented network class
+        // — and `status`'s host skips it silently, as every backfill failure
+        // (U67); a receipt not yet visible is still no error.
+        let fetched = bounded_read(
+            "eth_getTransactionReceipt failed",
+            limit,
+            provider.get_transaction_receipt(hash),
+        )
+        .await?;
         if let Some(evm_receipt) = fetched {
             tx.block_number = evm_receipt.block_number;
             tx.status = if evm_receipt.status() {
@@ -1755,6 +1704,823 @@ fn stranded_or_payment(landed_tx_count: usize, reason: String) -> StorageError {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The submission step (S51, S54 — D208): sign first, broadcast under a
+// deadline, and let the chain, asked by the locally computed hash, say what
+// became of the transaction — never the error that interrupted the asking
+// ---------------------------------------------------------------------------
+
+/// How long one broadcast of the signed bytes may go unacknowledged (D208 R2);
+/// also the bound on preparing a sub-batch and on each single lookup, so a
+/// slow answer inside a window still counts as one. Generous: antseal never
+/// re-sends blind, so a slow acknowledgement costs a resolution, never a second
+/// transaction.
+const BROADCAST_DEADLINE: Duration = Duration::from_secs(30);
+
+/// How long an acknowledged broadcast is awaited for its receipt (D208 R3) —
+/// about as long as upstream's own payer watches one (evmlib 0.9.0's
+/// `TX_TIMEOUT` with its retries, D208 R7).
+const RECEIPT_DEADLINE: Duration = Duration::from_secs(120);
+
+/// How long an unacknowledged broadcast is looked up by its hash before the
+/// payment step decides what it did (D208 R4).
+const RESOLVE_WINDOW: Duration = Duration::from_secs(120);
+
+/// The pause between two receipt lookups while awaiting or resolving.
+const RECEIPT_POLL: Duration = Duration::from_secs(1);
+
+/// The submission step's bounds (D208 R7): adapter constants in production,
+/// milliseconds in tests — never config keys.
+#[derive(Debug, Clone, Copy)]
+struct SubmitDeadlines {
+    /// One broadcast; also preparing, and each single lookup.
+    broadcast: Duration,
+    /// Awaiting an acknowledged broadcast's receipt.
+    receipt: Duration,
+    /// Resolving an unacknowledged broadcast by its hash.
+    resolve_window: Duration,
+    /// Between two receipt lookups.
+    poll: Duration,
+}
+
+impl SubmitDeadlines {
+    /// The bounds `pay` runs under.
+    const PAYMENT_RPC: Self = Self {
+        broadcast: BROADCAST_DEADLINE,
+        receipt: RECEIPT_DEADLINE,
+        resolve_window: RESOLVE_WINDOW,
+        poll: RECEIPT_POLL,
+    };
+}
+
+/// What `pay`'s loop carries from one sub-batch to the next — the
+/// receipt-so-far and the blobs still waiting for a proof — in one value, so
+/// the submission step can be driven by a test with no Autonomi client.
+struct PayLoop {
+    /// Each priced blob not yet proof-ready, by slot.
+    remaining: Vec<Option<PricedBlobSlot>>,
+    /// Each slot's ready-after sub-batch index (`usize::MAX`: no transfer).
+    ready_after: Vec<usize>,
+    /// Each slot's record, once its proof is built.
+    records: Vec<Option<BlobPaymentRecord>>,
+    /// The quote→tx map so far.
+    tx_map: BTreeMap<QuoteHash, TxHash>,
+    /// This call's transactions, in submission order.
+    txs: Vec<TxRecord>,
+    /// Gas spent so far, wei.
+    gas_cost_wei: u128,
+}
+
+impl PayLoop {
+    /// This call's confirmed landings: the count every stranded class reports.
+    fn confirmed(&self) -> usize {
+        self.txs
+            .iter()
+            .filter(|tx| tx.status == TxStatus::Confirmed)
+            .count()
+    }
+}
+
+/// One sub-batch, as the submission step takes it.
+struct SubBatch {
+    /// Its position in the payment, from 0.
+    index: usize,
+    /// How many sub-batches the payment has.
+    count: usize,
+    /// The quote hashes its transaction pays.
+    quote_hashes: Vec<QuoteHash>,
+}
+
+/// Pay one sub-batch: sign it, broadcast it, and settle what the chain says
+/// (D208 R1–R5).
+///
+/// - **Preparing** — the gas estimate (where a would-revert lands), fee
+///   history, nonce, chain id, the signature — sends nothing, so its failure is
+///   [`StorageError::Payment`] before any landing (R1).
+/// - The hash journaled is ALWAYS the one computed here from the signed bytes,
+///   never an RPC's echo (R2).
+/// - **A receipt for that hash** takes the landed path — [`settle_sub_batch`],
+///   unchanged — whether or not the broadcast was acknowledged (R3, R4).
+/// - **A broadcast not acknowledged, that the chain answered for and never
+///   showed** within the window, moved nothing: [`StorageError::Payment`]
+///   before any landing (R4).
+/// - **Anything else may have moved money** — an acknowledged broadcast never
+///   seen to land, a chain that could not be asked, a transaction it holds
+///   unmined — and takes the unobserved shape, [`strand_unobserved`] (R5).
+///
+/// Never a classifier over error text or error variants: an RPC error object
+/// can mean "refused" or "I already hold it" (`already known`) with the same
+/// code — measured against alloy 1.8.3 when D208 was ruled.
+#[allow(clippy::too_many_arguments)] // the signer, the session's provider, the
+// request, the loop state, the hook and the bounds: bundling them would move
+// the same fields behind a name that explains nothing.
+async fn pay_sub_batch<F, P>(
+    signer: &alloy::providers::fillers::FillProvider<F, P, alloy::network::Ethereum>,
+    provider: &DynProvider,
+    request: TransactionRequest,
+    sub_batch: &SubBatch,
+    so_far: &mut PayLoop,
+    staged: &Mutex<Staged>,
+    hook: Option<&CaptureHook>,
+    deadlines: SubmitDeadlines,
+) -> Result<(), StorageError>
+where
+    F: alloy::providers::fillers::TxFiller<alloy::network::Ethereum>,
+    P: Provider<alloy::network::Ethereum>,
+{
+    let confirmed = so_far.confirmed();
+    let signed = sign_sub_batch(signer, request, deadlines.broadcast)
+        .await
+        .map_err(|detail| {
+            stranded_or_payment(
+                confirmed,
+                format!("sub-batch tx could not be prepared: {detail}"),
+            )
+        })?;
+    let evm_receipt = match submit_signed(provider, &signed, deadlines).await {
+        Submission::Landed(receipt) => receipt,
+        Submission::NotAccepted { detail } => {
+            return Err(stranded_or_payment(
+                confirmed,
+                format!(
+                    "the payment transaction was not accepted ({detail}), and the chain did not \
+                     show it within {}",
+                    span(deadlines.resolve_window)
+                ),
+            ));
+        }
+        Submission::Unresolved { reason } => {
+            return Err(strand_unobserved(
+                signed.hash,
+                sub_batch,
+                so_far,
+                staged,
+                hook,
+                reason,
+            ));
+        }
+    };
+
+    let landed = evm_receipt.status();
+    so_far.gas_cost_wei = so_far.gas_cost_wei.saturating_add(
+        u128::from(evm_receipt.gas_used).saturating_mul(evm_receipt.effective_gas_price),
+    );
+    so_far.txs.push(TxRecord {
+        tx_hash: signed.hash,
+        block_number: evm_receipt.block_number,
+        status: if landed {
+            TxStatus::Confirmed
+        } else {
+            TxStatus::Reverted
+        },
+        quote_hashes: sub_batch.quote_hashes.clone(),
+    });
+
+    // A reverted payForQuotes moved no ANT: its quotes are NOT mapped (they
+    // are unpaid). A confirmed one maps its quotes and builds the proofs that
+    // became complete with this landing (per-blob `finalize_batch_payment` —
+    // pure, `batch.rs:337-343`); a proof failure is data here, because after a
+    // landing it is not a payment that moved nothing (S49).
+    let outcome = if landed {
+        for quote_hash in &sub_batch.quote_hashes {
+            so_far.tx_map.insert(*quote_hash, signed.hash);
+        }
+        let finalized = finalize_ready_blobs(
+            &mut so_far.remaining,
+            &so_far.ready_after,
+            sub_batch.index,
+            &so_far.tx_map,
+            &mut so_far.records,
+            &mut lock_staged(staged).paid,
+        );
+        SubBatchOutcome::Confirmed { finalized }
+    } else {
+        SubBatchOutcome::Reverted
+    };
+    // Journal via the hook BEFORE the next submission, and decide whether the
+    // payment goes on (S46, S49, S50 — D204).
+    settle_sub_batch(
+        outcome,
+        hook,
+        &so_far.records,
+        &so_far.tx_map,
+        &so_far.txs,
+        so_far.gas_cost_wei,
+        sub_batch.index,
+        sub_batch.count,
+    )
+}
+
+/// The unobserved-landing shape (D208 R5) — ONE body for both of its
+/// producers: an acknowledged broadcast never seen to land, and a broadcast
+/// whose fate the chain could not tell. Money may have moved, so the
+/// sub-batch is journaled as paid by the local hash — a `Submitted` record,
+/// its quotes mapped, and (S54) its blobs' records and proofs built over that
+/// hash — BEFORE the capture, so a resume that finds the transaction mined
+/// finalizes those blobs instead of buying them again: storers check the
+/// quote's payment on the contract (`completedPayments`), not the hash a proof
+/// carries (ant-node 0.15.0 `src/payment/verifier.rs`, D208).
+///
+/// Then [`StorageError::StrandedPayment`] with this call's confirmed count — 0
+/// for a first sub-batch, deliberately: never "before any ANT moved". A proof
+/// that cannot be built leaves its blob without a record (a resume re-buys
+/// that one, S49's rule) and is named in the reason.
+fn strand_unobserved(
+    tx_hash: TxHash,
+    sub_batch: &SubBatch,
+    so_far: &mut PayLoop,
+    staged: &Mutex<Staged>,
+    hook: Option<&CaptureHook>,
+    reason: String,
+) -> StorageError {
+    let landed_tx_count = so_far.confirmed();
+    so_far.txs.push(TxRecord {
+        tx_hash,
+        block_number: None,
+        status: TxStatus::Submitted,
+        quote_hashes: sub_batch.quote_hashes.clone(),
+    });
+    for quote_hash in &sub_batch.quote_hashes {
+        so_far.tx_map.insert(*quote_hash, tx_hash);
+    }
+    let finalized = finalize_ready_blobs(
+        &mut so_far.remaining,
+        &so_far.ready_after,
+        sub_batch.index,
+        &so_far.tx_map,
+        &mut so_far.records,
+        &mut lock_staged(staged).paid,
+    );
+    emit_capture(
+        hook,
+        &so_far.records,
+        &so_far.tx_map,
+        &so_far.txs,
+        so_far.gas_cost_wei,
+    );
+    let reason = match finalized {
+        Ok(()) => reason,
+        Err(detail) => format!("{reason}; and a proof could not be built: {detail}"),
+    };
+    StorageError::StrandedPayment {
+        landed_tx_count,
+        reason,
+    }
+}
+
+/// A sub-batch transaction signed here and not yet sent (D208 R1).
+struct SignedTx {
+    /// Computed from the signed bytes before any of them left: the hash every
+    /// lookup asks about and the journal records.
+    hash: TxHash,
+    /// The EIP-2718 bytes `eth_sendRawTransaction` carries.
+    raw: Vec<u8>,
+}
+
+/// Fill and sign `request` on the wallet's own filler stack — the gas
+/// estimate, fee history, nonce and chain id `send_transaction` would read,
+/// then the wallet's signature (`FillProvider::fill`, the same filler loop
+/// `send_transaction` runs before its raw send) — and send nothing. Bounded by
+/// `limit`; `Err` carries the redacted detail.
+async fn sign_sub_batch<F, P>(
+    signer: &alloy::providers::fillers::FillProvider<F, P, alloy::network::Ethereum>,
+    request: TransactionRequest,
+    limit: Duration,
+) -> Result<SignedTx, String>
+where
+    F: alloy::providers::fillers::TxFiller<alloy::network::Ethereum>,
+    P: Provider<alloy::network::Ethereum>,
+{
+    match within(limit, signer.fill(request)).await {
+        Some(Ok(alloy::providers::SendableTx::Envelope(envelope))) => Ok(SignedTx {
+            hash: TxHash::from_bytes(envelope.tx_hash().0),
+            raw: alloy::network::eip2718::Encodable2718::encoded_2718(&envelope),
+        }),
+        Some(Ok(alloy::providers::SendableTx::Builder(_))) => {
+            Err("the wallet's fillers left the transaction unsigned".to_owned())
+        }
+        Some(Err(e)) => Err(redact_rpc_error(&e.to_string())),
+        None => Err(format!(
+            "the payment RPC did not answer within {}",
+            span(limit)
+        )),
+    }
+}
+
+/// What became of a signed sub-batch transaction (D208 R2–R4).
+enum Submission {
+    /// The payment RPC returned a receipt for the local hash.
+    Landed(Box<alloy::rpc::types::TransactionReceipt>),
+    /// The broadcast was not acknowledged, every lookup in the window was
+    /// answered without a receipt, and at its end the RPC did not return the
+    /// transaction by hash either: it moved nothing. `detail` says why the
+    /// broadcast was not acknowledged (redacted).
+    NotAccepted {
+        /// Why the broadcast was not acknowledged.
+        detail: String,
+    },
+    /// Neither: money may have moved. `reason` is the strand's (redacted).
+    Unresolved {
+        /// The stranded error's reason.
+        reason: String,
+    },
+}
+
+/// Broadcast the signed bytes under the broadcast deadline (R2) — an
+/// acknowledgement echoing another hash is no acknowledgement — then await the
+/// receipt by the local hash (R3) or, unacknowledged, resolve it (R4).
+async fn submit_signed(
+    provider: &DynProvider,
+    signed: &SignedTx,
+    deadlines: SubmitDeadlines,
+) -> Submission {
+    let local = alloy::primitives::B256::from(*signed.hash.as_bytes());
+    let unacknowledged = match within(
+        deadlines.broadcast,
+        provider.send_raw_transaction(&signed.raw),
+    )
+    .await
+    {
+        Some(Ok(pending)) if *pending.tx_hash() == local => None,
+        Some(Ok(_)) => Some("the payment RPC acknowledged a different transaction hash".to_owned()),
+        Some(Err(e)) => Some(redact_rpc_error(&e.to_string())),
+        None => Some(format!(
+            "no acknowledgement within {}",
+            span(deadlines.broadcast)
+        )),
+    };
+    match unacknowledged {
+        None => await_receipt(provider, local, deadlines).await,
+        Some(detail) => {
+            resolve_unacknowledged(provider, local, &signed.raw, detail, deadlines).await
+        }
+    }
+}
+
+/// R3: an acknowledged broadcast, awaited by the local hash until the receipt
+/// deadline. A lookup that fails is not an answer, so the polling goes on, and
+/// the loop always looks once more before it checks the deadline; with no
+/// receipt by then, the landing was not observed — never "nothing moved": the
+/// node acknowledged the transaction.
+async fn await_receipt(
+    provider: &DynProvider,
+    local: alloy::primitives::B256,
+    deadlines: SubmitDeadlines,
+) -> Submission {
+    let ends = deadline_instant(deadlines.receipt);
+    let mut last_failure: Option<String> = None;
+    loop {
+        match within(deadlines.broadcast, provider.get_transaction_receipt(local)).await {
+            Some(answer) => match classify_receipt(answer, local) {
+                Lookup::Found(receipt) => return Submission::Landed(receipt),
+                Lookup::NotYet => {}
+                Lookup::Unanswered(why) => last_failure = Some(why),
+            },
+            None => last_failure = Some(no_answer(deadlines.broadcast)),
+        }
+        let left = ends.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        Deadline::after(left.min(deadlines.poll)).await;
+    }
+    let last = last_failure.map_or_else(String::new, |why| format!(" (the last lookup: {why})"));
+    Submission::Unresolved {
+        reason: format!(
+            "sub-batch tx landing not observed: no receipt within {}{last}",
+            span(deadlines.receipt)
+        ),
+    }
+}
+
+/// R4: a broadcast that was not acknowledged — an error of any kind, the
+/// deadline, or another hash echoed — is looked up by the local hash until the
+/// resolution window ends, each lookup bounded on its own so a slow answer
+/// still counts as one. The identical bytes are re-broadcast once: the same
+/// hash, so it cannot pay twice. A receipt is a landing; every lookup answered
+/// without one and, once at the end, the RPC not returning the transaction by
+/// hash means it moved nothing; anything else may have moved money.
+async fn resolve_unacknowledged(
+    provider: &DynProvider,
+    local: alloy::primitives::B256,
+    raw: &[u8],
+    detail: String,
+    deadlines: SubmitDeadlines,
+) -> Submission {
+    let ends = deadline_instant(deadlines.resolve_window);
+    let mut unanswered: Option<String> = None;
+    let mut rebroadcast = false;
+    loop {
+        match within(deadlines.broadcast, provider.get_transaction_receipt(local)).await {
+            Some(answer) => match classify_receipt(answer, local) {
+                Lookup::Found(receipt) => return Submission::Landed(receipt),
+                Lookup::NotYet => {}
+                Lookup::Unanswered(why) => {
+                    unanswered.get_or_insert(why);
+                }
+            },
+            None => {
+                unanswered.get_or_insert_with(|| no_answer(deadlines.broadcast));
+            }
+        }
+        if !rebroadcast {
+            rebroadcast = true;
+            let _ignored = within(deadlines.broadcast, provider.send_raw_transaction(raw)).await;
+            continue;
+        }
+        let left = ends.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        Deadline::after(left.min(deadlines.poll)).await;
+    }
+    if let Some(why) = unanswered {
+        return could_not_check(&detail, &why);
+    }
+    match transaction_by_hash(provider, local, deadlines.broadcast).await {
+        ByHash::Unknown => Submission::NotAccepted { detail },
+        ByHash::Held => Submission::Unresolved {
+            reason: format!(
+                "the payment transaction's broadcast was not acknowledged ({detail}), and after {} \
+                 the payment RPC still holds it unmined",
+                span(deadlines.resolve_window)
+            ),
+        },
+        ByHash::Unanswered(why) => could_not_check(&detail, &why),
+    }
+}
+
+/// R4's unaskable arm: the chain could not be asked what became of a broadcast
+/// that was not acknowledged, so money may have moved.
+fn could_not_check(detail: &str, why: &str) -> Submission {
+    Submission::Unresolved {
+        reason: format!(
+            "the payment transaction's broadcast was not acknowledged ({detail}), and whether it \
+             was mined could not be checked: {why}"
+        ),
+    }
+}
+
+/// One receipt lookup by the local hash, classified.
+enum Lookup {
+    /// A receipt for this very hash.
+    Found(Box<alloy::rpc::types::TransactionReceipt>),
+    /// Answered: no receipt (yet).
+    NotYet,
+    /// Not answered — an error, or a receipt for some other hash (redacted).
+    Unanswered(String),
+}
+
+/// A receipt counts only for the hash that was asked about: an RPC that
+/// answers with another transaction's receipt has not answered (R2's rule for
+/// an echoed hash, applied to every read).
+fn classify_receipt(
+    answer: alloy::transports::TransportResult<Option<alloy::rpc::types::TransactionReceipt>>,
+    local: alloy::primitives::B256,
+) -> Lookup {
+    match answer {
+        Ok(Some(receipt)) if receipt.transaction_hash == local => Lookup::Found(Box::new(receipt)),
+        Ok(Some(_)) => {
+            Lookup::Unanswered("the payment RPC returned another transaction's receipt".to_owned())
+        }
+        Ok(None) => Lookup::NotYet,
+        Err(e) => Lookup::Unanswered(redact_rpc_error(&e.to_string())),
+    }
+}
+
+/// `eth_getTransactionByHash`, read only for whether it answers `null`.
+enum ByHash {
+    /// The RPC returns the transaction: it holds it (a caller that found no
+    /// receipt reads that as unmined).
+    Held,
+    /// `null`: the RPC does not know the hash.
+    Unknown,
+    /// Not answered (redacted).
+    Unanswered(String),
+}
+
+/// Ask the payment RPC for a transaction by hash, bounded by `limit`. The body
+/// is never parsed — any JSON value but `null` is "it holds it" — so an RPC's
+/// extra fields cannot turn "held" into "could not be asked".
+async fn transaction_by_hash(
+    provider: &DynProvider,
+    local: alloy::primitives::B256,
+    limit: Duration,
+) -> ByHash {
+    let asked = provider.raw_request::<_, Option<serde::de::IgnoredAny>>(
+        "eth_getTransactionByHash".into(),
+        (local,),
+    );
+    match within(limit, asked).await {
+        Some(Ok(Some(_))) => ByHash::Held,
+        Some(Ok(None)) => ByHash::Unknown,
+        Some(Err(e)) => ByHash::Unanswered(redact_rpc_error(&e.to_string())),
+        None => ByHash::Unanswered(no_answer(limit)),
+    }
+}
+
+/// What the payment RPC says of one transaction (D208 R8, the resume's read):
+/// a receipt for it is [`Landed`](crate::PaymentTxState::Landed); with none,
+/// the transaction by hash is [`Pending`](crate::PaymentTxState::Pending) and
+/// `null` is [`Absent`](crate::PaymentTxState::Absent); any lookup not
+/// answered within `limit` is [`Unaskable`](crate::PaymentTxState::Unaskable),
+/// its reason redacted.
+async fn read_payment_tx_state(
+    provider: &DynProvider,
+    tx_hash: &TxHash,
+    limit: Duration,
+) -> crate::PaymentTxState {
+    use crate::PaymentTxState;
+    let local = alloy::primitives::B256::from(*tx_hash.as_bytes());
+    let Some(answer) = within(limit, provider.get_transaction_receipt(local)).await else {
+        return PaymentTxState::Unaskable {
+            reason: format!("eth_getTransactionReceipt: {}", no_answer(limit)),
+        };
+    };
+    match classify_receipt(answer, local) {
+        Lookup::Found(receipt) => PaymentTxState::Landed {
+            block_number: receipt.block_number,
+            confirmed: receipt.status(),
+        },
+        Lookup::Unanswered(why) => PaymentTxState::Unaskable {
+            reason: format!("eth_getTransactionReceipt: {why}"),
+        },
+        Lookup::NotYet => match transaction_by_hash(provider, local, limit).await {
+            ByHash::Held => PaymentTxState::Pending,
+            ByHash::Unknown => PaymentTxState::Absent,
+            ByHash::Unanswered(why) => PaymentTxState::Unaskable {
+                reason: format!("eth_getTransactionByHash: {why}"),
+            },
+        },
+    }
+}
+
+/// A duration as the submission step's messages say it: whole seconds when it
+/// is whole seconds (production), milliseconds otherwise (tests).
+fn span(limit: Duration) -> String {
+    if limit.subsec_nanos() == 0 {
+        format!("{} s", limit.as_secs())
+    } else {
+        format!("{} ms", limit.as_millis())
+    }
+}
+
+/// [`redact_evm_error`] for a payment-RPC error, with every URL replaced
+/// first: a transport error names the URL it failed on, and a private endpoint
+/// can carry a credential in its path — the reason
+/// [`AntCoreReceiptReader::connect`] never echoes one.
+fn redact_rpc_error(message: &str) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut rest = message;
+    while let Some(at) = rest.find("://") {
+        let scheme_start = rest[..at]
+            .char_indices()
+            .rev()
+            .find(|&(_, c)| !(c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
+            .map_or(0, |(i, c)| i + c.len_utf8());
+        out.push_str(&rest[..scheme_start]);
+        out.push_str("<url redacted>");
+        let tail = &rest[at + 3..];
+        let end = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, ')' | '(' | '"' | '\'' | '<' | '>'))
+            .unwrap_or(tail.len());
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    redact_evm_error(&out)
+}
+
+/// Run `future` until it finishes or `limit` passes, whichever is first:
+/// `None` when the deadline won ([`race`] against a fresh [`Deadline`]).
+async fn within<T>(limit: Duration, future: impl Future<Output = T>) -> Option<T> {
+    race(&mut Deadline::after(limit), future).await
+}
+
+/// Run `future` until it finishes or `deadline` passes, whichever is first:
+/// `None` when the deadline won. The future is polled first, so an answer that
+/// is ready as the deadline passes still counts. The loser is dropped when this
+/// returns — the future, or the deadline's wait — and nothing here blocks the
+/// thread that polls it: the deadline's helper thread does the waiting.
+async fn race<T>(deadline: &mut Deadline, future: impl Future<Output = T>) -> Option<T> {
+    let mut future = std::pin::pin!(future);
+    std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(output) = future.as_mut().poll(cx) {
+            return std::task::Poll::Ready(Some(output));
+        }
+        std::pin::Pin::new(&mut *deadline).poll(cx).map(|()| None)
+    })
+    .await
+}
+
+/// The instant `limit` from now (now itself, were that to overflow — a bound
+/// that has already passed).
+fn deadline_instant(limit: Duration) -> Instant {
+    let now = Instant::now();
+    now.checked_add(limit).unwrap_or(now)
+}
+
+/// A lookup the payment RPC did not answer in time, as a reason says it.
+fn no_answer(limit: Duration) -> String {
+    format!("no answer within {}", span(limit))
+}
+
+// ---------------------------------------------------------------------------
+// Payment-RPC reads outside the submission step (S57, S58 — D208 R13, R14):
+// each bounded by the deadline helper, each error redacted, each failure the
+// class the call always had
+// ---------------------------------------------------------------------------
+
+/// One payment-RPC read, bounded by `limit`: the value, or the network class
+/// every such read always failed in, its reason `"{what}: {error}"` — the
+/// error's URLs and hash-shaped runs redacted ([`redact_rpc_error`]) — or
+/// `"{what}: no answer within {limit}"`.
+async fn bounded_read<T, E: std::fmt::Display>(
+    what: &str,
+    limit: Duration,
+    read: impl Future<Output = Result<T, E>>,
+) -> Result<T, StorageError> {
+    let reason = match within(limit, read).await {
+        Some(Ok(value)) => return Ok(value),
+        Some(Err(e)) => redact_rpc_error(&e.to_string()),
+        None => no_answer(limit),
+    };
+    Err(StorageError::Network {
+        reason: format!("{what}: {reason}"),
+    })
+}
+
+/// `eth_gasPrice`, for the quote-time gas model (`estimate_gas_wei`).
+async fn gas_price_wei(provider: &DynProvider, limit: Duration) -> Result<u128, StorageError> {
+    bounded_read("eth_gasPrice failed", limit, provider.get_gas_price()).await
+}
+
+/// The wallet's ANT (ERC-20 `balanceOf`) balance (`raw_balances`).
+async fn ant_balance(wallet: &Wallet, limit: Duration) -> Result<U256, StorageError> {
+    bounded_read(
+        "ANT balance query failed",
+        limit,
+        wallet.balance_of_tokens(),
+    )
+    .await
+}
+
+/// The wallet's ETH (`eth_getBalance`) balance (`raw_balances`).
+async fn gas_balance(wallet: &Wallet, limit: Duration) -> Result<U256, StorageError> {
+    bounded_read(
+        "ETH balance query failed",
+        limit,
+        wallet.balance_of_gas_tokens(),
+    )
+    .await
+}
+
+/// The payment vault's standing allowance over the wallet's ANT
+/// (`ensure_allowance`).
+async fn standing_allowance(
+    wallet: &Wallet,
+    vault: ant_protocol::evm::Address,
+    limit: Duration,
+) -> Result<U256, StorageError> {
+    bounded_read(
+        "allowance query failed",
+        limit,
+        wallet.token_allowance(vault),
+    )
+    .await
+}
+
+/// An approve that failed (`ensure_allowance`): no ANT moved, so
+/// [`StorageError::Payment`]; its reason redacted like every payment-RPC
+/// error's, URLs included (S57).
+fn approve_failure(error: &dyn std::fmt::Display) -> StorageError {
+    StorageError::Payment {
+        reason: format!(
+            "token approve failed: {}",
+            redact_rpc_error(&error.to_string())
+        ),
+    }
+}
+
+/// The approve's own gas from its receipt (`ensure_allowance`), the read
+/// bounded by `limit` (S58): a read that fails, finds nothing or does not
+/// answer in time counts 0, as a failed read always did.
+async fn approve_gas_wei(
+    provider: &DynProvider,
+    tx_hash: alloy::primitives::B256,
+    limit: Duration,
+) -> u128 {
+    within(limit, provider.get_transaction_receipt(tx_hash))
+        .await
+        .and_then(Result::ok)
+        .flatten()
+        .map_or(0, |receipt| {
+            u128::from(receipt.gas_used).saturating_mul(receipt.effective_gas_price)
+        })
+}
+
+/// A point in time an RPC is raced against, or slept until (D208 R7), with no
+/// runtime edge.
+///
+/// This library takes no tokio — S6's recorded decision, its futures run on
+/// the caller's runtime (`Cargo.toml`) — so the first poll that finds the
+/// deadline ahead starts one helper thread that waits until then and wakes the
+/// task; dropping the deadline ends that thread at once. A thread that cannot
+/// be started leaves the deadline passed: an RPC antseal cannot bound counts as
+/// unanswered, which no outcome reads as "nothing moved".
+struct Deadline {
+    at: Instant,
+    alarm: Option<Alarm>,
+}
+
+impl Deadline {
+    fn after(limit: Duration) -> Self {
+        Self {
+            at: deadline_instant(limit),
+            alarm: None,
+        }
+    }
+}
+
+impl Future for Deadline {
+    type Output = ();
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        let this = self.get_mut();
+        if Instant::now() >= this.at {
+            return std::task::Poll::Ready(());
+        }
+        if this.alarm.is_none() {
+            this.alarm = Alarm::start(this.at);
+        }
+        let Some(alarm) = &this.alarm else {
+            return std::task::Poll::Ready(());
+        };
+        let mut state = lock_alarm(&alarm.state);
+        if state.rang {
+            return std::task::Poll::Ready(());
+        }
+        state.waker = Some(cx.waker().clone());
+        std::task::Poll::Pending
+    }
+}
+
+/// A [`Deadline`]'s helper thread, as the deadline holds it.
+struct Alarm {
+    state: Arc<Mutex<AlarmState>>,
+    /// Dropped with the deadline: the thread stops waiting and wakes nobody.
+    _cancel: std::sync::mpsc::Sender<()>,
+}
+
+/// Whether the alarm rang, and whom to wake when it does.
+#[derive(Default)]
+struct AlarmState {
+    rang: bool,
+    waker: Option<std::task::Waker>,
+}
+
+impl Alarm {
+    /// Start the thread that rings at `at`, or `None` if none can be started.
+    fn start(at: Instant) -> Option<Self> {
+        let state = Arc::new(Mutex::new(AlarmState::default()));
+        let (cancel, cancelled) = std::sync::mpsc::channel::<()>();
+        let ringer = Arc::clone(&state);
+        std::thread::Builder::new()
+            .name("antseal-deadline".to_owned())
+            .spawn(move || {
+                let wait = at.saturating_duration_since(Instant::now());
+                if matches!(
+                    cancelled.recv_timeout(wait),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    let waker = {
+                        let mut state = lock_alarm(&ringer);
+                        state.rang = true;
+                        state.waker.take()
+                    };
+                    if let Some(waker) = waker {
+                        waker.wake();
+                    }
+                }
+            })
+            .ok()?;
+        Some(Self {
+            state,
+            _cancel: cancel,
+        })
+    }
+}
+
+/// Lock an alarm's state; a poisoned lock still holds a consistent flag.
+fn lock_alarm(state: &Mutex<AlarmState>) -> std::sync::MutexGuard<'_, AlarmState> {
+    match state.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 /// The payment vault contract address for the wallet's network.
 fn vault_address(wallet: &Wallet) -> ant_protocol::evm::Address {
     *wallet.network().payment_vault_address()
@@ -2067,21 +2833,36 @@ fn retry_reason(
 /// show, a block it cannot parse. The policy reads `None` as **not** expired,
 /// so a failed read costs a retry and never a payment.
 async fn paying_block_time(provider: &DynProvider, paying: PayingTx) -> Option<u64> {
+    paying_block_time_within(provider, paying, BROADCAST_DEADLINE).await
+}
+
+/// [`paying_block_time`] with each of its two reads bounded by `limit` (S58,
+/// D208 R14): a read that does not answer in time is a time that cannot be
+/// read — `None`, which the policy reads as NOT expired (D179 R3) — so a hung
+/// payment RPC costs a retry, never a payment.
+async fn paying_block_time_within(
+    provider: &DynProvider,
+    paying: PayingTx,
+    limit: Duration,
+) -> Option<u64> {
     let block_number = match paying.block_number {
         Some(number) => number,
         None => {
             let hash = alloy::primitives::B256::from(*paying.tx_hash.as_bytes());
-            provider
-                .get_transaction_receipt(hash)
-                .await
+            within(limit, provider.get_transaction_receipt(hash))
+                .await?
                 .ok()??
                 .block_number?
         }
     };
-    let block = provider
-        .get_block_by_number(alloy::rpc::types::BlockNumberOrTag::Number(block_number))
-        .await
-        .ok()??;
+    let block = within(
+        limit,
+        provider
+            .get_block_by_number(alloy::rpc::types::BlockNumberOrTag::Number(block_number))
+            .into_future(),
+    )
+    .await?
+    .ok()??;
     Some(block.header.timestamp)
 }
 
@@ -3524,6 +4305,1502 @@ mod tests {
                 "the reverted sub-batch's quote is unpaid"
             );
             assert_eq!(receipt.blobs.len(), 1, "the landed blob's record");
+        }
+    }
+
+    // ── S51 + S54 (D208): the submission step and the resolution read ─────
+
+    /// **S51 and S54's net half (D208).** The submission step — sign first,
+    /// broadcast under a deadline, let the chain say what became of the
+    /// transaction — and the resolution read, over the PRODUCTION wallet
+    /// provider: the vault-key import, a devnet configuration whose payment RPC
+    /// is a loopback JSON-RPC stub, `WalletKey::evm_wallet`, then
+    /// `Wallet::to_provider()` — the signer `pay` builds — and its erased twin,
+    /// the provider the session holds.
+    ///
+    /// The stub plays the chain: it answers the reads `fill` makes, holds every
+    /// raw transaction it receives (its pending nonce counts them), and answers
+    /// the broadcast and each lookup as the test sets it. It serves each
+    /// connection on its own thread, so a broadcast it holds open stalls no
+    /// lookup behind it; the S43 stub above is unchanged. Nothing here leaves
+    /// loopback, and each call is bounded by the test's own outer limit, so a
+    /// missing deadline fails by message instead of hanging.
+    mod s51_submission {
+        use std::io::{Read, Write};
+        use std::net::{SocketAddr, TcpListener, TcpStream};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+        use std::thread::JoinHandle;
+        use std::time::{Duration, Instant};
+
+        use super::super::*;
+        use antseal_core::crypto::secrets::SecretBuf;
+        use antseal_core::test_util::alternate_test_secret;
+
+        /// The deadlines the tests run under: milliseconds (D208 R7).
+        const FAST: SubmitDeadlines = SubmitDeadlines {
+            broadcast: Duration::from_millis(1500),
+            receipt: Duration::from_millis(600),
+            resolve_window: Duration::from_millis(600),
+            poll: Duration::from_millis(25),
+        };
+        /// How long the stub holds a [`Broadcast::Hang`] connection open:
+        /// beyond [`OUTER_LIMIT`], so a broadcast with no deadline of its own
+        /// fails the test by message instead of ending on the stub's terms.
+        const HANG: Duration = Duration::from_secs(30);
+        /// The test's own bound on one submission: far above [`FAST`]'s sums.
+        const OUTER_LIMIT: Duration = Duration::from_secs(20);
+        /// The block every receipt the stub serves names.
+        const BLOCK: u64 = 0x11;
+        /// The fixture blob's one non-zero line: the median quote's price,
+        /// paid 3× (upstream's single-node rule).
+        const AMOUNT_ATTO: u128 = 300;
+        const PRICE_ATTO: u128 = 100;
+
+        /// How the stub answers `eth_sendRawTransaction` — always after it has
+        /// read, and holds, the whole transaction.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Broadcast {
+            /// Echo the transaction's own hash.
+            Accept,
+            /// Close the connection without a reply: the reply is lost.
+            DropReply,
+            /// A JSON-RPC error object, `already known`: geth's words for a
+            /// transaction it already holds.
+            AlreadyKnown,
+            /// Echo some other hash.
+            EchoOther,
+            /// Hold the connection open, answering nothing, for [`HANG`].
+            Hang,
+        }
+
+        /// How the stub answers a lookup of a transaction it holds; one it
+        /// does not hold is always `null`.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Lookup {
+            /// A receipt, mined successfully — or, by hash, the transaction.
+            Show,
+            /// A receipt of a transaction that reverted (receipt lookups only).
+            Reverted,
+            /// `null`.
+            Null,
+            /// Close the connection without a reply.
+            Drop,
+        }
+
+        /// The stub's chain.
+        /// How the stub stays quiet on one method (S57, S58).
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Quiet {
+            /// Close the connection without a reply.
+            Drop,
+            /// Hold the connection open, answering nothing, for [`HANG`].
+            Hang,
+        }
+
+        struct Chain {
+            broadcast: Broadcast,
+            receipts: Lookup,
+            by_hash: Lookup,
+            revert_estimate: bool,
+            /// A method (or `"*"`, every method) the stub stays quiet on.
+            quiet: Option<(&'static str, Quiet)>,
+            /// Every raw transaction received, in order.
+            held: Vec<Vec<u8>>,
+            /// Every method asked, in order.
+            asked: Vec<String>,
+        }
+
+        struct Stub {
+            address: SocketAddr,
+            chain: Arc<Mutex<Chain>>,
+            stop: Arc<AtomicBool>,
+            thread: Option<JoinHandle<()>>,
+        }
+
+        fn lock(chain: &Mutex<Chain>) -> std::sync::MutexGuard<'_, Chain> {
+            match chain.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            }
+        }
+
+        impl Stub {
+            fn start(broadcast: Broadcast, receipts: Lookup, by_hash: Lookup) -> Self {
+                let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback listener");
+                let address = listener.local_addr().expect("the listener's address");
+                let chain = Arc::new(Mutex::new(Chain {
+                    broadcast,
+                    receipts,
+                    by_hash,
+                    revert_estimate: false,
+                    quiet: None,
+                    held: Vec::new(),
+                    asked: Vec::new(),
+                }));
+                let stop = Arc::new(AtomicBool::new(false));
+                let thread = {
+                    let chain = Arc::clone(&chain);
+                    let stop = Arc::clone(&stop);
+                    std::thread::spawn(move || {
+                        for stream in listener.incoming() {
+                            if stop.load(Ordering::SeqCst) {
+                                break;
+                            }
+                            if let Ok(mut stream) = stream {
+                                let chain = Arc::clone(&chain);
+                                std::thread::spawn(move || drop(serve(&mut stream, &chain)));
+                            }
+                        }
+                    })
+                };
+                Self {
+                    address,
+                    chain,
+                    stop,
+                    thread: Some(thread),
+                }
+            }
+
+            fn url(&self) -> String {
+                format!("http://{}/", self.address)
+            }
+
+            /// The stub's URL with `path` — the stub answers any path.
+            fn url_at(&self, path: &str) -> String {
+                format!("http://{}/{path}/", self.address)
+            }
+
+            fn held(&self) -> Vec<Vec<u8>> {
+                lock(&self.chain).held.clone()
+            }
+
+            fn asked(&self, method: &str) -> usize {
+                lock(&self.chain)
+                    .asked
+                    .iter()
+                    .filter(|asked| asked.as_str() == method)
+                    .count()
+            }
+        }
+
+        impl Drop for Stub {
+            fn drop(&mut self) {
+                self.stop.store(true, Ordering::SeqCst);
+                drop(TcpStream::connect(self.address));
+                if let Some(thread) = self.thread.take() {
+                    drop(thread.join());
+                }
+            }
+        }
+
+        fn hex(bytes: &[u8]) -> String {
+            let mut out = String::from("0x");
+            for byte in bytes {
+                out.push_str(&format!("{byte:02x}"));
+            }
+            out
+        }
+
+        fn unhex(text: &str) -> Vec<u8> {
+            let digits = text.trim_start_matches("0x");
+            (0..digits.len() / 2)
+                .filter_map(|i| u8::from_str_radix(&digits[2 * i..2 * i + 2], 16).ok())
+                .collect()
+        }
+
+        /// A receipt for `hash` as an Arbitrum-style RPC shapes one.
+        fn receipt(hash: &serde_json::Value, status: &str) -> serde_json::Value {
+            serde_json::json!({
+                "blockHash": hex(&[0x22; 32]),
+                "blockNumber": format!("{BLOCK:#x}"),
+                "contractAddress": null,
+                "cumulativeGasUsed": "0x1a8f4",
+                "effectiveGasPrice": "0x5f5e100",
+                "from": "0x1111111111111111111111111111111111111111",
+                "gasUsed": "0x1a8f4",
+                "logs": [],
+                "logsBloom": hex(&[0; 256]),
+                "status": status,
+                "to": "0x9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+                "transactionHash": hash,
+                "transactionIndex": "0x0",
+                "type": "0x2"
+            })
+        }
+
+        fn read_request(stream: &mut TcpStream) -> std::io::Result<serde_json::Value> {
+            stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 8192];
+            let header_end = loop {
+                let read = stream.read(&mut chunk)?;
+                if read == 0 {
+                    return Ok(serde_json::Value::Null);
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if let Some(at) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+                    break at + 4;
+                }
+            };
+            let head = String::from_utf8_lossy(&buffer[..header_end]).to_ascii_lowercase();
+            let length = head
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            while buffer.len() < header_end + length {
+                let read = stream.read(&mut chunk)?;
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+            }
+            let body_end = (header_end + length).min(buffer.len());
+            Ok(serde_json::from_slice(&buffer[header_end..body_end]).unwrap_or_default())
+        }
+
+        fn reply(stream: &mut TcpStream, body: &serde_json::Value) -> std::io::Result<()> {
+            let body = body.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n{body}",
+                body.len()
+            )?;
+            stream.flush()
+        }
+
+        fn lose_reply(stream: &TcpStream) -> std::io::Result<()> {
+            stream.shutdown(std::net::Shutdown::Both)
+        }
+
+        fn serve(stream: &mut TcpStream, chain: &Mutex<Chain>) -> std::io::Result<()> {
+            let request = read_request(stream)?;
+            let method = request["method"].as_str().unwrap_or_default().to_owned();
+            let params = request["params"].clone();
+            let id = request["id"].clone();
+            let ok = |result: serde_json::Value| {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id.clone(),
+                    "result": result
+                })
+            };
+            let error = |code: i64, message: &str| {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id.clone(),
+                    "error": {"code": code, "message": message}
+                })
+            };
+            let mut state = lock(chain);
+            state.asked.push(method.clone());
+            if let Some((target, quiet)) = state.quiet
+                && (target == "*" || target == method)
+            {
+                drop(state);
+                return match quiet {
+                    Quiet::Drop => lose_reply(stream),
+                    Quiet::Hang => {
+                        std::thread::sleep(HANG);
+                        Ok(())
+                    }
+                };
+            }
+            let (broadcast, receipts, by_hash) = (state.broadcast, state.receipts, state.by_hash);
+            // Whether the hash a lookup asks about is a transaction it holds.
+            let held = state.held.iter().any(|raw| {
+                serde_json::json!(hex(alloy::primitives::keccak256(raw).as_slice())) == params[0]
+            });
+            let answer = match method.as_str() {
+                "eth_chainId" => ok(serde_json::json!("0x7a69")),
+                // A node that pools what it receives: the pending count moves.
+                "eth_getTransactionCount" => {
+                    ok(serde_json::json!(format!("{:#x}", 5 + state.held.len())))
+                }
+                "eth_estimateGas" if state.revert_estimate => error(3, "execution reverted"),
+                "eth_estimateGas" => ok(serde_json::json!("0x30d40")),
+                "eth_gasPrice" => ok(serde_json::json!("0x5f5e100")),
+                "eth_getBalance" => ok(serde_json::json!("0x1")),
+                // An ERC-20 `balanceOf` / `allowance`: one uint256.
+                "eth_call" => ok(serde_json::json!(format!("0x{:0>64}", "1"))),
+                "eth_feeHistory" => ok(serde_json::json!({
+                    "oldestBlock": "0x10",
+                    "baseFeePerGas": ["0x5f5e100", "0x5f5e100"],
+                    "gasUsedRatio": [0.5],
+                    "reward": [["0x0"]]
+                })),
+                "eth_sendRawTransaction" => {
+                    let raw = unhex(params[0].as_str().unwrap_or_default());
+                    let hash = alloy::primitives::keccak256(&raw);
+                    state.held.push(raw);
+                    match broadcast {
+                        Broadcast::Accept => ok(serde_json::json!(hex(hash.as_slice()))),
+                        Broadcast::DropReply => {
+                            drop(state);
+                            return lose_reply(stream);
+                        }
+                        Broadcast::AlreadyKnown => error(-32000, "already known"),
+                        Broadcast::EchoOther => {
+                            let mut other = hash.0;
+                            other[0] ^= 0xFF;
+                            ok(serde_json::json!(hex(&other)))
+                        }
+                        Broadcast::Hang => {
+                            drop(state);
+                            std::thread::sleep(HANG);
+                            return Ok(());
+                        }
+                    }
+                }
+                "eth_getTransactionReceipt" => match receipts {
+                    Lookup::Drop => {
+                        drop(state);
+                        return lose_reply(stream);
+                    }
+                    Lookup::Show if held => ok(receipt(&params[0], "0x1")),
+                    Lookup::Reverted if held => ok(receipt(&params[0], "0x0")),
+                    _ => ok(serde_json::Value::Null),
+                },
+                "eth_getTransactionByHash" => match by_hash {
+                    Lookup::Drop => {
+                        drop(state);
+                        return lose_reply(stream);
+                    }
+                    Lookup::Show if held => ok(serde_json::json!({
+                        "hash": params[0].clone(),
+                        "blockHash": null,
+                        "blockNumber": null,
+                        "transactionIndex": null
+                    })),
+                    _ => ok(serde_json::Value::Null),
+                },
+                _ => ok(serde_json::Value::Null),
+            };
+            drop(state);
+            reply(stream, &answer)
+        }
+
+        /// The production wallet over the stub: the house fixture-key
+        /// convention (a derived key, never a committed literal), a devnet
+        /// configuration whose payment RPC is the stub, `evm_wallet`.
+        fn wallet(stub: &Stub) -> Wallet {
+            wallet_at(stub.url())
+        }
+
+        /// [`wallet`], over the payment RPC URL `rpc_url`.
+        fn wallet_at(rpc_url: String) -> Wallet {
+            let hex: String = alternate_test_secret(b"antseal-net/S51 submission stub wallet")
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            let key = WalletKey::import(&SecretBuf::new(hex.into_bytes()))
+                .expect("the fixture label derives a valid key");
+            let config = NetworkConfig {
+                rpc_url,
+                ..super::devnet_base()
+            };
+            key.evm_wallet(&config)
+                .expect("a devnet wallet over the stub")
+        }
+
+        fn quote(byte: u8) -> QuoteHash {
+            QuoteHash::from_bytes([byte; 32])
+        }
+
+        /// A priced blob whose one non-zero line pays quote `byte`, staged the
+        /// way `pay` holds it: our line beside upstream's `PreparedChunk`.
+        fn priced(slot: usize, byte: u8) -> PricedBlobSlot {
+            let entry = QuotePaymentEntry {
+                quote_hash: quote(byte),
+                rewards_address: RewardsAddress::from_bytes([byte; 20]),
+                amount_atto: AMOUNT_ATTO,
+                price_atto: PRICE_ATTO,
+            };
+            let prepared = PreparedChunk {
+                content: Bytes::from(vec![byte; 32]),
+                address: [byte; 32],
+                quoted_peers: Vec::new(),
+                payment: ant_core::data::client::batch::SingleNodeQuotePayment {
+                    quotes: vec![ant_protocol::payment::QuotePaymentInfo {
+                        quote_hash: ant_protocol::evm::QuoteHash::from(
+                            *entry.quote_hash.as_bytes(),
+                        ),
+                        rewards_address: ant_protocol::evm::RewardsAddress::from(
+                            *entry.rewards_address.as_bytes(),
+                        ),
+                        amount: Amount::from(AMOUNT_ATTO),
+                        price: Amount::from(PRICE_ATTO),
+                    }],
+                },
+                peer_quotes: Vec::new(),
+                commitment_sidecars: Vec::new(),
+            };
+            assert!(
+                payment_lines_match(std::slice::from_ref(&entry), &prepared),
+                "fixture: the line is its staged quote's (D36)"
+            );
+            PricedBlobSlot {
+                slot,
+                address: Address::from_bytes([byte; 32]),
+                prepared,
+                entries: vec![entry],
+                peer_quotes: Vec::new(),
+                commitment_sidecars: Vec::new(),
+            }
+        }
+
+        type Seen = Arc<Mutex<Vec<PaymentReceipt>>>;
+
+        fn recording_hook() -> (CaptureHook, Seen) {
+            let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+            let sink = Arc::clone(&seen);
+            let hook: CaptureHook = Arc::new(move |receipt: &PaymentReceipt| {
+                sink.lock()
+                    .expect("capture sink lock")
+                    .push(receipt.clone());
+                CaptureOutcome::Durable
+            });
+            (hook, seen)
+        }
+
+        /// What one run of the submission step left behind.
+        struct Run {
+            result: Result<(), StorageError>,
+            so_far: PayLoop,
+            captured: Vec<PaymentReceipt>,
+            elapsed: Duration,
+        }
+
+        impl Run {
+            /// The hash of the one transaction the stub received first — the
+            /// bytes the wallet signed.
+            fn signed_hash(stub: &Stub) -> TxHash {
+                let held = stub.held();
+                assert!(!held.is_empty(), "the stub received no transaction");
+                TxHash::from_bytes(alloy::primitives::keccak256(&held[0]).0)
+            }
+
+            fn reason(&self) -> &str {
+                match &self.result {
+                    Err(StorageError::Payment { reason })
+                    | Err(StorageError::StrandedPayment { reason, .. }) => reason,
+                    other => panic!("expected a payment-class error, got {other:?}"),
+                }
+            }
+        }
+
+        /// `pay`'s loop at its first sub-batch — one priced blob paying quote
+        /// 0xA0, nothing landed — driven through [`pay_sub_batch`].
+        async fn run(stub: &Stub, deadlines: SubmitDeadlines) -> Run {
+            let so_far = PayLoop {
+                remaining: vec![Some(priced(0, 0xA0))],
+                ready_after: vec![0],
+                records: vec![None],
+                tx_map: BTreeMap::new(),
+                txs: Vec::new(),
+                gas_cost_wei: 0,
+            };
+            let sub_batch = SubBatch {
+                index: 0,
+                count: 1,
+                quote_hashes: vec![quote(0xA0)],
+            };
+            run_sub_batch(stub, deadlines, so_far, sub_batch).await
+        }
+
+        /// One sub-batch — its one quote paid with the real `payForQuotes`
+        /// calldata — through [`pay_sub_batch`], with the production signer
+        /// and provider over the stub, a recording capture hook, and
+        /// `deadlines`.
+        async fn run_sub_batch(
+            stub: &Stub,
+            deadlines: SubmitDeadlines,
+            mut so_far: PayLoop,
+            sub_batch: SubBatch,
+        ) -> Run {
+            let wallet = wallet(stub);
+            let signer = wallet.to_provider();
+            let provider = wallet.to_provider().erased();
+            let handler = PaymentVaultHandler::new(vault_address(&wallet), provider.clone());
+            let paid = sub_batch.quote_hashes[0];
+            let (calldata, to) = handler
+                .pay_for_quotes_calldata(vec![(
+                    ant_protocol::evm::QuoteHash::from(*paid.as_bytes()),
+                    ant_protocol::evm::Address::from([paid.as_bytes()[0]; 20]),
+                    U256::from(AMOUNT_ATTO),
+                )])
+                .expect("the calldata is an offline ABI encode");
+            let request = TransactionRequest::default()
+                .with_from(wallet.address())
+                .with_to(to)
+                .with_input(calldata);
+            let staged = Mutex::new(Staged::default());
+            let (hook, seen) = recording_hook();
+            let started = Instant::now();
+            let result = tokio::time::timeout(
+                OUTER_LIMIT,
+                pay_sub_batch(
+                    &signer,
+                    &provider,
+                    request,
+                    &sub_batch,
+                    &mut so_far,
+                    &staged,
+                    Some(&hook),
+                    deadlines,
+                ),
+            )
+            .await
+            .expect(
+                "the submission step must end on its own deadlines; it was still running at the \
+                 test's outer limit",
+            );
+            let elapsed = started.elapsed();
+            let captured = seen.lock().expect("capture sink lock").clone();
+            Run {
+                result,
+                so_far,
+                captured,
+                elapsed,
+            }
+        }
+
+        /// Hygiene (module docs): a reason names no hash and no URL.
+        fn assert_clean(reason: &str, local: &TxHash) {
+            let local_hex = hex(local.as_bytes());
+            assert!(
+                !reason.contains(&local_hex[2..18]),
+                "the reason names the transaction hash: {reason}"
+            );
+            assert!(!reason.contains("://"), "the reason names a URL: {reason}");
+        }
+
+        /// The unobserved shape (D208 R5, S54): the stranded class with no
+        /// landing, ONE capture carrying the `Submitted` record for the hash of
+        /// the bytes the wallet signed, the quote mapped to it, and the blob's
+        /// record built over it, with its cost.
+        fn assert_unobserved(stub: &Stub, run: &Run, reason_has: &str) {
+            let local = Run::signed_hash(stub);
+            assert!(
+                matches!(
+                    run.result,
+                    Err(StorageError::StrandedPayment {
+                        landed_tx_count: 0,
+                        ..
+                    })
+                ),
+                "D208 R5: money may have moved — expected StrandedPayment with no landing, \
+                 got {:?}",
+                run.result
+            );
+            let reason = run.reason();
+            assert!(reason.contains(reason_has), "{reason}");
+            assert_clean(reason, &local);
+            assert_eq!(run.captured.len(), 1, "one capture, before the class");
+            let receipt = &run.captured[0];
+            assert_eq!(receipt.txs.len(), 1);
+            assert_eq!(receipt.txs[0].tx_hash, local, "journaled by the local hash");
+            assert_eq!(receipt.txs[0].status, TxStatus::Submitted);
+            assert_eq!(receipt.txs[0].block_number, None);
+            assert_eq!(receipt.tx_map.get(&quote(0xA0)), Some(&local));
+            assert_eq!(
+                receipt.blobs.len(),
+                1,
+                "S54: the sub-batch's record is built over the local hash before the capture"
+            );
+            assert_eq!(receipt.blobs[0].address, Address::from_bytes([0xA0; 32]));
+            assert!(!receipt.blobs[0].proof_bytes.is_empty(), "with its proof");
+            assert_eq!(receipt.storage_cost_atto, AMOUNT_ATTO, "and its cost");
+            assert!(receipt.covers_all_paid_quotes());
+        }
+
+        /// G1. A lost reply whose transaction the chain shows is a landing:
+        /// no `Payment`, no strand — the ordinary landed path, journaled by the
+        /// hash of the very bytes the node holds. The first lookup finds it,
+        /// so nothing is re-broadcast.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s51_a_lost_reply_whose_transaction_lands_is_a_landing() {
+            let stub = Stub::start(Broadcast::DropReply, Lookup::Show, Lookup::Null);
+            let run = run(&stub, FAST).await;
+            assert_eq!(
+                run.result,
+                Ok(()),
+                "a broadcast whose reply was lost, and which the chain shows mined, must land"
+            );
+            let local = Run::signed_hash(&stub);
+            assert_eq!(stub.held().len(), 1, "one broadcast, no re-broadcast");
+            assert_eq!(stub.asked("eth_sendRawTransaction"), 1);
+            assert_eq!(run.so_far.txs.len(), 1);
+            assert_eq!(run.so_far.txs[0].tx_hash, local);
+            assert_eq!(run.so_far.txs[0].status, TxStatus::Confirmed);
+            assert_eq!(run.so_far.txs[0].block_number, Some(BLOCK));
+            assert_eq!(run.so_far.tx_map.get(&quote(0xA0)), Some(&local));
+            assert!(run.so_far.records[0].is_some(), "the blob's proof is built");
+            assert_eq!(run.captured.len(), 1, "the landing's one capture");
+            assert_eq!(run.captured[0].txs, run.so_far.txs);
+        }
+
+        /// G2. A lost reply the chain never shows — every lookup answered
+        /// without a receipt, and at the end of the window the RPC does not
+        /// know the hash — moved nothing: `Payment`, naming the window. The
+        /// identical bytes were re-broadcast once.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s51_a_lost_reply_the_chain_never_shows_is_a_payment_that_moved_nothing() {
+            let stub = Stub::start(Broadcast::DropReply, Lookup::Null, Lookup::Null);
+            let run = run(&stub, FAST).await;
+            let local = Run::signed_hash(&stub);
+            assert!(
+                matches!(run.result, Err(StorageError::Payment { .. })),
+                "D208 R4: answered and absent is Payment — got {:?}",
+                run.result
+            );
+            let reason = run.reason();
+            assert!(
+                reason.starts_with("the payment transaction was not accepted ("),
+                "{reason}"
+            );
+            assert!(
+                reason.ends_with("), and the chain did not show it within 600 ms"),
+                "{reason}"
+            );
+            assert_clean(reason, &local);
+            let held = stub.held();
+            assert_eq!(held.len(), 2, "the broadcast and one re-broadcast");
+            assert_eq!(held[0], held[1], "the re-broadcast is the identical bytes");
+            assert_eq!(
+                stub.asked("eth_getTransactionByHash"),
+                1,
+                "once, at the end"
+            );
+            assert!(run.captured.is_empty(), "nothing is journaled");
+            assert!(run.so_far.txs.is_empty() && run.so_far.tx_map.is_empty());
+            assert!(
+                run.elapsed >= FAST.resolve_window,
+                "it waited the window: {:?}",
+                run.elapsed
+            );
+        }
+
+        /// G3. A lost reply, then a chain that cannot be asked: the unobserved
+        /// shape — and, under S54, the capture carries the record and the
+        /// cost, so a resume that finds the transaction mined buys nothing
+        /// again.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s51_an_unaskable_chain_after_a_lost_reply_is_the_unobserved_shape() {
+            let stub = Stub::start(Broadcast::DropReply, Lookup::Drop, Lookup::Drop);
+            let run = run(&stub, FAST).await;
+            assert_unobserved(&stub, &run, "whether it was mined could not be checked: ");
+            assert!(
+                run.reason()
+                    .starts_with("the payment transaction's broadcast was not acknowledged ("),
+                "{}",
+                run.reason()
+            );
+            assert_eq!(
+                stub.asked("eth_getTransactionByHash"),
+                0,
+                "an unanswered lookup already decided"
+            );
+        }
+
+        /// G4. A refusal inside `fill` — here the gas estimate, where a
+        /// would-revert lands — sends nothing: `Payment`, and the stub saw no
+        /// `eth_sendRawTransaction`.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s51_a_refusal_inside_fill_sends_nothing() {
+            let stub = Stub::start(Broadcast::Accept, Lookup::Show, Lookup::Null);
+            lock(&stub.chain).revert_estimate = true;
+            let run = run(&stub, FAST).await;
+            assert!(
+                matches!(run.result, Err(StorageError::Payment { .. })),
+                "{:?}",
+                run.result
+            );
+            let reason = run.reason();
+            assert!(
+                reason.starts_with("sub-batch tx could not be prepared: "),
+                "{reason}"
+            );
+            assert!(reason.contains("execution reverted"), "{reason}");
+            assert!(!reason.contains("://"), "{reason}");
+            assert_eq!(stub.asked("eth_estimateGas"), 1);
+            assert_eq!(stub.asked("eth_sendRawTransaction"), 0, "nothing was sent");
+            assert!(stub.held().is_empty());
+            assert!(run.captured.is_empty() && run.so_far.txs.is_empty());
+        }
+
+        /// G5. An error object does not decide: `already known` is what a node
+        /// says of a transaction it HOLDS, with the same code (-32000) as a
+        /// refusal such as `nonce too low`. The chain shows the receipt: a landing.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s51_an_error_object_does_not_decide() {
+            let stub = Stub::start(Broadcast::AlreadyKnown, Lookup::Show, Lookup::Null);
+            let run = run(&stub, FAST).await;
+            assert_eq!(
+                run.result,
+                Ok(()),
+                "an `already known` error object is not a refusal: the chain shows the landing"
+            );
+            assert_eq!(run.so_far.txs.len(), 1);
+            assert_eq!(run.so_far.txs[0].tx_hash, Run::signed_hash(&stub));
+            assert_eq!(run.so_far.txs[0].status, TxStatus::Confirmed);
+            assert_eq!(run.captured.len(), 1);
+        }
+
+        /// G6. The broadcast and the await are bounded: a gateway that holds
+        /// the broadcast open, and an acknowledged transaction whose receipt
+        /// never comes, each end on the step's own deadlines (the outer limit
+        /// in `run` turns a missing one into a failure by message). The
+        /// acknowledged one is never `Payment`: the node took it.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s51_the_broadcast_and_the_await_are_bounded() {
+            let slack = Duration::from_secs(3);
+            let threads_before = deadline_threads();
+            let hung = Stub::start(Broadcast::Hang, Lookup::Null, Lookup::Null);
+            let run_hung = run(&hung, FAST).await;
+            eprintln!(
+                "[S51 G6] hung broadcast ended after {:?} (broadcast 1500ms, window 600ms)",
+                run_hung.elapsed
+            );
+            let reason = run_hung.reason();
+            assert!(
+                matches!(run_hung.result, Err(StorageError::Payment { .. })),
+                "{:?}",
+                run_hung.result
+            );
+            assert!(
+                reason.starts_with(
+                    "the payment transaction was not accepted (no acknowledgement \
+                     within 1500 ms)"
+                ),
+                "{reason}"
+            );
+            assert!(
+                run_hung.elapsed < FAST.broadcast * 3 + FAST.resolve_window + slack,
+                "the broadcast deadline bounds a hung gateway: {:?}",
+                run_hung.elapsed
+            );
+
+            let silent = Stub::start(Broadcast::Accept, Lookup::Null, Lookup::Null);
+            let run_silent = run(&silent, FAST).await;
+            eprintln!(
+                "[S51 G6] silent receipt await ended after {:?} (receipt 600ms)",
+                run_silent.elapsed
+            );
+            assert_unobserved(
+                &silent,
+                &run_silent,
+                "sub-batch tx landing not observed: no receipt within 600 ms",
+            );
+            assert!(
+                run_silent.elapsed < FAST.receipt + FAST.broadcast + slack,
+                "the receipt deadline bounds the await: {:?}",
+                run_silent.elapsed
+            );
+            assert_eq!(
+                silent.asked("eth_sendRawTransaction"),
+                1,
+                "acknowledged once"
+            );
+            // Process-wide, so printed, not asserted (libtest runs other rows
+            // beside this one); the per-deadline proof is
+            // `s51_a_deadline_thread_ends_with_its_deadline`.
+            let settling = Instant::now();
+            while deadline_threads() > threads_before && settling.elapsed() < slack {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            eprintln!(
+                "[S51 G6] deadline helper threads alive: {threads_before} before both runs, {} \
+                 after (settled in {:?})",
+                deadline_threads(),
+                settling.elapsed()
+            );
+        }
+
+        /// Live [`Deadline`] helper threads in this process — Linux
+        /// `/proc/self/task/*/comm`, which keeps 15 bytes of the name.
+        fn deadline_threads() -> usize {
+            std::fs::read_dir("/proc/self/task")
+                .map(|tasks| {
+                    tasks
+                        .flatten()
+                        .filter(|task| {
+                            std::fs::read_to_string(task.path().join("comm"))
+                                .is_ok_and(|name| name.trim_end() == "antseal-deadlin")
+                        })
+                        .count()
+                })
+                .unwrap_or(0)
+        }
+
+        /// G6 on a current-thread runtime: the CLI drives the payer on a
+        /// multi-thread runtime (`antseal-cli` `backend::ant::runtime`, D90
+        /// §3.3), which the rows above use; the deadline does not depend on
+        /// it — on one thread, with the stub holding the broadcast open, the
+        /// step still ends on its own deadlines with the same class.
+        #[tokio::test(flavor = "current_thread")]
+        async fn s51_the_broadcast_deadline_holds_on_a_current_thread_runtime() {
+            let hung = Stub::start(Broadcast::Hang, Lookup::Null, Lookup::Null);
+            let run_hung = run(&hung, FAST).await;
+            eprintln!(
+                "[S51 G6/current_thread] hung broadcast ended after {:?}",
+                run_hung.elapsed
+            );
+            assert!(
+                run_hung
+                    .reason()
+                    .starts_with("the payment transaction was not accepted (no acknowledgement"),
+                "{:?}",
+                run_hung.result
+            );
+            assert!(
+                run_hung.elapsed
+                    < FAST.broadcast * 3 + FAST.resolve_window + Duration::from_secs(3),
+                "{:?}",
+                run_hung.elapsed
+            );
+        }
+
+        /// The same rows at k ≥ 1 (D208 R4-R5: the count is this call's
+        /// landings): sub-batch 2 of 2 unobserved after sub-batch 1 landed —
+        /// `StrandedPayment { landed_tx_count: 1 }`, and ONE capture carrying
+        /// the landed record AND the unobserved one's, each over its own hash.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s51_an_unobserved_later_sub_batch_strands_with_the_landed_count() {
+            let stub = Stub::start(Broadcast::DropReply, Lookup::Drop, Lookup::Drop);
+            let landed = TxHash::from_bytes([0x70; 32]);
+            let mut remaining = vec![Some(priced(0, 0xA0)), Some(priced(1, 0xB0))];
+            let ready_after = vec![0, 1];
+            let mut records = vec![None, None];
+            let tx_map = BTreeMap::from([(quote(0xA0), landed)]);
+            finalize_ready_blobs(
+                &mut remaining,
+                &ready_after,
+                0,
+                &tx_map,
+                &mut records,
+                &mut HashMap::new(),
+            )
+            .expect("fixture: the landed blob's proof builds");
+            let so_far = PayLoop {
+                remaining,
+                ready_after,
+                records,
+                tx_map,
+                txs: vec![TxRecord {
+                    tx_hash: landed,
+                    block_number: Some(BLOCK),
+                    status: TxStatus::Confirmed,
+                    quote_hashes: vec![quote(0xA0)],
+                }],
+                gas_cost_wei: 21_000,
+            };
+            let sub_batch = SubBatch {
+                index: 1,
+                count: 2,
+                quote_hashes: vec![quote(0xB0)],
+            };
+            let run = run_sub_batch(&stub, FAST, so_far, sub_batch).await;
+            assert!(
+                matches!(
+                    run.result,
+                    Err(StorageError::StrandedPayment {
+                        landed_tx_count: 1,
+                        ..
+                    })
+                ),
+                "{:?}",
+                run.result
+            );
+            let local = Run::signed_hash(&stub);
+            assert_eq!(run.captured.len(), 1);
+            let receipt = &run.captured[0];
+            let statuses: Vec<TxStatus> = receipt.txs.iter().map(|tx| tx.status).collect();
+            assert_eq!(statuses, [TxStatus::Confirmed, TxStatus::Submitted]);
+            assert_eq!(receipt.txs[1].tx_hash, local);
+            assert_eq!(receipt.tx_map.get(&quote(0xA0)), Some(&landed));
+            assert_eq!(receipt.tx_map.get(&quote(0xB0)), Some(&local));
+            assert_eq!(
+                receipt.blobs.len(),
+                2,
+                "the landed record and the unobserved one's"
+            );
+            assert_eq!(receipt.storage_cost_atto, 2 * AMOUNT_ATTO);
+            assert_eq!(receipt.gas.gas_cost_wei, 21_000);
+        }
+
+        /// G7. The journaled hash is the local one: a node that acknowledges
+        /// with some other hash has not acknowledged, and the transaction is
+        /// resolved — and journaled — by the hash of the bytes the wallet
+        /// signed.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s51_the_journaled_hash_is_the_local_one() {
+            let stub = Stub::start(Broadcast::EchoOther, Lookup::Show, Lookup::Null);
+            let run = run(&stub, FAST).await;
+            assert_eq!(run.result, Ok(()), "resolved by the local hash: a landing");
+            let local = Run::signed_hash(&stub);
+            let mut echoed = *local.as_bytes();
+            echoed[0] ^= 0xFF;
+            assert_eq!(run.so_far.txs[0].tx_hash, local);
+            assert_ne!(run.so_far.txs[0].tx_hash, TxHash::from_bytes(echoed));
+            assert_eq!(run.captured.len(), 1);
+            assert_eq!(run.captured[0].tx_map.get(&quote(0xA0)), Some(&local));
+        }
+
+        /// G8. A transaction the chain still holds — no receipt in the window,
+        /// but the RPC returns it by hash — may yet be mined: the unobserved
+        /// shape, never `Payment`.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s51_a_transaction_the_chain_still_holds_is_the_unobserved_shape() {
+            let stub = Stub::start(Broadcast::DropReply, Lookup::Null, Lookup::Show);
+            let run = run(&stub, FAST).await;
+            assert_unobserved(
+                &stub,
+                &run,
+                "and after 600 ms the payment RPC still holds it unmined",
+            );
+            assert_eq!(stub.asked("eth_getTransactionByHash"), 1);
+        }
+
+        /// S54 (D208 R8): the payer's resolution read over the same provider
+        /// — landed, reverted, held, absent, and two ways of not being asked.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn s54_the_payment_rpc_reads_landed_reverted_pending_absent_or_unaskable() {
+            let raw = b"antseal S54 held transaction".to_vec();
+            let held = TxHash::from_bytes(alloy::primitives::keccak256(&raw).0);
+            let stranger = TxHash::from_bytes([0x5E; 32]);
+            let limit = Duration::from_millis(500);
+            let rows = [
+                (Lookup::Show, Lookup::Null, held, "landed"),
+                (Lookup::Reverted, Lookup::Null, held, "reverted"),
+                (Lookup::Null, Lookup::Show, held, "pending"),
+                (Lookup::Null, Lookup::Null, held, "absent"),
+                (Lookup::Show, Lookup::Show, stranger, "absent"),
+                (Lookup::Drop, Lookup::Null, held, "receipt unaskable"),
+                (Lookup::Null, Lookup::Drop, held, "by-hash unaskable"),
+            ];
+            assert_eq!(rows.len(), 7, "five answers, two of them twice");
+            for (receipts, by_hash, tx_hash, case) in rows {
+                let stub = Stub::start(Broadcast::Accept, receipts, by_hash);
+                lock(&stub.chain).held.push(raw.clone());
+                let provider = wallet(&stub).to_provider().erased();
+                let state = tokio::time::timeout(
+                    OUTER_LIMIT,
+                    read_payment_tx_state(&provider, &tx_hash, limit),
+                )
+                .await
+                .expect("the read ends on its own deadline");
+                match (case, &state) {
+                    (
+                        "landed",
+                        crate::PaymentTxState::Landed {
+                            block_number: Some(BLOCK),
+                            confirmed: true,
+                        },
+                    )
+                    | (
+                        "reverted",
+                        crate::PaymentTxState::Landed {
+                            block_number: Some(BLOCK),
+                            confirmed: false,
+                        },
+                    )
+                    | ("pending", crate::PaymentTxState::Pending)
+                    | ("absent", crate::PaymentTxState::Absent) => {}
+                    ("receipt unaskable", crate::PaymentTxState::Unaskable { reason }) => {
+                        assert!(
+                            reason.starts_with("eth_getTransactionReceipt: "),
+                            "{reason}"
+                        );
+                        assert_clean(reason, &tx_hash);
+                    }
+                    ("by-hash unaskable", crate::PaymentTxState::Unaskable { reason }) => {
+                        assert!(reason.starts_with("eth_getTransactionByHash: "), "{reason}");
+                        assert_clean(reason, &tx_hash);
+                    }
+                    _ => panic!("{case}: got {state:?}"),
+                }
+            }
+        }
+
+        /// The std-only deadline (D208 R7): it ends a future that never
+        /// finishes, waking its task from the helper thread, and a ready
+        /// answer still wins. On a current-thread runtime, where nothing but
+        /// the helper thread's wake can bring the task back.
+        #[tokio::test(flavor = "current_thread")]
+        async fn s51_a_deadline_bounds_a_future_that_never_finishes() {
+            let started = Instant::now();
+            let never = tokio::time::timeout(
+                OUTER_LIMIT,
+                within(Duration::from_millis(50), std::future::pending::<()>()),
+            )
+            .await
+            .expect("the helper thread wakes the task");
+            assert_eq!(never, None);
+            let elapsed = started.elapsed();
+            eprintln!(
+                "[S51 deadline] a never-finishing future ended after {elapsed:?} (limit 50ms)"
+            );
+            assert!(
+                elapsed >= Duration::from_millis(50) && elapsed < Duration::from_secs(5),
+                "{elapsed:?}"
+            );
+            assert_eq!(within(Duration::ZERO, async { 7 }).await, Some(7));
+        }
+
+        /// A future that never finishes and records its own drop.
+        struct Tracked(Arc<AtomicBool>);
+
+        impl Future for Tracked {
+            type Output = ();
+
+            fn poll(
+                self: std::pin::Pin<&mut Self>,
+                _cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<()> {
+                std::task::Poll::Pending
+            }
+        }
+
+        impl Drop for Tracked {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        /// The losing future is dropped when the deadline wins, and the
+        /// wait never blocks the thread that polls it: on a current-thread
+        /// runtime — one thread for every task — a ticker spawned beside the
+        /// wait keeps running throughout it.
+        #[tokio::test(flavor = "current_thread")]
+        async fn s51_a_deadline_drops_the_loser_and_never_blocks_its_thread() {
+            let dropped = Arc::new(AtomicBool::new(false));
+            let ticks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let ticker = {
+                let ticks = Arc::clone(&ticks);
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                        ticks.fetch_add(1, Ordering::SeqCst);
+                    }
+                })
+            };
+            let started = Instant::now();
+            let outcome = tokio::time::timeout(
+                OUTER_LIMIT,
+                within(Duration::from_millis(300), Tracked(Arc::clone(&dropped))),
+            )
+            .await
+            .expect("the deadline ends the wait");
+            let elapsed = started.elapsed();
+            let ticked = ticks.load(Ordering::SeqCst);
+            ticker.abort();
+            eprintln!(
+                "[S51 deadline] 300ms wait: {elapsed:?}, ticker ran {ticked} times meanwhile"
+            );
+            assert_eq!(outcome, None, "the deadline won");
+            assert!(
+                dropped.load(Ordering::SeqCst),
+                "the losing future was dropped"
+            );
+            assert!(
+                ticked >= 10,
+                "a ticker on the same thread made {ticked} ticks in {elapsed:?}: the wait \
+                 blocked the executor thread"
+            );
+        }
+
+        /// No helper thread outlives its deadline (D208 R7): the thread holds
+        /// the alarm's shared state until it ends, so the state's count of
+        /// owners returning to one IS the thread having ended. Both ways a
+        /// deadline ends: it passes (the thread rings, then ends), or the
+        /// future wins and the deadline is dropped (the thread is cancelled).
+        #[tokio::test(flavor = "current_thread")]
+        async fn s51_a_deadline_thread_ends_with_its_deadline() {
+            async fn ended(state: Arc<Mutex<AlarmState>>, case: &str) {
+                let started = Instant::now();
+                while Arc::strong_count(&state) > 1 {
+                    assert!(
+                        started.elapsed() < Duration::from_secs(5),
+                        "{case}: the helper thread is still alive after {:?}",
+                        started.elapsed()
+                    );
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+                eprintln!(
+                    "[S51 deadline] {case}: helper thread ended {:?} later",
+                    started.elapsed()
+                );
+            }
+            let state_of = |deadline: &Deadline| {
+                Arc::clone(
+                    &deadline
+                        .alarm
+                        .as_ref()
+                        .expect("a pending poll starts the helper thread")
+                        .state,
+                )
+            };
+
+            let mut passes = Deadline::after(Duration::from_millis(30));
+            assert_eq!(race(&mut passes, std::future::pending::<()>()).await, None);
+            let state = state_of(&passes);
+            drop(passes);
+            ended(state, "the deadline passed").await;
+
+            let mut cancelled = Deadline::after(Duration::from_secs(60));
+            let won = race(&mut cancelled, async {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                "answered"
+            })
+            .await;
+            assert_eq!(won, Some("answered"));
+            let state = state_of(&cancelled);
+            drop(cancelled);
+            ended(state, "the future won, 60s early").await;
+        }
+
+        /// Hygiene: an RPC error names no URL — a private endpoint can carry
+        /// a credential in its path — and no hash-shaped run.
+        #[test]
+        fn s51_rpc_error_reasons_name_no_url_and_no_hash() {
+            let rows = [
+                (
+                    "error sending request for url (http://user:pw@rpc.example:8545/v2/k3yAbc)",
+                    "error sending request for url (<url redacted>)",
+                ),
+                (
+                    "HTTP error 502 with body: see https://x.example/a?b=c now",
+                    "HTTP error 502 with body: see <url redacted> now",
+                ),
+                (
+                    "tx 0x3789f960fcea72bcaa5a1615f585d401cea57673c23837af105060ee24e53b56 is known",
+                    "tx 0x<hex redacted> is known",
+                ),
+                ("no url here: ok", "no url here: ok"),
+                ("é://ünïcode", "é<url redacted>"),
+            ];
+            assert_eq!(rows.len(), 5);
+            for (message, expected) in rows {
+                assert_eq!(redact_rpc_error(message), expected, "{message}");
+            }
+        }
+
+        /// **S57 + S58 (D208 R13, R14).** The payment-RPC reads OUTSIDE the
+        /// submission step — `chain_id_guard` (connect), `gas_price_wei`
+        /// (quote), `ant_balance` / `gas_balance` / `standing_allowance`
+        /// (preflight), `approve_gas_wei` and `approve_failure` (the approve),
+        /// `fill_block_numbers` (backfill), `paying_block_time_within`
+        /// (finalize's proof-age read) — each bounded by the deadline helper
+        /// and each error redacted, over the same stub: S57's rows give the
+        /// stub a URL whose PATH carries a canary and make it drop the read;
+        /// S58's make it accept every read and never answer.
+        mod s57_s58_reads {
+            use super::*;
+
+            /// The deadline the S58 rows inject.
+            const LIMIT: Duration = Duration::from_millis(300);
+            /// A path segment no redaction rule knows: not hex, not a word
+            /// any message says — so finding it means the URL got through.
+            const CANARY: &str = "canary-s57-zqpw";
+
+            /// A stub quiet on `method` (`"*"`: every method).
+            fn quiet(method: &'static str, how: Quiet) -> Stub {
+                let stub = Stub::start(Broadcast::Accept, Lookup::Null, Lookup::Null);
+                lock(&stub.chain).quiet = Some((method, how));
+                stub
+            }
+
+            /// S57's assertion: the reason carries neither the canary nor any
+            /// URL — and it DOES carry the transport error, with its URL
+            /// replaced, so the error reached the reason (anti-vacuity: a
+            /// reason that never held the error would pass the first check).
+            fn assert_no_url(site: &str, reason: &str) {
+                assert!(
+                    !reason.contains(CANARY)
+                        && !reason.contains("://")
+                        && !reason.contains("127.0.0.1"),
+                    "{site}: the reason names the RPC URL: {reason}"
+                );
+                assert!(
+                    reason.contains("error sending request for url (<url redacted>)"),
+                    "{site}: fixture — the reason must carry the transport error: {reason}"
+                );
+            }
+
+            fn network_reason(
+                site: &str,
+                result: Result<impl std::fmt::Debug, StorageError>,
+            ) -> String {
+                match result {
+                    Err(StorageError::Network { reason }) => reason,
+                    other => panic!("{site}: expected the network class, got {other:?}"),
+                }
+            }
+
+            /// S58's driver: `read` must end on its own deadline, within the
+            /// test's outer limit — a read with no bound fails here by message.
+            async fn bounded<T>(site: &str, read: impl Future<Output = T>) -> (T, Duration) {
+                let started = Instant::now();
+                let output = tokio::time::timeout(OUTER_LIMIT, read)
+                    .await
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "{site}: the read must end on its own deadline; it was still waiting \
+                             at the test's outer limit"
+                        )
+                    });
+                let elapsed = started.elapsed();
+                assert!(
+                    elapsed >= LIMIT && elapsed < LIMIT + Duration::from_secs(3),
+                    "{site}: ended after {elapsed:?} against a {LIMIT:?} deadline"
+                );
+                (output, elapsed)
+            }
+
+            /// A receipt with one empty block-number slot, for the backfill.
+            fn unfilled() -> PaymentReceipt {
+                PaymentReceipt {
+                    blobs: Vec::new(),
+                    tx_map: BTreeMap::new(),
+                    txs: vec![TxRecord {
+                        tx_hash: TxHash::from_bytes([0x5B; 32]),
+                        block_number: None,
+                        status: TxStatus::Submitted,
+                        quote_hashes: Vec::new(),
+                    }],
+                    storage_cost_atto: 0,
+                    gas: GasSummary { gas_cost_wei: 0 },
+                }
+            }
+
+            // ── S57: no reason names the RPC URL ─────────────────────────
+
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s57_the_chain_id_guard_names_no_url() {
+                let stub = quiet("eth_chainId", Quiet::Drop);
+                let provider = wallet_at(stub.url_at(CANARY)).to_provider().erased();
+                let config = super::super::devnet_base();
+                let reason = network_reason(
+                    "chain_id_guard",
+                    chain_id_guard(&provider, &config, LIMIT).await,
+                );
+                assert!(
+                    reason.starts_with("payment RPC unreachable (eth_chainId): "),
+                    "{reason}"
+                );
+                assert_no_url("chain_id_guard", &reason);
+            }
+
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s57_the_gas_price_read_names_no_url() {
+                let stub = quiet("eth_gasPrice", Quiet::Drop);
+                let provider = wallet_at(stub.url_at(CANARY)).to_provider().erased();
+                let reason = network_reason("gas_price_wei", gas_price_wei(&provider, LIMIT).await);
+                assert!(reason.starts_with("eth_gasPrice failed: "), "{reason}");
+                assert_no_url("gas_price_wei", &reason);
+            }
+
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s57_the_gas_balance_read_names_no_url() {
+                let stub = quiet("eth_getBalance", Quiet::Drop);
+                let wallet = wallet_at(stub.url_at(CANARY));
+                let reason = network_reason("gas_balance", gas_balance(&wallet, LIMIT).await);
+                assert!(reason.starts_with("ETH balance query failed: "), "{reason}");
+                assert_no_url("gas_balance", &reason);
+            }
+
+            /// The ANT balance and the allowance are ERC-20 calls that evmlib
+            /// RETRIES — three times, 4, 16 and 36 s apart
+            /// (`evmlib-0.9.0/src/contract/network_token.rs` `balance_of`,
+            /// `allowance`; `retry.rs` `retry`) — so a refusing RPC's error
+            /// reaches them only after ~56 s, past `BROADCAST_DEADLINE`: in
+            /// production their reason is the deadline's. This row lets the
+            /// error through on purpose (a 90 s limit; both reads at once, so
+            /// it costs one ~56 s wait) to pin that the text is redacted when
+            /// it does arrive.
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s57_the_retried_erc20_reads_name_no_url() {
+                let limit = Duration::from_secs(90);
+                let stub = quiet("eth_call", Quiet::Drop);
+                let wallet = wallet_at(stub.url_at(CANARY));
+                let vault = vault_address(&wallet);
+                let (ant, allowance) = tokio::time::timeout(Duration::from_secs(150), async {
+                    tokio::join!(
+                        ant_balance(&wallet, limit),
+                        standing_allowance(&wallet, vault, limit)
+                    )
+                })
+                .await
+                .expect("evmlib's retries end well inside the limit");
+                let reason = network_reason("ant_balance", ant);
+                assert!(reason.starts_with("ANT balance query failed: "), "{reason}");
+                assert_no_url("ant_balance", &reason);
+                let reason = network_reason("standing_allowance", allowance);
+                assert!(reason.starts_with("allowance query failed: "), "{reason}");
+                assert_no_url("standing_allowance", &reason);
+            }
+
+            /// The approve's failure is pinned at its mapping, `approve_failure`,
+            /// fed the text evmlib's approve fails with — a transport error,
+            /// produced here against the canary stub, inside evmlib's own
+            /// wrapping ("Transaction failed to send: gas estimation failed: …",
+            /// `evmlib-0.9.0/src/retry.rs`). A live approve cannot pin it in a
+            /// unit test: evmlib retries a failed send three times, 4, 16 and
+            /// 36 s apart, and its error types are not reachable from here.
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s57_a_failed_approve_names_no_url() {
+                let stub = quiet("*", Quiet::Drop);
+                let provider = wallet_at(stub.url_at(CANARY)).to_provider().erased();
+                let transport = provider.get_gas_price().await.expect_err("dropped");
+                let raw = format!("Transaction failed to send: gas estimation failed: {transport}");
+                assert!(
+                    raw.contains(CANARY),
+                    "fixture: the raw text names the URL: {raw}"
+                );
+                let StorageError::Payment { reason } = approve_failure(&raw) else {
+                    panic!("an approve that failed moved no ANT: Payment");
+                };
+                assert!(
+                    reason.starts_with(
+                        "token approve failed: Transaction failed to send: gas estimation failed: "
+                    ),
+                    "{reason}"
+                );
+                assert_no_url("approve_failure", &reason);
+            }
+
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s57_the_backfill_read_names_no_url() {
+                let stub = quiet("eth_getTransactionReceipt", Quiet::Drop);
+                let provider = wallet_at(stub.url_at(CANARY)).to_provider().erased();
+                let mut receipt = unfilled();
+                let reason = network_reason(
+                    "fill_block_numbers",
+                    fill_block_numbers(&provider, &mut receipt, LIMIT).await,
+                );
+                assert!(
+                    reason.starts_with("eth_getTransactionReceipt failed: "),
+                    "{reason}"
+                );
+                assert_no_url("fill_block_numbers", &reason);
+                assert_eq!(receipt.txs[0].block_number, None, "the record is untouched");
+            }
+
+            // ── S58: every read ends on its own deadline, in its class ────
+
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s58_the_chain_id_guard_is_bounded() {
+                let stub = quiet("*", Quiet::Hang);
+                let provider = wallet(&stub).to_provider().erased();
+                let config = super::super::devnet_base();
+                let (result, _) =
+                    bounded("chain_id_guard", chain_id_guard(&provider, &config, LIMIT)).await;
+                assert_eq!(
+                    network_reason("chain_id_guard", result),
+                    "payment RPC unreachable (eth_chainId): no answer within 300 ms"
+                );
+            }
+
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s58_the_gas_price_read_is_bounded() {
+                let stub = quiet("*", Quiet::Hang);
+                let provider = wallet(&stub).to_provider().erased();
+                let (result, _) = bounded("gas_price_wei", gas_price_wei(&provider, LIMIT)).await;
+                assert_eq!(
+                    network_reason("gas_price_wei", result),
+                    "eth_gasPrice failed: no answer within 300 ms"
+                );
+            }
+
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s58_the_balance_reads_are_bounded() {
+                let stub = quiet("*", Quiet::Hang);
+                let wallet = wallet(&stub);
+                let (ant, _) = bounded("ant_balance", ant_balance(&wallet, LIMIT)).await;
+                assert_eq!(
+                    network_reason("ant_balance", ant),
+                    "ANT balance query failed: no answer within 300 ms"
+                );
+                let (gas, _) = bounded("gas_balance", gas_balance(&wallet, LIMIT)).await;
+                assert_eq!(
+                    network_reason("gas_balance", gas),
+                    "ETH balance query failed: no answer within 300 ms"
+                );
+            }
+
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s58_the_allowance_read_is_bounded() {
+                let stub = quiet("*", Quiet::Hang);
+                let wallet = wallet(&stub);
+                let vault = vault_address(&wallet);
+                let (result, _) = bounded(
+                    "standing_allowance",
+                    standing_allowance(&wallet, vault, LIMIT),
+                )
+                .await;
+                assert_eq!(
+                    network_reason("standing_allowance", result),
+                    "allowance query failed: no answer within 300 ms"
+                );
+            }
+
+            /// The approve's gas read keeps its existing behaviour: unreadable
+            /// in time counts 0.
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s58_the_approve_gas_read_is_bounded() {
+                let stub = quiet("*", Quiet::Hang);
+                let provider = wallet(&stub).to_provider().erased();
+                let (gas, _) = bounded(
+                    "approve_gas_wei",
+                    approve_gas_wei(&provider, alloy::primitives::B256::repeat_byte(0xA9), LIMIT),
+                )
+                .await;
+                assert_eq!(gas, 0);
+            }
+
+            /// The backfill's read fails in its documented class — `status`'s
+            /// host (U67) skips that silently — and leaves the record as it was.
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s58_the_backfill_read_is_bounded() {
+                let stub = quiet("*", Quiet::Hang);
+                let provider = wallet(&stub).to_provider().erased();
+                let mut receipt = unfilled();
+                let (result, _) = bounded(
+                    "fill_block_numbers",
+                    fill_block_numbers(&provider, &mut receipt, LIMIT),
+                )
+                .await;
+                assert_eq!(
+                    network_reason("fill_block_numbers", result),
+                    "eth_getTransactionReceipt failed: no answer within 300 ms"
+                );
+                assert_eq!(receipt.txs[0].block_number, None, "the record is untouched");
+            }
+
+            /// Finalize's proof-age read: a time that cannot be read in time is
+            /// `None` — not expired (D179 R3) — on both of its reads.
+            #[tokio::test(flavor = "multi_thread")]
+            async fn s58_the_proof_age_reads_are_bounded() {
+                let stub = quiet("*", Quiet::Hang);
+                let provider = wallet(&stub).to_provider().erased();
+                for (block_number, read) in
+                    [(None, "the receipt read"), (Some(0x10), "the block read")]
+                {
+                    let paying = PayingTx {
+                        tx_hash: TxHash::from_bytes([0x7E; 32]),
+                        block_number,
+                    };
+                    let (time, _) = bounded(
+                        &format!("paying_block_time_within, {read}"),
+                        paying_block_time_within(&provider, paying, LIMIT),
+                    )
+                    .await;
+                    assert_eq!(time, None, "{read}: unreadable in time is not expired");
+                }
+            }
         }
     }
 }

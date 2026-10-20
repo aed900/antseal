@@ -976,3 +976,107 @@ It changes how eleven readers classify a work, what `complete()` writes first, a
 sentences of `list`, the resume plan and the abandon screens, inside the wave's own commits.
 Nothing in it authorises a push, a workflow dispatch, a deploy or any other outward act; each of
 those needs the maintainer's express consent naming the action, the destination and the account.
+
+## Addendum — 2026-10-20 (D210 §2 R1–R4): the post-pay plan arms follow the receipt too, rule 2 speaks per clause, and §6's `U114` and `U115` entries are answered
+
+- **§2 M4 reaches the post-pay arms.** M4 made the plan's `Anchored` arms read the receipt, and
+  `resume_plan_lines`' doc kept the post-pay arms on the tag: *"The post-pay tags need no
+  receipt: `Paid` is written only once nothing remains to buy (D203 M5)"*
+  (`crates/antseal-cli/src/seal_resume.rs:926-930` at `ab7226f`). D210 §2 R1 keys the `Paid`
+  and `Finalizing` arms on `payment_recorded` as well. D210 §2 R2 deletes the coarse-state
+  sentence *"This seal is already paid for. Finishing it needs no further payment, …"*
+  (`:970-976`) and ends every arm that has a recorded payment — the stranded `Anchored` arm
+  included — with `list`'s own clock note, `ResumeClock::TimeBoxed.note()` (M2's sentence).
+- **Why M5 was not enough.** M5 holds for the first payment and for the remainder: `Paid` again
+  means fully paid. But D37 Decision 6's expired-proof path leaves `Finalizing` over money that
+  does not usably cover the work, at `ab7226f` and with production entropy: a declined
+  proofs-expired re-consent (X-A), and a proofs-expired re-payment that strands (X-B). D210's
+  planning lane executed both: the plan told them that no further payment was needed, while the
+  next resume asked for 5517 and 3678 atto-ANT (D210 §1.3).
+- **M6c's way forward is replaced.** *"no quote the receipt already maps is paid again"* is
+  literally true and practically false for X-A, whose every blob is bought again under fresh
+  quote hashes. D210 §2 R3 gives rule 2 one message per clause; the receipt clause says the
+  re-run *"pays only for what the receipt does not cover"* and states the proof clock. Rule 2's
+  predicate is unchanged.
+- **§6's *"Left open"*, the `U114` entry.** Closed in code for the plan (D210 §2 R1, R2). For
+  abandon and `list` it is recorded, not fixed: rule 2 still refuses a post-pay tag with no
+  recorded payment, now with a sentence that claims no payment (D210 §2 R3); and `list`'s
+  *"state: paid"* beside *"no payment is recorded"*, and `abandon`'s help line *"Discard an
+  interrupted seal that nothing has been paid for"*, stay as they are for shapes with no
+  production reach (D210 §2 R4).
+- **§6's *"Left open"*, the `U115` entry.** Both sentences are ruled: rule 2's opening speaks per
+  clause (D210 §2 R3), and the stranded plan's missing urgency line is `list`'s clock note
+  (D210 §2 R2).
+- **Correction: §6's *"Rule 2's state clause refuses both"* is wrong for the second shape.** It
+  holds for the pre-`S50` `Paid` over a revert-only receipt: that receipt maps no quote, so only
+  the state clause refuses it. It does not hold for the pre-M5 `Paid` over a declined remainder:
+  that receipt maps the partial's quotes, so `payment_recorded` is true and rule 2 refuses it by
+  its RECEIPT clause. D210's planning lane executed both (D210 §1.2, cases 1 and 2). The second
+  refusal was right; only its words overstated the payment.
+
+The text above this addendum is not edited.
+
+## Addendum — 2026-10-20 (D208 §2 R5, R9): what a mapped quote protects was true of quote hashes and false of blobs for an unobserved landing; D208 makes it true of blobs
+
+§1.4 says of a receipt's `tx_map` that an unobserved landing maps the sub-batch's quotes to the
+submitted hash with status `Submitted`, *"So the mapped quotes are exactly the ones a resume will
+not re-buy, and what exit 28 promises"* (D203:187-188). M1 says the same of `payment_recorded`:
+*"It is exactly the set of quotes a resume will not re-buy, and what exit 28 promises. It includes
+a `Submitted` mapping (money MAY have moved: conservative)"* (D203:393-394).
+
+Both were true of quote HASHES — no resume pays an old quote hash (D36) — and false of BLOBS for an
+unobserved landing. That branch mapped the quotes but built no blob record, and the resume's
+remainder is keyed on records (`uncovered_blobs`), so a re-run re-quoted and re-bought every blob of
+the sub-batch. D208 §1.4 records it executed twice at `ab7226f`: 10 quotes paid for 5 blobs with
+22 902 of 45 804 atto-ANT recorded and, independently, `list` printing *"cost: 0 atto-ANT so far"*
+beside M2's *"RESUME PROMPTLY … its payment proofs stay usable …"* for a receipt that held no
+proof.
+
+D208 makes both sentences true of blobs:
+- §2 R5 builds the sub-batch's blob records over the locally computed hash at the branch, before
+  its capture, so the capture carries records, a cost and proofs, and the remainder skips those
+  blobs;
+- §2 R9 resolves every `Submitted` transaction before the resume's money branch: a landed one keeps
+  its records (nodes check the quote on the contract, not the transaction), and a reverted or
+  never-mined one has its mappings and records pruned, its `TxRecord` kept as evidence, and its
+  blobs bought once through the remainder arm.
+
+M1's predicate does not change. For this shape M2's clock and M3's cost line become true with no
+copy change from D208 (§2 R11). Unobserved-landing captures journaled before D208 keep mappings
+without records and stay a recorded residue (D208 §2 R10). D208 §2 R12 adds one helper beside
+`payment_recorded` in `pipeline/journal.rs`: a transaction is published as part of the payment
+only if its hash maps a quote.
+
+The text above is history and stays as written.
+
+## Addendum — 2026-10-20 (D209 §2 R1, R6): §6's R7 deviation is closed — the expired-proof re-payment carries the replaced payment's totals, so R7's cost is the work's total on that arm too
+
+§6 recorded a deviation from §2 R7 (D203:784-787): *"Deviation: "accumulated across rounds" is
+false on one arm … The expired-proof re-payment (`consent_anchor_pay(…, true, None)`) replaces the
+receipt (D179). If one resume pays a remainder and then re-pays on expiry, `6e1cab3` recorded the
+run's spend and R7 records the replacement's; neither is the work's total. `S53` owns it."* §6's
+*"Left open"* repeats it: *"`S53` owns R7's expiry arm"* (D203:959).
+
+D209 closes it. Its §2 R1, as amended by its R6, passes the expired arm a prior built by
+`carry_forward(replaced, keep)`: the replaced receipt's totals, every mapping that no record uses
+with its transaction, and the records the current invocation paid for — never the replaced
+records. The existing merge then writes the cumulative total at every capture and at the final
+`put_receipt`, so R7's cost — the journaled receipt's `storage_cost_atto` — is the work's total on
+this arm as on the remainder's, and `merge_receipts`' own definition (*"what this seal has cost in
+total, across however many invocations paid for it"*) now holds on every path. D209's planning lane
+executed the gap at `ab7226f` — 3678 atto-ANT recorded of 9195 spent, and 5517 of 11 034 for the
+remainder-then-expiry shape this deviation describes — and its shadow build of the carry recorded
+9195 and 11 034 (D209 §1.3, §1.6).
+
+Three further points bear on this record:
+- **The rule the deviation attributes to D179 is D37's** (D37:412-415, the S31 amendment's
+  *"deliberately does **not** merge"*). D179 rules when a proof counts as expired, not what the
+  re-payment does with the receipt. `complete()`'s doc carried the same attribution and is
+  rewritten (D209 §2 R4).
+- **`paid_here` keeps its one job.** On the expired arm the run's figure is the quote's total, not
+  the merged receipt's cost (D209 §2 R2), so the run report stays the run's own spend, as R7 says.
+- **M3 is kept.** `list --json`'s `cost_atto` stays the meta's value only (D203:425-426). For an
+  expired-and-re-paid work that value is now the cumulative total, which D209 §2 R3 rules is its
+  documented meaning (*"Total storage cost paid"*), not a `U32` semantics move.
+
+The text above this addendum is not edited.

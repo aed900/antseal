@@ -394,12 +394,12 @@ pub fn standing_warnings(wrapped: bool) -> Vec<String> {
 /// # Errors
 ///
 /// [`CliError::Usage`] for an existing vault (absolute — D39 Decision 4), a
-/// non-empty directory without one (D205), a missing non-interactive input,
-/// or an unusable wallet-key channel; [`CliError::NotImplemented`] for a wrap
-/// mode whose engine has not landed; [`CliError::PassphraseUnavailable`] per
-/// D41/D51; [`CliError::VaultKdfMemory`] when the KDF arena cannot be
-/// allocated (typed hard error, **no fallback** — D40 §2); I/O errors from
-/// the directory walk and the atomic writes.
+/// `vault.header` link it cannot follow (U112), a non-empty directory without
+/// a vault (D205), a missing non-interactive input, or an unusable wallet-key
+/// channel; [`CliError::NotImplemented`] for a wrap mode whose engine has not
+/// landed; [`CliError::PassphraseUnavailable`] per D41/D51; [`CliError::VaultKdfMemory`]
+/// when the KDF arena cannot be allocated (typed hard error, **no fallback** —
+/// D40 §2); I/O errors from the directory walk and the atomic writes.
 pub fn run_init<P: InitPrompt, R: TryCryptoRng + ?Sized>(
     layout: &VaultLayout,
     args: &InitArgs,
@@ -418,10 +418,21 @@ pub fn run_init<P: InitPrompt, R: TryCryptoRng + ?Sized>(
     if header.exists() {
         return Err(existing_vault_refusal(layout.root()));
     }
+    // An entry named vault.header that `exists()` cannot follow — a link to
+    // nothing, a loop, or a target this process cannot reach — may still
+    // stand for a vault (on a volume that is not mounted, say), so it is
+    // refused in its own words, before the walk below could name it under
+    // "there is no vault.header" (U112). D39's check above stays as it was
+    // (D155 §2 R1).
+    if std::fs::symlink_metadata(&header).is_ok() {
+        return Err(unfollowable_header_refusal(layout, &header));
+    }
     // No header, but files (D205): `init` writes config.toml and the store's
-    // records over whatever is there, so a hand-written config, or a vault
-    // whose header was moved aside, is refused too, and still before any
-    // secret is asked for. Directories alone and the lockfile do not count.
+    // records over whatever files are there, so a hand-written config, or a
+    // vault whose header was moved aside, is refused too, and still before any
+    // secret is asked for; so is a folder where one of those files goes, which
+    // `init` cannot write over (U112). Other folders and the lockfile do not
+    // count.
     if let Some(found) = first_file_without_a_vault(layout)? {
         return Err(non_empty_directory_refusal(layout, &found));
     }
@@ -642,6 +653,25 @@ pub fn existing_vault_refusal(root: &std::path::Path) -> CliError {
     }
 }
 
+/// **U112**: `vault.header` is there, but as a link that cannot be followed —
+/// to nothing, to itself, or into a place this process cannot reach — so
+/// nothing was read that says whether a vault stands behind it. Not D39's
+/// text (nothing says a vault exists) and not D205's (there IS a
+/// vault.header): a link like that may stand for a vault on a volume that is
+/// not mounted, so the remedy is the one both give. Reached only when D39's
+/// `exists()` check, which follows links, found nothing to follow.
+fn unfollowable_header_refusal(layout: &VaultLayout, header: &std::path::Path) -> CliError {
+    CliError::Usage {
+        message: format!(
+            "{header} is a link that antseal cannot follow, so it cannot tell whether {root} \
+             holds a vault — and it never writes over one. Move {root} aside instead of \
+             deleting it — a moved directory keeps everything — then run `antseal init` again.",
+            header = header.display(),
+            root = layout.root().display(),
+        ),
+    }
+}
+
 /// **D205 (`U105`)**: D39's absolute refusal, reached by a directory that
 /// holds no vault header but is not empty.
 ///
@@ -655,37 +685,51 @@ pub fn existing_vault_refusal(root: &std::path::Path) -> CliError {
 ///
 /// The text names paths only, never contents: a `[verify]` endpoint URL in
 /// `config.toml` may carry a provider's API key (D195). The advice to copy
-/// `config.toml` back is given only when there is one to copy, which is
-/// exactly when `found` is that file, because the walk looks at it first.
+/// `config.toml` back is given only when there is one to copy: when `found`
+/// is `config.toml` (the walk looks there first) and a regular file, through
+/// a link or not — a folder, or a link to nothing, has no settings (U112).
+/// And `found` is a folder only where `init` writes a file, which it cannot
+/// do over a folder, so the text says so instead of "replacing" it (U112).
 fn non_empty_directory_refusal(layout: &VaultLayout, found: &std::path::Path) -> CliError {
-    let copy_back = if found == layout.beside_path(BesideFile::Config).as_path() {
+    let is_config = found == layout.beside_path(BesideFile::Config).as_path();
+    let copy_back = if is_config && found.is_file() {
         ", and copy config.toml back afterwards if you want its settings"
     } else {
         ""
+    };
+    let over_it = if std::fs::symlink_metadata(found).is_ok_and(|meta| meta.is_dir()) {
+        "which it cannot do over a folder"
+    } else {
+        "replacing any it finds"
     };
     CliError::Usage {
         message: format!(
             "{root} holds no vault (there is no vault.header) but is not empty — {found} is \
              in it — and `antseal init` writes its own config.toml and store records there, \
-             replacing any it finds. Move {root} aside instead of deleting it — a moved \
-             directory keeps everything — then run `antseal init` again{copy_back}.",
+             {over_it}. Move {root} aside instead of deleting it — a moved directory keeps \
+             everything — then run `antseal init` again{copy_back}.",
             root = layout.root().display(),
             found = found.display(),
         ),
     }
 }
 
-/// **D205 (`U105`)**: the first file in the vault directory other than its
-/// lockfile, if there is one; `None` is what "empty" means to `init`.
+/// **D205 (`U105`)**: the first entry in the vault directory that stops
+/// `init`, if there is one; `None` is what "empty" means to `init`.
 ///
-/// `config.toml` is looked at first, so a hand-written one (the row's case)
-/// is the file named; then a walk in name order, each directory's own files
-/// before its subdirectories, that stops at the first file it meets.
+/// The paths `init` writes are looked at first ([`paths_init_writes`],
+/// `config.toml` first, so a hand-written one — the row's case — is the entry
+/// named), and there an entry of ANY type counts, a folder included: `init`
+/// cannot write over a folder, and the binary used to find that out only
+/// after the passphrase — at `store/wallet`, after the vault was created
+/// (U112). Then a walk in name order, each directory's own files before its
+/// subdirectories, that stops at the first file it meets.
 ///
 /// What does not count, and why:
-/// - **Directories.** `scripts/stage0.sh` makes an empty vault directory
-///   before `init`, and a KDF failure leaves an empty `store/works/` behind
-///   (`create_vault` makes the directories before it runs the KDF).
+/// - **Directories, except at a path `init` writes.** `scripts/stage0.sh`
+///   makes an empty vault directory before `init`, and a KDF failure leaves
+///   an empty `store/works/` behind (`create_vault` makes the directories
+///   before it runs the KDF).
 /// - **The lockfile**, `vault.lock` beside the AEAD (that path only). The
 ///   handler creates it before `run_init` runs and a refused `init` leaves it
 ///   behind, so counting it would refuse every `init` after a refused one.
@@ -702,9 +746,10 @@ fn non_empty_directory_refusal(layout: &VaultLayout, found: &std::path::Path) ->
 /// `create_vault` will make): a directory that cannot be read cannot be shown
 /// to be empty.
 fn first_file_without_a_vault(layout: &VaultLayout) -> Result<Option<PathBuf>, CliError> {
-    let config = layout.beside_path(BesideFile::Config);
-    if std::fs::symlink_metadata(&config).is_ok_and(|meta| !meta.is_dir()) {
-        return Ok(Some(config));
+    for path in paths_init_writes(layout) {
+        if std::fs::symlink_metadata(&path).is_ok() {
+            return Ok(Some(path));
+        }
     }
     let lockfile = layout.beside_path(BesideFile::Lockfile);
     let unreadable = |dir: &std::path::Path, source: std::io::Error| CliError::Io {
@@ -742,6 +787,21 @@ fn first_file_without_a_vault(layout: &VaultLayout) -> Result<Option<PathBuf>, C
         pending.extend(subdirs.into_iter().rev());
     }
     Ok(None)
+}
+
+/// The files `init` writes besides `vault.header`, which the header checks in
+/// [`run_init`] own: `config.toml` first, so a hand-written one is the entry
+/// named (D205), then the store's key-check and wallet records. Whatever
+/// stands at one of these paths stops `init` (U112). `tests/init_command.rs`'s
+/// `init_refuses_a_directory_at_every_path_it_writes` reads the files a real
+/// `init` leaves on disk, so a file `init` starts writing that this list
+/// misses turns that test red.
+fn paths_init_writes(layout: &VaultLayout) -> [PathBuf; 3] {
+    [
+        layout.beside_path(BesideFile::Config),
+        layout.check_record_path(),
+        layout.wallet_record_path(),
+    ]
 }
 
 /// The keyfile path from the environment, if set (a path, never a

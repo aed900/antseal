@@ -697,12 +697,14 @@ fn a_kill_between_sub_batch_txs_pays_each_sub_batch_exactly_once() {
 /// A backend whose `finalize_batch` **always** reports expired proofs.
 ///
 /// D147 §1.10's reachable path to the class: `resume` intercepts the first
-/// expiry once (`resume.rs:288`) to re-quote, re-consent and re-pay, and a
-/// second expiry after that re-payment propagates through `:305`'s `?`.
-/// `MockBackend` has no fault for this — its `Fault` enum is `AfterQuote`,
-/// `AfterPayBeforeStore`, `AfterSubBatches(k)`, `AfterStoringK(k)`,
-/// `DuringGetData`, `NetworkOn(Method)` — and a mock cannot age a quote 24 h
-/// anyway, so the window is modelled at the boundary where it is observed.
+/// expiry once, in its proofs-expired arm, to re-quote, re-consent and
+/// re-pay, and a second expiry after that re-payment propagates. The payment
+/// the first expiry refuses must be an EARLIER run's: one made in the same
+/// run is minutes old, which D179's age clause never calls expired, so the
+/// arm keeps it and, with nothing else to buy, returns the verdict (S55).
+/// `MockBackend` has no fault that refuses a proof as expired, and a mock
+/// cannot age a quote 24 h anyway, so the window is modelled at the boundary
+/// where it is observed.
 struct AlwaysExpired<'m> {
     inner: &'m MockBackend,
 }
@@ -803,6 +805,20 @@ fn expired_proofs_exit_with_their_own_class_and_never_the_usage_code() {
     let gate = RecordingGate::new();
     let consent = Consent::always_yes();
 
+    // The payment the first expiry refuses is an EARLIER run's (S55): this
+    // run pays — `consent_anchor_pay` journals the receipt, the sink captured
+    // it inside `pay` — and is killed before finalize, leaving the work `Paid`.
+    let kill = KillAt::new(Barrier::PostReceiptJournalPreFinalize);
+    paying_journal_over(&vault, &sink, |journal| {
+        let backend = CapturingBackend::new(&mock, &sink);
+        let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &kill);
+        match block_on(pipeline.resume(&seal_id)) {
+            Err(SealError::KilledAtBarrier(Barrier::PostReceiptJournalPreFinalize)) => {}
+            other => panic!("expected the kill after the receipt journal, got {other:?}"),
+        }
+    });
+    assert_eq!(consent.calls(), 1, "the first run's consent");
+
     let err = paying_journal_over(&vault, &sink, |journal| {
         let backend = AlwaysExpired { inner: &mock };
         let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &NoBarriers);
@@ -817,8 +833,9 @@ fn expired_proofs_exit_with_their_own_class_and_never_the_usage_code() {
     );
     // The re-consent D36 requires happened, and it was flagged as the
     // stranded-payment one — this is the second expiry, not the first.
-    assert!(
-        consent.calls() >= 2,
+    assert_eq!(
+        consent.calls(),
+        2,
         "the first expiry re-quotes and re-consents ({} consent call(s))",
         consent.calls()
     );
@@ -1099,4 +1116,288 @@ fn any_interleaving_of_kills_and_resumes_terminates_without_double_paying() {
             Ok(())
         })
         .expect("no interleaving violates the invariants");
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// S53: an expired-proof re-payment keeps what the replaced payment cost
+// ─────────────────────────────────────────────────────────────────────
+
+/// A backend with two one-shot faults, armed between invocations, and a
+/// tally of every atto its `pay` moved.
+///
+/// `expire_next_finalize` makes the next `finalize_batch` report expired
+/// proofs — the boundary where the pipeline observes D37's window, as
+/// [`AlwaysExpired`] models it. `strand_next_pay_after: Some(k)` makes the
+/// next `pay` land only its first `k` blob lines through the inner mock,
+/// capture them through the real [`VaultReceiptSink`] from inside `pay`, and
+/// fail with `StrandedPayment`, exactly as [`CapturingBackend::crashing_after`]
+/// does. Every other `pay` captures its whole receipt before returning, as
+/// [`CapturingBackend::new`] does.
+struct ExpireThenStrand<'a> {
+    inner: &'a MockBackend,
+    sink: Arc<VaultReceiptSink>,
+    expire_next_finalize: Cell<bool>,
+    strand_next_pay_after: Cell<Option<usize>>,
+    spent_atto: Cell<u128>,
+}
+
+impl<'a> ExpireThenStrand<'a> {
+    fn new(inner: &'a MockBackend, sink: &Arc<VaultReceiptSink>) -> Self {
+        Self {
+            inner,
+            sink: Arc::clone(sink),
+            expire_next_finalize: Cell::new(false),
+            strand_next_pay_after: Cell::new(None),
+            spent_atto: Cell::new(0),
+        }
+    }
+
+    /// Money that moved: the mock's receipt cost is the quote total it paid.
+    fn landed(&self, receipt: &PaymentReceipt) {
+        self.spent_atto
+            .set(self.spent_atto.get() + receipt.storage_cost_atto);
+    }
+}
+
+impl StorageBackend for ExpireThenStrand<'_> {
+    async fn quote_batch(&self, blobs: &[Blob]) -> Result<CostQuote, StorageError> {
+        self.inner.quote_batch(blobs).await
+    }
+
+    async fn pay(&self, quote: &CostQuote) -> Result<PaymentReceipt, StorageError> {
+        if let Some(landed) = self.strand_next_pay_after.take() {
+            let lines: Vec<antseal_net::BlobQuote> =
+                quote.blobs.iter().take(landed).cloned().collect();
+            let total: u128 = lines
+                .iter()
+                .map(|line| match &line.cost {
+                    antseal_net::BlobCost::AlreadyStored => 0,
+                    antseal_net::BlobCost::Priced { payments, .. } => {
+                        payments.iter().map(|p| p.amount_atto).sum()
+                    }
+                })
+                .sum();
+            let partial = self
+                .inner
+                .pay(&CostQuote {
+                    blobs: lines,
+                    total_ant_atto: total,
+                    gas_estimate_wei: 0,
+                })
+                .await?;
+            self.landed(&partial);
+            self.sink.capture(&partial);
+            return Err(StorageError::StrandedPayment {
+                landed_tx_count: partial.txs.len(),
+                reason: "test: the re-payment stranded after its first sub-batch".into(),
+            });
+        }
+        let receipt = self.inner.pay(quote).await?;
+        self.landed(&receipt);
+        self.sink.capture(&receipt);
+        Ok(receipt)
+    }
+
+    async fn finalize_batch(
+        &self,
+        receipt: &PaymentReceipt,
+        blobs: &[Blob],
+    ) -> Result<Vec<Address>, StorageError> {
+        if self.expire_next_finalize.replace(false) {
+            return Err(StorageError::ProofsExpired);
+        }
+        self.inner.finalize_batch(receipt, blobs).await
+    }
+
+    async fn get_data(&self, address: Address) -> Result<Vec<u8>, StorageError> {
+        self.inner.get_data(address).await
+    }
+
+    async fn balances(&self) -> Result<antseal_net::BalanceReport, StorageError> {
+        self.inner.balances().await
+    }
+}
+
+/// **S53, the sink half (D209 R1).** An expired-proof re-payment that strands
+/// after its first sub-batch leaves on disk only what the durable sink
+/// captured from inside `pay`. The sink is armed with the expired receipt's
+/// totals and none of its records (`carry_forward` with nothing kept), so that capture still
+/// counts what the expired payment cost, under the partial's records alone.
+/// Armed with nothing, as before S53, its first capture overwrote the
+/// expired receipt and the vault forgot a payment it had made. The next run
+/// pays the rest through the remainder arm, and the work's recorded cost is
+/// every atto the backend moved.
+///
+/// Every state here is written by the pipeline: the first payment is
+/// journaled by `consent_anchor_pay` and the run is killed before finalize,
+/// which is how a work comes to be `Paid` with its receipt durable.
+#[test]
+fn an_expired_re_payment_that_strands_keeps_what_the_expired_payment_cost() {
+    let vault = Arc::new(shared_vault().unlock());
+    let seal_id = fixture_seal_id(72);
+    stage(&vault, seal_id, SealState::Anchored);
+
+    let mock = MockBackend::new();
+    let sink = VaultReceiptSink::new(Arc::clone(&vault));
+    let backend = ExpireThenStrand::new(&mock, &sink);
+    let gate = RecordingGate::new();
+    let consent = Consent::always_yes();
+
+    // 1. The first payment, killed after its receipt is journaled.
+    let kill = KillAt::new(Barrier::PostReceiptJournalPreFinalize);
+    paying_journal_over(&vault, &sink, |journal| {
+        let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &kill);
+        match block_on(pipeline.resume(&seal_id)) {
+            Err(SealError::KilledAtBarrier(Barrier::PostReceiptJournalPreFinalize)) => {}
+            other => panic!("expected the kill after the receipt journal, got {other:?}"),
+        }
+    });
+    let expired = paying_journal_over(&vault, &sink, |journal| {
+        assert_eq!(journal.state(&seal_id).expect("state"), SealState::Paid);
+        journal
+            .receipt(&seal_id)
+            .expect("read")
+            .expect("the first payment is journaled")
+    });
+    let first_cost = backend.spent_atto.get();
+    assert!(
+        first_cost > 0,
+        "anti-vacuity: the first payment moved money"
+    );
+    assert_eq!(expired.storage_cost_atto, first_cost);
+    assert_eq!(
+        expired.blobs.len(),
+        3,
+        "the first payment bought every blob"
+    );
+
+    // 2. Its proofs expire; the re-payment lands one blob, then strands.
+    backend.expire_next_finalize.set(true);
+    backend.strand_next_pay_after.set(Some(1));
+    paying_journal_over(&vault, &sink, |journal| {
+        let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &NoBarriers);
+        match block_on(pipeline.resume(&seal_id)) {
+            Err(SealError::Storage(StorageError::StrandedPayment {
+                landed_tx_count: 1, ..
+            })) => {}
+            other => panic!("expected the re-payment to strand after one sub-batch: {other:?}"),
+        }
+    });
+    assert!(
+        consent.last().expect("the re-payment asked").proofs_expired,
+        "the re-consent was the proofs-expired one"
+    );
+    let partial_cost = backend.spent_atto.get() - first_cost;
+    assert!(partial_cost > 0, "anti-vacuity: the partial moved money");
+    assert_eq!(sink.fault(), None, "every capture was durable");
+
+    let on_disk = paying_journal_over(&vault, &sink, |journal| {
+        journal.receipt(&seal_id).expect("read").expect("present")
+    });
+    assert_eq!(
+        on_disk.storage_cost_atto,
+        first_cost + partial_cost,
+        "the capture forgot what the expired payment cost (S53): {} on disk, {} spent",
+        on_disk.storage_cost_atto,
+        first_cost + partial_cost
+    );
+    assert_eq!(
+        (on_disk.blobs.len(), on_disk.txs.len()),
+        (1, 1),
+        "only the partial's record and transaction"
+    );
+    assert!(
+        expired
+            .tx_map
+            .keys()
+            .all(|q| !on_disk.tx_map.contains_key(q))
+            && expired
+                .txs
+                .iter()
+                .all(|old| on_disk.txs.iter().all(|tx| tx.tx_hash != old.tx_hash)),
+        "an expired mapping or transaction survived (D37: never merge expired records)"
+    );
+    assert!(on_disk.covers_all_paid_quotes(), "quote→tx map complete");
+
+    // 3. The next run pays the rest and finishes: the vault records every
+    //    atto that moved, and the run report only what that run paid.
+    let outcome = paying_journal_over(&vault, &sink, |journal| {
+        let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &NoBarriers);
+        block_on(pipeline.resume(&seal_id)).expect("the remainder finishes the seal")
+    });
+    let spent = backend.spent_atto.get();
+    assert!(outcome.paid_here);
+    assert_eq!(
+        outcome.paid_atto,
+        spent - first_cost - partial_cost,
+        "the run report is this run's spend"
+    );
+    paying_journal_over(&vault, &sink, |journal| {
+        assert_eq!(journal.state(&seal_id).expect("state"), SealState::Complete);
+        assert_eq!(
+            journal
+                .recorded_identity(&seal_id)
+                .expect("identity")
+                .cost_atto,
+            Some(spent),
+            "the work's recorded cost is not what it spent (S53)"
+        );
+    });
+    assert_eq!(mock.payment_tx_count(), 3, "first, partial, remainder");
+    assert_eq!(mock.stored_count(), 3);
+}
+
+/// **S55's guard (D209 R7).** A payment made in THIS run is minutes old, so
+/// D179's age clause can never call it expired: the proofs-expired arm keeps
+/// its records and re-buys only the other staged blobs. When the refused
+/// proof is this run's own — every blob paid for here, as `AlwaysExpired`
+/// models it right after the payment — nothing is left to re-buy, and the
+/// arm returns the original verdict: one consent (the payment's own), no
+/// second payment, the class a refused proof carries (29). Without the
+/// guard the arm would ask consent over an empty quote.
+#[test]
+fn a_this_run_payment_refused_as_expired_keeps_the_verdict_and_asks_nothing_more() {
+    let vault = Arc::new(shared_vault().unlock());
+    let seal_id = fixture_seal_id(73);
+    stage(&vault, seal_id, SealState::Anchored);
+
+    let mock = MockBackend::new();
+    let sink = VaultReceiptSink::new(Arc::clone(&vault));
+    let gate = RecordingGate::new();
+    let consent = Consent::always_yes();
+
+    let err = paying_journal_over(&vault, &sink, |journal| {
+        let backend = AlwaysExpired { inner: &mock };
+        let pipeline = Pipeline::new(&backend, &gate, journal, &consent, &NoBarriers);
+        match block_on(pipeline.resume(&seal_id)) {
+            Err(err) => err,
+            Ok(_) => panic!("expired proofs must not complete the seal"),
+        }
+    });
+    assert!(
+        matches!(err, SealError::Storage(StorageError::ProofsExpired)),
+        "{err:?}"
+    );
+    assert_eq!(
+        consent.calls(),
+        1,
+        "a this-run payment refused as expired asked consent again ({} call(s)): the guard \
+         returns the verdict and never asks over nothing (S55)",
+        consent.calls()
+    );
+    assert!(
+        !consent
+            .last()
+            .expect("the payment's consent")
+            .proofs_expired,
+        "the only consent is the payment's own"
+    );
+    assert_eq!(mock.payment_tx_count(), 1, "no second payment");
+    paying_journal_over(&vault, &sink, |journal| {
+        let receipt = journal.receipt(&seal_id).expect("read").expect("present");
+        assert_eq!(receipt.blobs.len(), 3, "this run's records are kept");
+        assert!(journal.state(&seal_id).expect("state").is_incomplete());
+    });
+    let cli: CliError = err.into();
+    assert_eq!(cli.exit_code(), 29);
 }

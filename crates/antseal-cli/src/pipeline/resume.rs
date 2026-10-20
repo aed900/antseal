@@ -138,11 +138,11 @@ where
     /// [`SealError::StagedBytes`] (the work is marked abandoned first);
     /// [`SealError::ConsentDeclined`] (no state change);
     /// [`SealError::ConsentDeclined`] when the re-consented re-payment D36
-    /// requires is refused (`:475`); [`SealError::Storage`]
+    /// requires is refused (`:554`); [`SealError::Storage`]
     /// (`StorageError::ProofsExpired`) only if the *replacement* proofs
-    /// expire in turn — the first expiry is handled here (`:288`) and never
-    /// reaches the caller; plus the
-    /// storage, journal and anchor classes.
+    /// expire in turn, or if every staged blob was paid for in this run (`:347`,
+    /// a state D179's age clause makes unreachable) — otherwise the first
+    /// expiry is handled here (`:328`); plus the storage, journal and anchor classes.
     pub async fn resume(&self, seal_id: &SealId) -> Result<SealOutcome, SealError> {
         let state = self.journal.state(seal_id)?;
         if state.is_terminal() {
@@ -183,10 +183,33 @@ where
         // takes the pre-pay path, and the payment made there replaces that
         // capture (`prior: None`), as a vault written after S50 never held it.
         let journaled_receipt = self.journal.receipt(seal_id)?;
+        // **S54 (D208 R9): the chain, not the error, says whether a payment
+        // nobody saw land moved money — asked before anything is bought.** A
+        // mapped `Submitted` transaction may have paid for its blobs, or
+        // never reached the chain; buying around it pays twice in the first
+        // case, and finalizing over it retries forever in the second. Each
+        // is resolved here, and one never mined, or reverted, is pruned.
+        let (journaled_receipt, pruned) = match journaled_receipt {
+            Some(receipt) => {
+                let (receipt, pruned) = self.resolve_unobserved(seal_id, receipt).await?;
+                (Some(receipt), pruned)
+            }
+            None => (None, false),
+        };
         let mut paid_here = false;
         let mut paid_atto = 0_u128;
         let mut anchors = None;
-        if !super::journal::payment_recorded(journaled_receipt.as_ref()) && !state.is_post_pay() {
+        // The blobs whose payment records THIS invocation bought: minutes
+        // old, so D179's age clause can never call them expired, and the
+        // proofs-expired arm below never buys them again (S55).
+        let mut this_run: std::collections::BTreeSet<Address> = std::collections::BTreeSet::new();
+        // A pruned receipt takes the remainder arm even when it maps nothing:
+        // the pre-pay arm arms the sink bare and would erase the record that
+        // a transaction was sent (D208 R9).
+        if !pruned
+            && !super::journal::payment_recorded(journaled_receipt.as_ref())
+            && !state.is_post_pay()
+        {
             let anchor = if state == SealState::Staged {
                 let manifest = plan
                     .manifest_bytes
@@ -202,6 +225,7 @@ where
                 .consent_anchor_pay(seal_id, &quote, anchor, identity.unanchored, false, None)
                 .await?;
             anchors = staged_anchors;
+            this_run.extend(receipt.blobs.iter().map(|record| record.address));
             paid_atto = receipt.storage_cost_atto;
             paid_here = true;
         } else {
@@ -239,6 +263,8 @@ where
                         .any(|line| matches!(line.cost, BlobCost::Priced { .. }));
                     if anything_to_buy {
                         let already_bought = partial.blobs.len();
+                        let earlier: std::collections::BTreeSet<Address> =
+                            partial.blobs.iter().map(|record| record.address).collect();
                         // Consent is over the remainder quote and nothing
                         // else, so what the user authorizes is exactly what
                         // is about to be spent (D36's unconditional
@@ -255,6 +281,13 @@ where
                             .await?;
                         paid_atto = quote.total_ant_atto;
                         paid_here = true;
+                        this_run.extend(
+                            merged
+                                .blobs
+                                .iter()
+                                .map(|record| record.address)
+                                .filter(|address| !earlier.contains(address)),
+                        );
                         debug_assert!(
                             merged.blobs.len() > already_bought,
                             "the merge lost records the network was already paid for"
@@ -293,14 +326,37 @@ where
             // Only this arm pays again: a retryable finalize error (exit 23)
             // returns below and is finalized again next run, paying nothing.
             Err(SealError::Storage(StorageError::ProofsExpired)) => {
-                let quote = self.backend.quote_batch(&blobs).await?;
+                // This run's records are kept (they cannot be a day old), and
+                // only the other staged blobs are re-bought (S55).
+                let keep: std::collections::BTreeSet<Address> = receipt
+                    .blobs
+                    .iter()
+                    .map(|record| record.address)
+                    .filter(|address| this_run.contains(address))
+                    .collect();
+                let mut candidates = Vec::with_capacity(blobs.len());
+                for blob in &blobs {
+                    if !keep.contains(&blob_address(blob)?) {
+                        candidates.push(blob.clone());
+                    }
+                }
+                if candidates.is_empty() {
+                    // Unreachable by D179's age clause: every blob's payment
+                    // is this run's. The verdict stands; consent over nothing
+                    // is never asked.
+                    return Err(SealError::Storage(StorageError::ProofsExpired));
+                }
+                let quote = self.backend.quote_batch(&candidates).await?;
                 self.barriers.at(Barrier::PostQuote)?;
-                // `prior: None` — see `consent_anchor_pay`: the expired
-                // records are what is being replaced, not extended.
+                // The replaced records go, never extended (D37); the money
+                // they record stays spent, so the totals ride into the
+                // replacement with this run's records (`carry_forward`, S53).
+                let prior = Some(super::receipt_sink::carry_forward(&receipt, &keep));
                 let (fresh, _) = self
-                    .consent_anchor_pay(seal_id, &quote, None, identity.unanchored, true, None)
+                    .consent_anchor_pay(seal_id, &quote, None, identity.unanchored, true, prior)
                     .await?;
-                paid_atto = paid_atto.saturating_add(fresh.storage_cost_atto);
+                // The run report is this run's spend, not the merged total.
+                paid_atto = paid_atto.saturating_add(quote.total_ant_atto);
                 paid_here = true;
                 self.finalize(seal_id, &fresh, &blobs).await?
             }
@@ -447,12 +503,16 @@ where
     /// (a fresh seal, or a resume killed before it) and `None` when the
     /// work is already anchored — anchors are never re-submitted.
     ///
-    /// `prior` carries payment records that are **already durable and
-    /// still usable** — the partial receipt a crash between sub-batch txs
-    /// left behind (D37 Decision 5, as extended by S31). When it is
-    /// present, `quote` covers only the *unpaid remainder* and what gets
-    /// journaled is the merge; journaling the fresh receipt alone would
-    /// erase records the network was already paid for.
+    /// `prior` is what the work has already paid, folded into every receipt
+    /// this payment journals (each sink capture, then the final write). On
+    /// the unpaid-remainder path it is the partial receipt a crash between
+    /// sub-batch txs left behind, whose records are **already durable and
+    /// still usable** (D37 Decision 5, as extended by S31): `quote` covers
+    /// only the rest, and journaling the fresh receipt alone would erase
+    /// records the network was already paid for. On the proofs-expired
+    /// re-payment it is what the replaced receipt carries forward
+    /// (`carry_forward`, S53, S55): every total, the records this run paid
+    /// for, and every mapping no record uses — never a replaced record.
     pub(super) async fn consent_anchor_pay(
         &self,
         seal_id: &SealId,
@@ -462,10 +522,18 @@ where
         proofs_expired: bool,
         prior: Option<PaymentReceipt>,
     ) -> Result<(PaymentReceipt, Option<AnchorSummary>), SealError> {
+        // The whole seal's blob count, for the consent copy (U120): `quote`
+        // covers only what is still to buy on a remainder or a re-payment.
+        // Every paying path journals the plan before it pays.
+        let work_blob_count = match self.journal.plan(seal_id)? {
+            Some(plan) => plan.expected_slots()?.len(),
+            None => quote.blobs.len(),
+        };
         let request = ConsentRequest {
             seal_id: *seal_id,
             quote,
             blob_count: quote.blobs.len(),
+            work_blob_count,
             prior: self.journal.consent(seal_id)?,
             resume: proofs_expired || anchor.is_none(),
             proofs_expired,
@@ -536,10 +604,10 @@ where
         // receipt (`put_receipt` is idempotent and last-write-wins), and
         // merges in whatever a previous invocation already paid for.
         let receipt = match prior {
-            // Merging is only ever right when the prior records are still
-            // *usable*. On the proofs-expired path they are exactly what is
-            // being replaced, so that caller passes `None` — merging there
-            // would leave `finalize_batch` matching a stale record first.
+            // A prior brings records only while they are still *usable*. On
+            // the proofs-expired path the replaced ones are left out of it
+            // (`carry_forward`): a stale record would leave `finalize_batch`
+            // matching it first (D37).
             Some(prior) => merge_receipts(prior, receipt),
             None => receipt,
         };
@@ -602,8 +670,10 @@ where
     /// the money authority, and a remainder's rounds are merged into it
     /// (`merge_receipts`). Recording a cost only `if paid_here` lost it for
     /// every work paid in one run and finished by a resume (S52). An
-    /// expired-proof re-payment replaces the receipt instead of extending it
-    /// (`prior: None`, D179), so after one the cost is the replacement's.
+    /// expired-proof re-payment replaces the receipt's expired records but
+    /// carries its totals (`carry_forward`: D37 Decision 5, as extended by
+    /// S31, keeps those records out; S53 keeps the money in), so after one the
+    /// cost still counts the payment it replaced, and every other one made.
     /// With no receipt journaled, this run's own payment stands, or nothing
     /// is recorded. `paid_here` keeps its one job: the run report.
     pub(super) fn complete(
@@ -628,6 +698,105 @@ where
         self.journal.record_outcome(seal_id, Some(id), cost)?;
         self.journal.set_state(seal_id, SealState::Complete)?;
         Ok(id)
+    }
+
+    /// **S54 (D208 R9)**: ask the chain about every payment transaction
+    /// whose landing no run observed, before the money branch.
+    ///
+    /// Only a `Submitted` transaction that still pays a quote is asked about
+    /// (`paying_txs`, D208 R12): one this step pruned in an earlier run is
+    /// kept as evidence, maps nothing, and has nothing left to decide. Every
+    /// answer is read before anything is written, and a `Pending` or
+    /// `Unaskable` one refuses the run first, so the vault never holds a
+    /// half-resolved receipt and nothing is bought on a guess. Otherwise:
+    ///
+    /// - landed and confirmed: the record becomes `Confirmed` with its block.
+    ///   Its blob records stand — nodes check the quote on the contract, not
+    ///   the transaction (D208).
+    /// - landed and reverted, or absent: the transaction moved no ANT, so its
+    ///   quote mappings, the blob records they complete and their cost are
+    ///   pruned; its record is kept as evidence (`Reverted` with its block,
+    ///   or still `Submitted`), unmapped, so no reader presents it as a
+    ///   payment (R12) and no total counts it (D209 R5).
+    ///
+    /// Returns the receipt as resolved — journaled when anything changed —
+    /// and whether anything was pruned.
+    ///
+    /// # Errors
+    ///
+    /// [`SealError::Storage`] with [`StorageError::Network`] (exit 23) when a
+    /// transaction is still held unmined or the chain could not be asked:
+    /// nothing was paid, and a re-run asks again. Journal errors from the
+    /// write.
+    async fn resolve_unobserved(
+        &self,
+        seal_id: &SealId,
+        mut receipt: PaymentReceipt,
+    ) -> Result<(PaymentReceipt, bool), SealError> {
+        let unobserved: Vec<antseal_net::TxHash> = super::journal::paying_txs(&receipt)
+            .into_iter()
+            .filter(|tx| tx.status == antseal_net::TxStatus::Submitted)
+            .map(|tx| tx.tx_hash)
+            .collect();
+        if unobserved.is_empty() {
+            return Ok((receipt, false));
+        }
+        let mut answers = Vec::with_capacity(unobserved.len());
+        for tx_hash in unobserved {
+            match self.backend.payment_tx_state(&tx_hash).await {
+                antseal_net::PaymentTxState::Landed {
+                    block_number,
+                    confirmed,
+                } => answers.push((tx_hash, Some((block_number, confirmed)))),
+                antseal_net::PaymentTxState::Absent => answers.push((tx_hash, None)),
+                antseal_net::PaymentTxState::Pending => {
+                    return Err(SealError::Storage(StorageError::Network {
+                        reason: "the earlier payment transaction is not mined yet — the payment \
+                                 RPC still holds it, so it may still pay for its blobs; nothing \
+                                 was paid in this run — re-run once it is mined"
+                            .to_owned(),
+                    }));
+                }
+                antseal_net::PaymentTxState::Unaskable { reason } => {
+                    return Err(SealError::Storage(StorageError::Network {
+                        reason: format!(
+                            "could not check whether the earlier payment transaction was mined \
+                             ({reason}); nothing was paid in this run — re-run when the payment \
+                             RPC is reachable"
+                        ),
+                    }));
+                }
+            }
+        }
+        let mut pruned = false;
+        for (tx_hash, landed) in answers {
+            match landed {
+                Some((block_number, true)) => {
+                    settle(
+                        &mut receipt,
+                        tx_hash,
+                        antseal_net::TxStatus::Confirmed,
+                        block_number,
+                    );
+                }
+                Some((block_number, false)) => {
+                    prune(&mut receipt, tx_hash);
+                    settle(
+                        &mut receipt,
+                        tx_hash,
+                        antseal_net::TxStatus::Reverted,
+                        block_number,
+                    );
+                    pruned = true;
+                }
+                None => {
+                    prune(&mut receipt, tx_hash);
+                    pruned = true;
+                }
+            }
+        }
+        self.journal.put_receipt(seal_id, &receipt)?;
+        Ok((receipt, pruned))
     }
 }
 
@@ -710,6 +879,52 @@ pub fn canonical_order(unit_count: u64, has_manifest: bool) -> Vec<BlobSlot> {
         slots.push(BlobSlot::EncryptedManifest);
     }
     slots
+}
+
+/// Give one transaction record the status, and the block, the chain
+/// reported for it (S54).
+fn settle(
+    receipt: &mut PaymentReceipt,
+    tx_hash: antseal_net::TxHash,
+    status: antseal_net::TxStatus,
+    block_number: Option<u64>,
+) {
+    for tx in receipt.txs.iter_mut().filter(|tx| tx.tx_hash == tx_hash) {
+        tx.status = status;
+        if block_number.is_some() {
+            tx.block_number = block_number;
+        }
+    }
+}
+
+/// Remove what one transaction paid from a receipt (S54, D208 R9): its quote
+/// mappings, the blob records those quotes complete, and their cost. Its own
+/// record stays, as evidence that it was sent.
+///
+/// The cost is subtracted, never recomputed from the records left: the
+/// total also carries what a replaced payment cost (S53), which no record
+/// holds, while a transaction that moved no ANT must leave it (D209 R5).
+fn prune(receipt: &mut PaymentReceipt, tx_hash: antseal_net::TxHash) {
+    let quotes: std::collections::BTreeSet<antseal_net::QuoteHash> = receipt
+        .tx_map
+        .iter()
+        .filter(|(_, paid_by)| **paid_by == tx_hash)
+        .map(|(quote, _)| *quote)
+        .collect();
+    let share = receipt
+        .blobs
+        .iter()
+        .flat_map(|record| record.payments.iter())
+        .filter(|line| quotes.contains(&line.quote_hash))
+        .fold(0_u128, |sum, line| sum.saturating_add(line.amount_atto));
+    receipt.blobs.retain(|record| {
+        !record
+            .payments
+            .iter()
+            .any(|line| line.amount_atto > 0 && quotes.contains(&line.quote_hash))
+    });
+    receipt.tx_map.retain(|_, paid_by| *paid_by != tx_hash);
+    receipt.storage_cost_atto = receipt.storage_cost_atto.saturating_sub(share);
 }
 
 #[cfg(test)]

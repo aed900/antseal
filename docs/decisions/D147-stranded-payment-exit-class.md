@@ -929,3 +929,29 @@ D204 (`S49`, `S50`) changes three things this record ruled or measured.
 
 The text above, including every *"before any transaction landed"*, is history and stays as
 written.
+
+## Addendum — 2026-10-20 (D208 §2 R3–R6, R9): `StrandedPayment`'s zero-count producers are an unobserved first landing and a first broadcast the chain could not be asked about or still holds
+
+§1.2 lists `StrandedPayment`'s production sites (D147:151-159), and since D204 the variant's
+rustdoc says *"only an unobserved first landing reports 0, because there money may have moved"*
+(`crates/antseal-net/src/error.rs:83-85`). D208 (`S51`) adds a second zero-count producer and
+changes no class:
+- **The zero-count producers are two**, both because money may have moved: an acknowledged
+  broadcast whose landing was not observed within the await's deadline (D208 §2 R3), and an
+  unacknowledged first broadcast whose fate the chain could not be asked within the resolution
+  window, or that the chain still holds unmined (§2 R4). Both go through one shared helper
+  (§2 R5), and `StrandedPayment`'s rustdoc names both (§2 R6). A first broadcast that the chain
+  answered for and never showed is `Payment` (23): no ANT moved.
+- **One producer changes class.** Before D208 a first-sub-batch submission error was `Payment`
+  (23, "retry") even when the node already held the transaction (D208 §1.2, executed). Where the
+  chain cannot settle it, it is now 28 (37 when the capture was not durable); where the chain shows
+  that it landed, it is no error at all. R6's classes stand: no code is minted or renumbered, and
+  `cli-errors.display.txt` does not change.
+- **28's promise becomes true per blob.** `StrandedPayment`'s Display says *"resume will not re-pay
+  mapped quotes"*. For an unobserved landing that held per quote hash only: the branch built no
+  blob record, so the resume re-bought the sub-batch under fresh quotes (executed: 10 quotes paid
+  for 5 blobs, D208 §1.4). D208 §2 R5 builds the records at the branch and §2 R9 resolves every
+  `Submitted` transaction before the resume buys anything, so a landed sub-batch is never bought
+  twice; §2 R11 leaves 28's surfaces as written. D186's 28/37 split is unchanged.
+
+The text above is history and stays as written.

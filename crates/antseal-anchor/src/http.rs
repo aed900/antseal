@@ -709,12 +709,6 @@ impl HttpClient {
         }
     }
 
-    /// The policy this client was built with.
-    #[must_use]
-    pub const fn policy(&self) -> &HttpPolicy {
-        &self.policy
-    }
-
     /// Send `request`, retrying according to [`retry::classify`].
     ///
     /// # Errors

@@ -179,14 +179,6 @@ pub enum UpgradePoll {
     Empty,
 }
 
-impl UpgradePoll {
-    /// Whether this outcome leaves the anchor worth polling again.
-    #[must_use]
-    pub const fn is_repollable(&self) -> bool {
-        matches!(self, Self::NotYetConfirmed | Self::Failed(_) | Self::Empty)
-    }
-}
-
 /// Poll one calendar for one commitment.
 ///
 /// `GET <base>/timestamp/<lowercase-hex commitment>` — D54 §6.1's path, and

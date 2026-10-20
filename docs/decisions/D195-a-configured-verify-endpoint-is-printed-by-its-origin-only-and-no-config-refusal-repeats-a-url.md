@@ -607,3 +607,115 @@ subset refusal; XS, no ruling"* fell (b). Its direction survived; *"no ruling"* 
 applying §2 R4 to `rpc_endpoints_value`.
 Lane L-CFG3 lands it in wave 40, with D207. Once it lands, §2 R4's sentence is true for all four
 of its keys. The ruling and §6 above stay as written.
+
+## Addendum — 2026-10-20 (U111, U118): the `rpc_endpoints` sentence carries the subset's reason after the position and says once that the value is withheld, and a nested array is refused as one under every list key
+
+The U108 addendum above ruled the words of the `rpc_endpoints` sentence: *"… and entry 1 is not
+one; the value is not repeated here, because an RPC URL often carries an API key"* (`:587-589`).
+Wave 41 rules `U111` under §2 R4 with no record of its own, and this addendum records the
+sentence's new words. `U118`, minted from wave 41's planning lane P3, which executed it, rides in
+the same implementation lane, L-CFG4. Line numbers below are the wave's working tree; its lane
+files hash to the sha256 values the lane reported.
+
+- **The `rpc_endpoints` sentence, as built** (`rpc_endpoints_value`,
+  `crates/antseal-cli/src/config.rs:929-947`). The numbered arm (`:932-940`) puts the subset's
+  reason after the position. For an escape sequence in entry 1 under `[verify.arbitrum-one]`, as
+  the lane's test asserts it:
+
+  > *"`rpc_endpoints` under [verify.arbitrum-one] takes a one-line array of exactly two quoted
+  > endpoint URLs, and entry 1 is not one: escape sequences are outside the antseal config subset
+  > (use a literal '…' string); the value is not repeated here, because an RPC URL often carries
+  > an API key"*
+
+  The other shapes take the same frame: *"… is not one: stray " inside a "-quoted string; …"*,
+  *"… is not one: array entries must be quoted strings: a boolean inside an array is outside the
+  config subset; …"*, *"… is not one: nested arrays are outside the config subset; …"*, and
+  *"… is not one: the value is not a quoted string, a ["…"] array, or a bare true/false
+  (integers, dates, and inline tables are outside the antseal config subset); the value is not
+  repeated here, because an RPC URL often carries an API key"*, the clause said once. A bare value
+  that is not an array has no entry, and its text is unchanged: *"… quoted endpoint URLs; the
+  value is not repeated here, because …"*. Exit 17 and `malformed-config` do not move, no
+  snapshot carries the text, and `docs/config.md:182-187` (*"… the error names that entry's
+  position the same way"*) stays true without an edit.
+- **One withheld-value clause per refusal: `SUBSET_VALUE_NOT_REPEATED`** (`config.rs:917`,
+  `"; it is not repeated here"`). The one subset message that meets its input, the unquoted
+  reason (`parse_string`, `:655-659`), ends with its own clause, because nothing in the subset
+  knows which key the value belongs to (§2 R4, `U99`). The `rpc_endpoints` sentence already ends
+  with D188 R5's `RPC_VALUE_NOT_REPEATED` (`:902-903`), so appending that reason as it stands says
+  twice that the value is withheld. P3 executed it: *"…subset); it is not repeated here; the value
+  is not repeated here, because …"*. The arm therefore strips the subset's clause as a suffix
+  before the append (`:936-938`) and keeps its own, which is the one that gives this key's ground:
+  an RPC URL often carries an API key. `parse_string` builds its message from the same const, so
+  its text is byte-identical for every other key.
+- **`U118`: a nested array is refused as one, under every list key, through one const.** At
+  `ab7226f` a nested array of two or more elements read *"`<key>` entry 1: array value must open
+  and close on one line in this config"*. That is false, because the array is on one line. The
+  quote-aware splitter cuts a nested array at its own commas, and the first piece fails the
+  whole-array check (`config.rs:551-557`). P3 measured the false text through the `ab7226f`
+  binary under `default_network`, `bootstrap`, `tsa_urls`, `ots_calendars` and
+  `bitcoin_endpoints`. `rpc_endpoints` printed no reason then, and `U111`'s arm alone would have
+  carried the false one into it. As built, `parse_value`'s per-entry `map_err` (`:567-578`)
+  refuses any piece that opens an array with `NESTED_ARRAY_REASON` (`:921`, *"nested arrays are
+  outside the config subset"*), and the one-element nested arm (`:581-583`) uses the same const.
+  The text is *"`<key>` entry 1: nested arrays are outside the config subset"*, and under
+  `rpc_endpoints` it is the sentence above with that reason.
+- **The lane's deviation, measured: a nested array whose own content is invalid now gets the
+  nested reason too.** The rule covers every piece that opens an array, not only a nested array
+  of two or more valid strings. Per the lane's report, for `tsa_urls = ["https://a.example/",
+  [https://user:…@host.example/x]]` the `ab7226f` binary exits 17 with *"`tsa_urls` entry 1: the
+  value is not a quoted string, …; it is not repeated here"*, and the lane's binary exits 17 with
+  *"`tsa_urls` entry 1: nested arrays are outside the config subset"*. The canary is absent from
+  both streams of both binaries (control: one hit in the file). Both sentences are true. Nesting
+  is the outer fault, and a one-element nested array of a valid string already read *"nested
+  arrays …"* at `ab7226f`.
+- **Tests** (`crates/antseal-cli/tests/config_file.rs`). Per the lane's report, the spawned
+  tests and every plant ran in a shadow copy with a private target.
+  - G108-1, `an_array_entry_outside_the_subset_is_named_by_its_position` (`:2083`). The
+    `rpc_endpoints` block grows from four shapes per network to six: an escape sequence and a
+    stray quote in the second entry are new. Every `rpc_endpoints` needle is the whole refusal,
+    through the end of the RPC clause, and every case asserts the canary and `example` absent. A
+    new arm, *"the refusal says twice that the value is withheld"*
+    (`detail.matches("not repeated").count() > 1`, `:2246`), runs before the wording arm, so a
+    doubled clause fails under its own name. The count pin moves from `4 * 3 + 6 + 2 * 4` (26)
+    to `4 * 3 + 6 + 2 * 6` = **30** (`:2230`). The ruling's 33 counted three nested-of-two cases,
+    one under `tsa_urls` and two under `rpc_endpoints`. P3's follow-up moved them into `U118`'s
+    own test, so 33 − 3 = 30. G108-1 keeps its one-element nested case under `tsa_urls`, whose
+    text was already true at `ab7226f`.
+  - `U118`'s test, `a_nested_array_entry_is_named_as_one_under_every_key` (`:2479`), is appended
+    at the end. Its seven cases are pinned by the array's type (`[(&str, String, String); 7]`,
+    `:2490`): `default_network`, `bootstrap`, `tsa_urls`, `ots_calendars`, `bitcoin_endpoints`,
+    and `rpc_endpoints` under `[verify.arbitrum-one]` and `[verify.arbitrum-sepolia]`, whose
+    needle is the whole sentence. Each case is on line 2, with the canary and `example` absent.
+  - Green: `cargo test -p antseal-cli --test config_file` → exit 0, *"test result: ok. 37
+    passed; 0 failed; …"*, run after the last plant was restored.
+  - Plants, each exit 101 and red by message:
+    - **P111a** (`ab7226f`'s arm, the reason dropped) → *"10 of 30 cases failed"*. These are
+      exactly the ten numbered `rpc_endpoints` cases (five shapes × two networks); the two
+      bare-value cases and every case of another key stay green.
+    - **P111b** (the reason appended without the strip) → *"4 of 30 cases failed"*: the four
+      unquoted `rpc_endpoints` cases (entry 0 and entry 1, two networks), each on *"the refusal
+      says twice that the value is withheld"*.
+    - **PU118** (`ab7226f`'s per-entry `map_err`) → *"7 of 7 cases failed"*, for example
+      *"default_network: expected "`default_network` entry 1: nested arrays are outside the
+      config subset" in "`default_network` entry 1: array value must open and close on one line
+      in this config""*. The ruling's P111c (the false nested text restored) is PU118, because
+      G108-1 no longer holds a nested-of-two case for it to redden.
+- **What this supersedes above, by line** (the lines are not edited):
+  - `:587-589`, U108's ruled sentence *"…, and entry 1 is not one; the value is not repeated
+    here, …"*. The position is now followed by *": {reason}"*, before the same semicolon and the
+    same clause. `:576-578` quote that sentence as measured before U108, with no position, and
+    were history already.
+  - `:574` and `:583-585` quote the unquoted reason ending *"; it is not repeated here"*. Under
+    `tsa_urls`, `ots_calendars`, `bitcoin_endpoints` and `bootstrap` it still reads exactly so.
+    Under `rpc_endpoints` that tail is stripped, as above.
+  - `:575` and `:586` count the nested-array reason among those U108 numbered. For a nested
+    array of two or more elements that reason was the false *"array value must open and close on
+    one line in this config"*. Since `U118` it is `NESTED_ARRAY_REASON` for a nested array of any
+    length.
+  - A search of `docs/` and `README.md` for the changed texts (*"is not one;"*, *"it is not
+    repeated here"*, *"must open and close on one line"*), re-run for this addendum, finds only
+    `:574`, `:585` and `:589` of this record. The lane's own search, which covered `crates/` too,
+    found no test or snapshot outside its files that pins any of them.
+
+With `U111`, §2 R4's sentence holds for all four of its keys, with the reason as well as the
+position. The text above this addendum is not edited.

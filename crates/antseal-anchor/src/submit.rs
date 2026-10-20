@@ -76,12 +76,6 @@ pub struct AnchorEndpoints {
 }
 
 impl AnchorEndpoints {
-    /// The built-in defaults for both families.
-    #[must_use]
-    pub fn defaults() -> Self {
-        Self::from_config(None, None)
-    }
-
     /// Apply U4/U26's config overrides. An absent or empty override falls
     /// back to that family's defaults; a present one replaces them wholesale.
     #[must_use]

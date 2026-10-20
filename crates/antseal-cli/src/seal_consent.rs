@@ -78,6 +78,10 @@ pub struct ConsentReport {
     pub quote: CostQuote,
     /// Blobs the quote covers (units + raw mirrors + encrypted manifest).
     pub blob_count: usize,
+    /// Blobs the whole seal holds — fewer are quoted on a remainder or a
+    /// proofs-expired re-payment (U120). Screen copy only: not a `--json`
+    /// member.
+    pub work_blob_count: usize,
     /// Both balances, read once this invocation.
     pub balances: BalanceReport,
     /// The prior journaled consent (D36 rule 4) — display only.
@@ -137,10 +141,20 @@ impl ConsentReport {
         out.extend(self.warnings.iter().cloned());
 
         let indicative = if self.dry_run { " (indicative)" } else { "" };
-        out.push(format!(
-            "  Upload:      {} blob(s) — every encrypted unit plus the encrypted manifest",
-            self.blob_count
-        ));
+        // U120: a remainder or a proofs-expired re-payment quotes only the
+        // blobs still to buy, so the line says which share of the seal that
+        // is instead of calling it every unit.
+        if self.blob_count == self.work_blob_count {
+            out.push(format!(
+                "  Upload:      {} blob(s) — every encrypted unit plus the encrypted manifest",
+                self.blob_count
+            ));
+        } else {
+            out.push(format!(
+                "  Upload:      {} of the seal's {} blob(s) — the others are already paid for",
+                self.blob_count, self.work_blob_count
+            ));
+        }
         out.push(format!(
             "  Cost{indicative}: {} atto-ANT storage, plus about {} wei of gas",
             self.quote.total_ant_atto, self.quote.gas_estimate_wei
@@ -173,14 +187,29 @@ impl ConsentReport {
         // S43/D179 R5: this used to say the network "will no longer accept"
         // the proofs, a node-side rule no pinned node has. The condition is
         // the one `antseal_net::put_policy` rules on.
+        // D209 R8 (S55): the re-payment replaces the stranded payment only
+        // for the blobs priced here; blobs this run has just paid for keep
+        // their payment and are not bought again.
         if self.proofs_expired {
-            out.push(
-                "  WARNING: this seal was already paid for, but a majority of the storing \
-                 peers refused this seal's payment proof, and the payment is more than 24 \
-                 hours old by its block time. That payment is stranded and cannot be \
-                 recovered. Consenting here authorizes a SECOND, ADDITIONAL payment."
-                    .to_owned(),
-            );
+            let priced = self
+                .quote
+                .blobs
+                .iter()
+                .filter(|line| matches!(line.cost, antseal_net::BlobCost::Priced { .. }))
+                .count();
+            let kept = self.work_blob_count.saturating_sub(self.blob_count);
+            let keep_clause = if kept == 0 {
+                String::new()
+            } else {
+                format!(", while the {kept} blob(s) paid for in this run keep their payment")
+            };
+            out.push(format!(
+                "  WARNING: a majority of the storing peers refused this seal's payment proof, \
+                 and the payment is more than 24 hours old by its block time. The earlier \
+                 payment for the {priced} blob(s) priced here is stranded and cannot be \
+                 recovered{keep_clause}. Consenting here authorizes a SECOND, ADDITIONAL \
+                 payment for them."
+            ));
         }
 
         out.push(format!("  WARNING: {PERMANENCE_WARNING}."));
@@ -400,6 +429,7 @@ impl<'a, P: ConsentPrompt> SealConsent<'a, P> {
             total_input_bytes: self.total_input_bytes,
             quote: request.quote.clone(),
             blob_count: request.blob_count,
+            work_blob_count: request.work_blob_count,
             balances: self.balances,
             prior: request.prior,
             // The plan renders whenever this **invocation** is a resume —
@@ -556,6 +586,7 @@ mod tests {
             seal_id: SealId::from_bytes([0xC1; 16]),
             quote,
             blob_count: 3,
+            work_blob_count: 3,
             prior,
             resume: prior.is_some(),
             proofs_expired: false,
@@ -958,5 +989,118 @@ mod tests {
         );
         assert_eq!(json["permanence_warning"], PERMANENCE_WARNING);
         assert_eq!(json["total_input_bytes"], 51);
+    }
+
+    /// A quote line: priced, or already stored (a zero-cost line).
+    fn line(tag: u8, priced: bool) -> antseal_net::BlobQuote {
+        antseal_net::BlobQuote {
+            address: antseal_net::Address::from([tag; 32]),
+            cost: if priced {
+                antseal_net::BlobCost::Priced {
+                    payments: Vec::new(),
+                    peer_quotes: Vec::new(),
+                    commitment_sidecars: Vec::new(),
+                }
+            } else {
+                antseal_net::BlobCost::AlreadyStored
+            },
+        }
+    }
+
+    fn render_line(report: &ConsentReport, prefix: &str) -> String {
+        let lines: Vec<String> = report
+            .render()
+            .into_iter()
+            .filter(|line| line.starts_with(prefix))
+            .collect();
+        assert_eq!(lines.len(), 1, "exactly one {prefix:?} line: {lines:#?}");
+        lines.into_iter().next().unwrap_or_default()
+    }
+
+    /// **U120 (D209 R8).** The Upload line said "every encrypted unit plus
+    /// the encrypted manifest" over a remainder quote too, which covers only
+    /// the blobs still to buy. It now says which share of the seal the quote
+    /// is whenever the two differ, and keeps its words when the quote is the
+    /// whole seal. No `--json` member is added (U32): the document keeps
+    /// `blob_count` and nothing else about it.
+    #[test]
+    fn u120_the_upload_line_names_the_share_of_the_seal_a_partial_quote_covers() {
+        let mut q = quote(1_839, 21_000);
+        q.blobs = vec![line(1, true), line(2, false)];
+        let mut p = NeverAsked;
+        let gate = SealConsent::new(
+            &plan(),
+            balances(9_000, 9_000_000),
+            Vec::new(),
+            true,
+            false,
+            false,
+            1,
+            &mut p,
+        );
+        let mut req = request(&q, None);
+        req.blob_count = 2;
+        req.work_blob_count = 5;
+        let report = gate.report_for(&req);
+        assert_eq!(
+            render_line(&report, "  Upload:"),
+            "  Upload:      2 of the seal's 5 blob(s) — the others are already paid for"
+        );
+        assert!(
+            report.json().get("work_blob_count").is_none(),
+            "no --json member before U32"
+        );
+        assert_eq!(report.json()["blob_count"], 2);
+
+        req.blob_count = 5;
+        assert_eq!(
+            render_line(&gate.report_for(&req), "  Upload:"),
+            "  Upload:      5 blob(s) — every encrypted unit plus the encrypted manifest",
+            "a whole-seal quote keeps its words"
+        );
+    }
+
+    /// **D209 R8 (S55).** The proofs-expired WARNING says what the
+    /// re-payment replaces — the stranded payment, for the blobs priced
+    /// here — and, when this run has just paid for some blobs, that those
+    /// keep their payment: they are outside the quote, so the user who just
+    /// consented to them must not read "stranded" as that payment. With no
+    /// blob kept, the clause is absent.
+    #[test]
+    fn d209_the_proofs_expired_warning_counts_what_it_replaces_and_what_this_run_keeps() {
+        let mut q = quote(1_839, 21_000);
+        q.blobs = vec![line(1, true), line(2, false)];
+        let mut p = NeverAsked;
+        let gate = SealConsent::new(
+            &plan(),
+            balances(9_000, 9_000_000),
+            vec!["  Resuming".to_owned()],
+            true,
+            false,
+            false,
+            1,
+            &mut p,
+        );
+        let mut req = request(&q, None);
+        req.resume = true;
+        req.proofs_expired = true;
+        req.blob_count = 2;
+        req.work_blob_count = 5;
+        assert_eq!(
+            render_line(&gate.report_for(&req), "  WARNING: a majority"),
+            "  WARNING: a majority of the storing peers refused this seal's payment proof, and \
+             the payment is more than 24 hours old by its block time. The earlier payment for \
+             the 1 blob(s) priced here is stranded and cannot be recovered, while the 3 blob(s) \
+             paid for in this run keep their payment. Consenting here authorizes a SECOND, \
+             ADDITIONAL payment for them."
+        );
+
+        req.work_blob_count = 2;
+        let warning = render_line(&gate.report_for(&req), "  WARNING: a majority");
+        assert!(
+            warning.contains("for the 1 blob(s) priced here is stranded and cannot be recovered. "),
+            "{warning}"
+        );
+        assert!(!warning.contains("keep their payment"), "{warning}");
     }
 }

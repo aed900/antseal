@@ -122,8 +122,8 @@ antseal-net = { path = ".", features = ["test-util"] }
 antseal-core = { path = "../antseal-core", features = ["test-util"] }
 # S6's recorded tokio decision (the workspace tokio entry defers it here):
 # the adapter LIBRARY takes NO tokio edge — its futures run on the caller's
-# runtime (`antseal-cli` brings tokio at U1) and it schedules no timers or
-# tasks of its own. The dev-only edge below exists solely so the
+# runtime (`antseal-cli` brings tokio at U1); D208's deadlines run on a
+# std helper thread, not a runtime timer. The dev-only edge below exists solely so the
 # feature-gated adapter/devnet tests can stand up a real runtime
 # (`ant_core::Client` and the alloy transport park on reactor-driven I/O
 # that `test_util::block_on`'s noop-waker loop cannot drive). Same tokio

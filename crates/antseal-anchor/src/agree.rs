@@ -223,15 +223,6 @@ impl<T> Agreement<T> {
             _ => None,
         }
     }
-
-    /// How many endpoints failed: 0, 1 or 2.
-    #[must_use]
-    pub fn failed(&self) -> usize {
-        match self {
-            Self::Unavailable { failures } => failures.len(),
-            _ => 0,
-        }
-    }
 }
 
 /// Decide agreement over two already-collected results.
@@ -423,9 +414,8 @@ mod tests {
     fn a_surviving_endpoint_is_never_promoted_to_the_result() {
         let outcome = must_agree([Ok(0xabcd_u32), Err(http_failure("http://down.example"))]);
         assert_eq!(outcome.agreed(), None);
-        assert_eq!(outcome.failed(), 1);
         assert!(
-            matches!(outcome, Agreement::Unavailable { .. }),
+            matches!(&outcome, Agreement::Unavailable { failures } if failures.len() == 1),
             "{outcome:?}"
         );
     }

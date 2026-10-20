@@ -1388,3 +1388,264 @@ fn the_binary_refuses_init_over_a_hand_written_config_toml() {
     assert!(!root.join("vault.header").exists());
     assert!(!root.join("store").exists());
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// U112: odd entries at the paths `init` writes
+// ─────────────────────────────────────────────────────────────────────
+
+/// Every entry under `root`, never following a link, as its path relative to
+/// `root` (`/`-separated) and its kind: `d` a directory, `l` a link, `f`
+/// anything else. Sorted, so two listings compare by value — what a refused
+/// `init` must leave exactly as it found it.
+fn entries_under(root: &Path) -> Vec<(String, char)> {
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read a test directory") {
+            let entry = entry.expect("a directory entry");
+            let kind = entry.file_type().expect("the entry's type");
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(root)
+                .expect("an entry under the root")
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            let mark = if kind.is_dir() {
+                pending.push(path);
+                'd'
+            } else if kind.is_symlink() {
+                'l'
+            } else {
+                'f'
+            };
+            found.push((relative, mark));
+        }
+    }
+    found.sort();
+    found
+}
+
+/// **U112 (a).** A `vault.header` that `Path::exists` cannot follow — a link
+/// to nothing, or a link to itself — is not "no vault.header": a link like
+/// that may stand for a vault on a volume that is not mounted. The refusal
+/// names the link and says it cannot be followed; it claims neither that
+/// there is no header nor that a vault exists. It comes before any
+/// passphrase (machine mode, no channel: a refusal placed after the
+/// passphrase step reads passphrase-unavailable) and before the walk, which
+/// would otherwise name the link, or a `config.toml` beside it, under "there
+/// is no vault.header". The directory is left as it was. No antseal writer
+/// makes such a link; a user's manual move, or an unmounted volume, does.
+#[cfg(unix)]
+#[test]
+fn init_over_a_dangling_vault_header_link_refuses_naming_the_link() {
+    // A shape's label, and the link's target given the vault directory.
+    type LinkShape = (&'static str, fn(&Path) -> PathBuf);
+    let shapes: [LinkShape; 2] = [
+        ("a link to nothing", |root| root.join("nowhere")),
+        ("a link to itself", |_| PathBuf::from("vault.header")),
+    ];
+    let mut ran = 0;
+    for (shape, target) in shapes {
+        for with_config in [false, true] {
+            let label = format!("{shape}, config.toml beside it: {with_config}");
+            let dir = TestDir::new("dangling-header");
+            let layout = VaultLayout::at(dir.vault_root());
+            write_lockfile(&layout);
+            let header = layout.beside_path(BesideFile::Header);
+            std::os::unix::fs::symlink(target(layout.root()), &header).expect("make the link");
+            assert!(
+                !header.exists() && std::fs::symlink_metadata(&header).is_ok(),
+                "{label}: the link is there and cannot be followed"
+            );
+            let config_path = layout.beside_path(BesideFile::Config);
+            if with_config {
+                std::fs::write(&config_path, hand_written_config()).expect("write config.toml");
+            }
+            let before = entries_under(layout.root());
+
+            let err = run_init(
+                &layout,
+                &fully_flagged(),
+                None,
+                true,
+                NetworkId::ArbitrumOne,
+                &mut Scripted::silent(),
+                &mut rng(),
+            )
+            .expect_err("init over a vault.header link it cannot follow must refuse");
+            assert_eq!(err.class(), ErrorClass::Usage, "{label}: {err}");
+            assert_eq!(err.exit_code(), 2, "{label}: {err}");
+            let rendered = err.to_string();
+            assert!(
+                rendered.contains(&header.display().to_string())
+                    && rendered.contains("cannot follow"),
+                "{label}: the refusal names the link and what is wrong with it: {rendered}"
+            );
+            assert!(
+                rendered.contains("aside"),
+                "{label}: the refusal names the remedy: {rendered}"
+            );
+            for claim in ["there is no vault.header", "already exists"] {
+                assert!(
+                    !rendered.contains(claim),
+                    "{label}: the refusal claims what it cannot know ({claim}): {rendered}"
+                );
+            }
+            assert_eq!(
+                entries_under(layout.root()),
+                before,
+                "{label}: a refused init changed the directory"
+            );
+            if with_config {
+                assert_eq!(
+                    std::fs::read_to_string(&config_path).expect("config.toml is still there"),
+                    hand_written_config(),
+                    "{label}: the hand-written config.toml was changed"
+                );
+            }
+            ran += 1;
+        }
+    }
+    assert_eq!(
+        ran, 4,
+        "two link shapes, each with and without a config.toml"
+    );
+}
+
+/// **U112 (b), censused by the writers.** Every file a successful `init`
+/// leaves is read off disk (the in-process `run_init` makes no lockfile; the
+/// handler does). Then, for each, a fresh directory holds the lockfile and an
+/// EMPTY DIRECTORY at that path, and `init` must refuse in the usage class
+/// before any passphrase (machine mode, no channel: a refusal placed after
+/// the passphrase step reads passphrase-unavailable), name the remedy, offer
+/// no `config.toml` to copy back and claim nothing is replaced (a directory
+/// has no settings, and `init` cannot write over one), and leave the
+/// directory as it was. At `ab7226f` the binary went ahead at `store/check`
+/// and `store/wallet` and failed writing them after the passphrase — at
+/// `store/wallet` after the vault was created. A directory at `vault.header`
+/// is the header checks' and keeps D39's refusal (D155 §2 R1).
+///
+/// The set comes from the production writers, so a file a future `init`
+/// starts writing joins the census with no edit here; the names are pinned
+/// so that such a change is seen.
+#[test]
+fn init_refuses_a_directory_at_every_path_it_writes() {
+    let made = TestDir::new("writer-census");
+    let made_layout = VaultLayout::at(made.vault_root());
+    run_init(
+        &made_layout,
+        &fully_flagged(),
+        Some(passphrase_fd_of(&made)),
+        true,
+        NetworkId::Devnet,
+        &mut Scripted::silent(),
+        &mut rng(),
+    )
+    .expect("a fresh init succeeds");
+    let written: Vec<String> = entries_under(made_layout.root())
+        .into_iter()
+        .filter(|(_, kind)| *kind != 'd')
+        .map(|(path, _)| path)
+        .collect();
+    assert_eq!(
+        written,
+        ["config.toml", "store/check", "store/wallet", "vault.header"],
+        "the files a fresh init writes"
+    );
+
+    let mut failures = Vec::new();
+    for relative in &written {
+        let dir = TestDir::new("dir-obstacle");
+        let layout = VaultLayout::at(dir.vault_root());
+        write_lockfile(&layout);
+        std::fs::create_dir_all(layout.root().join(relative)).expect("make the directory obstacle");
+        let before = entries_under(layout.root());
+        let result = run_init(
+            &layout,
+            &fully_flagged(),
+            None,
+            true,
+            NetworkId::Devnet,
+            &mut Scripted::silent(),
+            &mut rng(),
+        );
+        match result {
+            Ok(_) => failures.push(format!("{relative}: init went ahead")),
+            Err(err) if err.class() != ErrorClass::Usage => failures.push(format!(
+                "{relative}: expected a usage refusal, got {:?}: {err}",
+                err.class()
+            )),
+            Err(err) => {
+                let rendered = err.to_string();
+                if !rendered.contains("aside") {
+                    failures.push(format!("{relative}: no remedy: {rendered}"));
+                }
+                if rendered.contains("copy config.toml back") {
+                    failures.push(format!(
+                        "{relative}: a directory has no settings to copy back: {rendered}"
+                    ));
+                }
+                if rendered.contains("replacing") {
+                    failures.push(format!(
+                        "{relative}: init cannot write over a directory, so it replaces \
+                         nothing: {rendered}"
+                    ));
+                }
+            }
+        }
+        if entries_under(layout.root()) != before {
+            failures.push(format!("{relative}: a refused init changed the directory"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {} obstacles:\n{}",
+        failures.len(),
+        written.len(),
+        failures.join("\n")
+    );
+}
+
+/// **U112 (b) through the real binary.** An empty directory at
+/// `store/wallet` passes dispatch (there is no `config.toml` to load) and
+/// reached the handler, which at `ab7226f` created the vault and only then
+/// failed writing the wallet record: exit 4, leaving a vault with no wallet
+/// record and no `config.toml`. It is now refused before the passphrase it
+/// was offered: exit 2, the usage class on the one `--json` document, the
+/// path named, no `config.toml` to copy back, and the directory left holding
+/// only the obstacle and the lockfile the handler makes.
+#[test]
+fn the_binary_refuses_init_over_a_directory_at_store_wallet() {
+    let dir = TestDir::new("spawn-wallet-dir");
+    let root = dir.vault_root();
+    let wallet = VaultLayout::at(root.clone()).wallet_record_path();
+    std::fs::create_dir_all(&wallet).expect("make store/wallet a directory");
+
+    let out = spawn(
+        &root,
+        &["--json", "--passphrase-fd", "0", "init"],
+        b"a long enough fixture passphrase\n",
+    );
+    assert_eq!(out.code, Some(2), "stderr: {}", out.stderr);
+    let doc: serde_json::Value =
+        serde_json::from_str(out.stdout.trim()).expect("stdout is exactly one JSON document");
+    assert_eq!(doc["ok"], false, "{doc}");
+    assert_eq!(doc["command"], "init", "{doc}");
+    assert_eq!(doc["error"]["class"], "usage", "{doc}");
+    assert_eq!(doc["error"]["exit_code"], 2, "{doc}");
+    let message = doc["error"]["message"].as_str().expect("an error message");
+    assert!(message.contains(&wallet.display().to_string()), "{message}");
+    assert!(message.contains("aside"), "{message}");
+    assert!(!message.contains("copy config.toml back"), "{message}");
+    assert_eq!(
+        entries_under(&root),
+        [
+            ("store".to_owned(), 'd'),
+            ("store/wallet".to_owned(), 'd'),
+            ("vault.lock".to_owned(), 'f'),
+        ],
+        "a refused init left more than the obstacle and the handler's lockfile"
+    );
+}

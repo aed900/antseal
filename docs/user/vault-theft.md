@@ -51,7 +51,7 @@ vault, and the blast radius is every work inside it.
 Read the third row twice. **An export is not a lesser artifact than the vault.
 It is a second complete copy of it**, in a single portable file, encrypted under
 nothing but your passphrase. `vault export` says so itself when it finishes
-(`crates/antseal-cli/src/commands.rs:1113-1116`):
+(`crates/antseal-cli/src/commands.rs:1148-1151`):
 
 ```
 Treat this file like the vault itself: whoever holds it and the passphrase holds the keys to every sealed work, forever.

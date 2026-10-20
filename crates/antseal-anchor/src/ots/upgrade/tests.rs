@@ -127,7 +127,6 @@ fn an_unrecognised_404_is_a_failure_and_not_either_discriminator() {
         matches!(poll, UpgradePoll::Failed(_)),
         "an unrecognised 404 must be a failure, got {poll:?}"
     );
-    assert!(poll.is_repollable(), "and it must stay re-pollable");
 }
 
 /// The third behaviour the live capture found: catallaxy answered **nothing**
@@ -143,7 +142,6 @@ fn no_answer_at_all_is_a_failure_and_never_the_hard_error() {
 
     assert_ne!(poll, UpgradePoll::NotFound);
     assert!(matches!(poll, UpgradePoll::Failed(_)), "got {poll:?}");
-    assert!(poll.is_repollable());
 }
 
 /// A `200` with an empty body is not an upgrade. Merging it would splice zero

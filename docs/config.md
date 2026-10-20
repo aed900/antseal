@@ -14,9 +14,9 @@ but no `vault.header` — a `config.toml` written before `init`, say — since
 it writes its own `config.toml` and store records there, replacing any it
 finds: move the directory aside (a moved directory keeps everything), run
 `antseal init`, then copy your `config.toml` back. Empty folders, and the
-`vault.lock` antseal itself creates there, do not count as files.
-`vault export` embeds it in the backup and `vault import` restores it
-(D47).
+`vault.lock` antseal itself creates there, do not count as files, except a
+folder in the place of a file `init` writes, which it cannot write over.
+`vault export` embeds it in the backup and `vault import` restores it (D47).
 
 - A **missing** file means built-in defaults.
 - A **malformed** file is a hard error on every command (exit code 17,

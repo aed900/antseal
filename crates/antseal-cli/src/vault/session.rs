@@ -371,7 +371,7 @@ pub(crate) fn unlock_vault_impl(
     fail: KdfFailPoint,
 ) -> Result<UnlockedVault, CliError> {
     let header_path = layout.beside_path(super::layout::BesideFile::Header);
-    let header_bytes = match read_bounded(&header_path, MAX_HEADER_BYTES + 1) {
+    let header_bytes = match read_vault_file(&header_path, MAX_HEADER_BYTES + 1) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(CliError::Usage {
@@ -439,7 +439,7 @@ pub(crate) fn unlock_vault_impl(
     // The key check: wrong passphrase, edited header, and corrupt store
     // all collapse here into the one vault-auth failure.
     let check_path = layout.check_record_path();
-    let check_blob = match read_bounded(&check_path, MAX_CHECK_RECORD_BYTES) {
+    let check_blob = match read_vault_file(&check_path, MAX_CHECK_RECORD_BYTES) {
         Ok(bytes) => bytes,
         // A vault with a header but no (or an unreadable) check record is
         // corrupt: same collapse.
@@ -470,6 +470,30 @@ pub(crate) fn read_bounded(path: &Path, cap: usize) -> std::io::Result<Vec<u8>> 
     // `cap` is a small constant; the +0/+1 slack is the caller's choice.
     file.take(cap as u64).read_to_end(&mut bytes)?;
     Ok(bytes)
+}
+
+/// What [`read_vault_file`] says about a path that holds something other than
+/// a regular file (U117); the caller's context names the path.
+pub(crate) const NOT_A_REGULAR_FILE: &str = "not a regular file: antseal reads only a regular \
+     file here, and refuses a directory, FIFO, socket or device rather than opening it";
+
+/// [`read_bounded`] for a file antseal itself names beside or inside the vault
+/// (`config.toml`, `vault.header`, `store/check`), where only a regular file is
+/// ever legitimate (U117). Anything else is refused **before** it is opened,
+/// because opening a FIFO blocks until a writer appears: a FIFO at
+/// `config.toml` hung every command, and one at `vault.header` every unlock.
+/// A path the user chooses (the keyfile, an import file) keeps [`read_bounded`],
+/// because a pipe (`/dev/fd/N`, `<(…)`) is legitimate there. The type is read
+/// through links (`metadata`), so a link to a regular file reads as before, and
+/// a missing file still surfaces as `NotFound` from the open.
+pub(crate) fn read_vault_file(path: &Path, cap: usize) -> std::io::Result<Vec<u8>> {
+    match std::fs::metadata(path) {
+        Ok(meta) if !meta.is_file() => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            NOT_A_REGULAR_FILE,
+        )),
+        _ => read_bounded(path, cap),
+    }
 }
 
 /// The D40 §2 low-RAM matrix. Lives with the primitive (the failpoint

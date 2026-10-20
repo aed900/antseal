@@ -1026,6 +1026,7 @@ fn fixture_dry_run() -> antseal_cli::seal_run::SealCommandResult {
         seal_id: SealId::from_bytes([0xE1; 16]),
         quote: &quote,
         blob_count: 5,
+        work_blob_count: 5,
         prior: None,
         resume: false,
         proofs_expired: false,
@@ -1044,6 +1045,23 @@ fn fixture_dry_run_resume() -> antseal_cli::seal_run::SealCommandResult {
     use antseal_cli::seal_run::SealCommandResult;
     use antseal_cli::vault::store::{SealShapingFlags, WorkState};
     use antseal_core::crypto::secrets::SealId;
+    use antseal_net::test_util::{MockBackend, block_on};
+    use antseal_net::{Blob, StorageBackend as _};
+
+    // A `Paid` work's receipt as its one writer leaves it: `consent_anchor_pay`
+    // journals what `pay` returned, and only then moves the tag. So the
+    // fixture's receipt is a real `pay` over a quote for a blob — never
+    // `None`, which no writer pairs with `Paid` (D210 R5).
+    let receipt = block_on(async {
+        let mock = MockBackend::new();
+        let blobs = [Blob::new(vec![0xE4; 512]).expect("under the cap")];
+        let quote = mock.quote_batch(&blobs).await.expect("quote");
+        mock.pay(&quote).await.expect("pay")
+    });
+    assert!(
+        !receipt.blobs.is_empty() && receipt.covers_all_paid_quotes(),
+        "control: the fixture's receipt covers what it bought"
+    );
 
     // Built through the real `resume_plan_lines` renderer rather than a
     // hand-written array: three prior lanes found hand-copied strings had
@@ -1061,7 +1079,7 @@ fn fixture_dry_run_resume() -> antseal_cli::seal_run::SealCommandResult {
             state: WorkState::IncompletePostPay,
             journal_state: Some(SealState::Paid),
         },
-        None,
+        Some(&receipt),
     ))
 }
 

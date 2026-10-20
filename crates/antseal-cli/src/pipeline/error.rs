@@ -200,7 +200,7 @@ pub enum SealError {
     // `ProofsExpired` lived here from S11 until **D147/U81**. Nothing ever
     // constructed it — the reachable expiry is
     // `StorageError::ProofsExpired`, which `resume` intercepts once
-    // (`resume.rs:288`) and otherwise hands to `storage_to_cli` — and its
+    // (`resume.rs:321`) and otherwise hands to `storage_to_cli` — and its
     // sentence was borrowed by that mapping purely for its text, which is
     // how the one message in the product containing *"the already-spent ANT
     // is not recoverable"* came to exit 2. D147 R3 moved the sentence to

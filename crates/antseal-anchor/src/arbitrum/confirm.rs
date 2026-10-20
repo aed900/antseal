@@ -106,7 +106,7 @@ pub enum ArbitrumConfirmation {
     /// Carries the failures rather than D55 §4's bare `failed: usize`: §3 of
     /// the same decision requires the chain-id mismatch to be reported "with
     /// a message that names the expected and reported ids", which a count
-    /// cannot do. [`Self::failed`] recovers the count.
+    /// cannot do. The count is `failures.len()`.
     Unavailable {
         /// Per-endpoint failures, in endpoint order. Never empty.
         failures: Vec<EndpointFailure>,
@@ -114,15 +114,6 @@ pub enum ArbitrumConfirmation {
 }
 
 impl ArbitrumConfirmation {
-    /// How many endpoints failed: 0, 1 or 2.
-    #[must_use]
-    pub fn failed(&self) -> usize {
-        match self {
-            Self::Unavailable { failures } => failures.len(),
-            _ => 0,
-        }
-    }
-
     /// Project into the only receipt type `antseal-core` accepts.
     ///
     /// Agreement — including agreed absence — crosses; nothing else does.

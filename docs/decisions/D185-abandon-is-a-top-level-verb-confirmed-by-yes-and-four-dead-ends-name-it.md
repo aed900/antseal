@@ -551,3 +551,34 @@ The text above this addendum is not edited.
   *(Corrected in place before first commit; see D203 §6.)*
 
 The text above this addendum is not edited.
+
+## Addendum — 2026-10-20 (D210 §2 R3): the paid-work refusal speaks per clause, and §2 R4's confirmation path is untouched
+
+- **§2 R3's paid-work refusal now has two messages, one per clause.** Rule 2's predicate is
+  unchanged: `payment_recorded(…) || state == WorkState::IncompletePostPay`
+  (`crates/antseal-cli/src/seal_resume.rs:532-533` at `ab7226f`). At `ab7226f` one message served
+  both clauses: *"work {} has already been paid for — a payment receipt is journaled for it.
+  Abandoning it would forfeit that payment permanently, …"*. D210's planning lane executed it on
+  works whose receipt maps no quote — a pre-`S50` `Paid` over a revert-only receipt, and a
+  zero-payment `Finalizing` — where it is false (D210 §1.5). D210 §2 R3 splits it:
+  - **the receipt clause** (a payment is recorded) opens *"a payment is recorded for work {id} —
+    its payment receipt maps quotes to transactions"*, and its way forward says the re-run
+    *"asks before any payment and pays only for what the receipt does not cover"*, then states
+    the proof clock;
+  - **the state clause** (a post-pay tag, no payment recorded) says *"work {id} is past its
+    payment step (the journal records `{tag}`), but no payment is recorded for it"*, and its way
+    forward says the re-run *"quotes whatever is not yet stored and asks before any payment"*.
+- **So §2 R3's *"paid: money has moved"* now reads per clause.** The receipt clause says that a
+  payment is recorded — money may have moved, a `Submitted` mapping included (D203 M1) — and the
+  state clause says that none is. §2 R3's *"decided by the journaled receipt, not the tag"*
+  describes the receipt clause; the state clause refuses on the post-pay tag, and D210 keeps it.
+- **§2 R4's confirmation path is untouched.** D210 refused dropping the state clause (D210 §2
+  R3): `AbandonPreview::read` gives a preview only to a work whose effective state is pre-pay and
+  whose receipt records no payment (`seal_resume.rs:701-703`), and `run_abandon` asks R4's
+  question only when a preview exists (`:841-859`). A work freed from rule 2 by that change would
+  be abandoned with no question. The preview, the question, its default of no and the `--yes`
+  channel stay as the addendum above left them.
+- **Unchanged:** the refusal's class (`usage`, 2), the complete-work refusal, and every `abandon`
+  snapshot and help line — rule 2's text is in none of them.
+
+The text above this addendum is not edited.

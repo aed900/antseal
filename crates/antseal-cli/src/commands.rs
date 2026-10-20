@@ -985,10 +985,38 @@ pub(crate) fn verify(
 
     // D69 §3 R2's non-verdict row: a bundle file that is missing or
     // unreadable is `io-error` (4), not a verdict — nothing was verified.
-    let bytes = std::fs::read(bundle_path).map_err(|source| CliError::Io {
+    //
+    // U119: the codec refuses an input over its cap as its first statement,
+    // so no more than one byte past the cap is read, and an endless input
+    // (`/dev/zero`, a pipe) reaches that refusal without being read whole. A
+    // regular file over the cap is not read at all: its length is known, so
+    // the decode failure it would produce is built from core's own types with
+    // that true length, and returned below, where the decode would have run.
+    let cap = antseal_core::codec::caps::MAX_BUNDLE_BYTES;
+    let read_failed = |source| CliError::Io {
         context: format!("reading {}", bundle_path.display()),
         source,
-    })?;
+    };
+    let file = std::fs::File::open(bundle_path).map_err(read_failed)?;
+    let mut bytes = Vec::new();
+    let oversize = match file.metadata() {
+        Ok(meta) if meta.is_file() && meta.len() > cap => {
+            let source = antseal_core::bundle::BundleError::InputTooLarge {
+                len: meta.len(),
+                cap,
+            };
+            Some(CliError::from(antseal_core::verify::VerifyRunError::from(
+                antseal_core::verify::VerifyError::Decode(
+                    antseal_core::bundle::SealProofError::Bundle { source },
+                ),
+            )))
+        }
+        _ => {
+            std::io::Read::read_to_end(&mut std::io::Read::take(file, cap + 1), &mut bytes)
+                .map_err(read_failed)?;
+            None
+        }
+    };
 
     // A build with NO storage backend: the seam, before any verification
     // (D69 §3 R6). It compiles no backend at all, and the message names that
@@ -1027,6 +1055,13 @@ pub(crate) fn verify(
                 }
             }
         }
+    }
+
+    // U119: an oversize regular file is refused here, where its decode would
+    // have failed, so the seam and the network resolution above stay ahead
+    // of it (D69 §3 R6, D170 §2 R6) exactly as when the file was read whole.
+    if let Some(refusal) = oversize {
+        return Err(refusal);
     }
 
     // The clock is read once for the whole run: a verification that read the

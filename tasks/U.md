@@ -855,6 +855,7 @@
 - Do: two route classes cost a poll on every invocation and can never repay it. (1) `UpgradePoll::is_repollable()` is `false` for `NotFound` — *"the calendar does not know this commitment — it will never upgrade"* — and nothing persists that fact. (2) An **already-merged** route is the same shape from the other end: A104's `already_merged` stops the artifact growing, but it **cannot be evaluated before the poll**, because it needs the body the poll returns. So a fully upgraded vault burns its whole 4-poll budget every invocation, for ever, and gets nothing. D99 R9's rotation spreads the waste across the work list rather than removing it — it bounds *starvation*, not *cost*. Decide whether a remembered per-route state is worth a vault write: it is a write on every invocation, which means the lock on every invocation, which is exactly what D99 R3 spends its effort avoiding — so "no, and here is why" is a legitimate answer, provided it is the recorded one.
 - Accept: either the memory exists and a `NotFound` or already-merged route is polled at most once per calendar per work, or the decision not to have one is recorded with its reason in `ots/engine.rs`'s module docs.
 - Notes: D99 §9 files this as **U57**; reconciled to U59 at bookkeeping. D99 §8 lists the un-widened half as a standing residual risk (*"starvation is bounded, not removed"*) with this task as its trigger.
+- Notes: **[2026-10-20, wave 41 — `A143`.]** `UpgradePoll::is_repollable()`, which this entry's Do cites, is deleted for want of a production caller (D190 §2 R2; D54's 2026-10-20 addendum): the classification it named survives as `UpgradePoll::NotFound`'s own doc, *"further polling cannot help"* (`crates/antseal-anchor/src/ots/upgrade.rs`), and the engine still re-polls every non-upgrade variant, `NotFound` included — which is this row's defect, unchanged.
 
 ### U60 — No way to turn the opportunistic hook off
 - Milestone: M2
@@ -1594,6 +1595,7 @@
 - Do: append the subset reason (value-free since U99) in `rpc_endpoints_value`'s numbered arm.
 - Accept:
   - An escape sequence, a stray quote and a boolean in `rpc_endpoints` entry 1 each name the entry and their own reason, the value absent (canary), asserted in-process; a plant dropping the reason reddens them by message.
+- Notes: **[2026-10-20, wave 41 — TICKED (ruled without a new record, lane L-CFG4).]** Captures on the `TODO.md` row; the lane report's deviations are summarised on the row; D195's 2026-10-20 addendum records what was built.
 
 ### U112 — `init`'s non-empty-directory check mishandles two odd entries
 - Milestone: M4
@@ -1605,6 +1607,7 @@
 - Do: (a) treat a `vault.header` that exists as a link (`symlink_metadata`) as D39's case, or word the refusal for it; (b) count a non-file entry at the path `init` will write (`config.toml`, the store's record names) as an obstacle.
 - Accept:
   - Both shapes, built in a test directory, produce one refusal whose words are true, before any passphrase and with nothing written; plants reverting each fix redden them by message.
+- Notes: **[2026-10-20, wave 41 — TICKED (ruled without a new record, lane L-INIT2).]** Captures on the `TODO.md` row; the lane report's deviations are summarised on the row; D205's 2026-10-20 addendum records what was built.
 
 ### U113 — One undecodable payment receipt fails the whole `list`
 - Milestone: M4
@@ -1628,6 +1631,7 @@
 - Do: key the post-pay plan arms and rule 2's state clause on the receipt as well (a post-pay tag whose receipt does not cover the staged blobs is treated as partly paid), or record why legacy vaults are out of scope.
 - Accept:
   - Both legacy shapes, planted in a test vault, get a plan and an abandon answer that agree with what the resume will charge; a plant restoring the tag-only post-pay arm reddens them by message.
+- Notes: **[2026-10-20, wave 41 — TICKED (D210, lane L-MONEY2).]** Captures on the `TODO.md` row; D210 §6 records what was built and every deviation.
 
 ### U115 — Two money sentences overstate or understate what the vault knows
 - Milestone: M4
@@ -1639,6 +1643,7 @@
 - Do: reword rule 2's opening to what the vault knows ("a payment is recorded for work …"), and give the plan's payment-recorded arm the proof-clock sentence `list` uses.
 - Accept:
   - Both sentences asserted by message on a partly paid fixture, with plants restoring the old wording reddening them.
+- Notes: **[2026-10-20, wave 41 — TICKED (D210, lane L-MONEY2).]** Captures on the `TODO.md` row; D210 §6 records what was built and every deviation.
 
 ### U116 — Two user-doc sentences claimed more than the product does
 - Milestone: M4
@@ -1651,3 +1656,84 @@
 - Accept:
   - Both sentences read true against the page and the code, line counts unchanged (citations into both pages unmoved); `check-copy-style.py` and `check-personal-data.py` exit 0.
 - Notes: **[2026-10-20, wave 40 — TICKED (ruled without a new record, orchestrator act).]** Captures on the `TODO.md` row; both edits are line-count neutral.
+
+### U117 — A FIFO named `config.toml` or `vault.header` hangs the binary
+- Milestone: M4
+- Size: XS
+- Deps: after U4, U6 (the config file; the vault's bounded reads)
+- Spec: D39 (the existing-vault refusal reads `vault.header`); D69 §3 R2 (an input that cannot be read is `io-error`, 4)
+- Discovered by: wave-41 planning lane P3, 2026-10-20 (executed). Id assigned centrally.
+- Problem: dispatch's `config::load()` (`crates/antseal-cli/src/config.rs`) opens `config.toml` with a blocking read before any command runs, and unlock reads `vault.header` the same way (`read_bounded`, `crates/antseal-cli/src/vault/session.rs`), so a FIFO at either path makes every command — or, for the header, `list` — wait forever. EXECUTED: `antseal --json list` and `antseal --json --passphrase-fd 0 init` under `timeout 20` exit 124 with a FIFO at `config.toml`; `list` the same with one at `vault.header`. A socket fails at once (exit 4, `ENXIO`). Antseal's own files are never legitimately pipes, but the keyfile (`ANTSEAL_KEYFILE=/dev/fd/N`), `vault import <(…)`, `verify`'s bundle and the `--*-fd` inputs can be, so a global refusal in `read_bounded` would break them.
+- Do: one helper for antseal's own files (`vault.header`, the key check, `config.toml`) that refuses a non-regular file before opening it — exit 4 (`io-error`), naming the path and saying antseal reads only a regular file there; the user-named inputs keep their reads. The other store records (`store/wallet`, the works records) are recorded residue.
+- Accept:
+  - A FIFO, a directory and a socket at `config.toml` and at `vault.header` are each refused at once with the new text (a test with a per-case timeout); a plant restoring the plain open makes the FIFO cases time out, reddening the test by message.
+- Notes: **[2026-10-20, wave 41 — TICKED (ruled without a new record, lane L-CFG4).]** Captures on the `TODO.md` row; the lane report's deviations are summarised on the row; its own Do rules it, and D205's 2026-10-20 addendum records its text where it supersedes D205's quoted exit-4 text.
+
+### U118 — A nested array is refused with a false reason under every list key
+- Milestone: M4
+- Size: XS
+- Deps: after U108 (the numbered per-entry refusal)
+- Spec: D195 §2 R4 (every URL-list refusal names the key, the line and the entry's position, never the value); U99 (value-free subset refusals)
+- Discovered by: wave-41 planning lane P3, 2026-10-20 (executed). Id assigned centrally.
+- Problem: the config subset parser's array branch (`parse_value`, `crates/antseal-cli/src/config.rs`) refuses a nested array of two or more elements as *"`<key>` entry 1: array value must open and close on one line in this config"* — false: the array is on one line, and nesting is what the subset refuses. Measured under `default_network`, `bootstrap`, `tsa_urls`, `ots_calendars`, `bitcoin_endpoints` and `rpc_endpoints`.
+- Do: refuse a nested array, under every list key, with the true reason (*"nested arrays are outside the config subset"*) through one constant.
+- Accept:
+  - A nested array entry is named as one under each list key (seven cases, `rpc_endpoints` under both networks), the value absent; a plant restoring the old reason fails every case by message.
+- Notes: **[2026-10-20, wave 41 — TICKED (ruled without a new record, lane L-CFG4).]** Captures on the `TODO.md` row; the lane report's deviations are summarised on the row; D195's 2026-10-20 addendum records what was built.
+
+### U119 — `verify` reads a whole bundle file into memory before the size cap applies
+- Milestone: M4
+- Size: XS
+- Deps: after U30 (the `verify` command)
+- Spec: the spec's parse-defensively rule (bundles arrive from adversaries); the codec's `MAX_BUNDLE_BYTES` (256 MiB), enforced as the decoder's first statement
+- Discovered by: wave-41 planning lane P3, 2026-10-20 (executed). Id assigned centrally.
+- Problem: the `verify` handler (`crates/antseal-cli/src/commands.rs`) reads its input with `std::fs::read`, so the codec's 256 MiB cap applies only after the whole file is in memory, and an unbounded input exhausts memory first. EXECUTED: under a 1.5 GB memory limit, `antseal verify /dev/zero` exits 4 with *"out of memory"* instead of the oversize refusal.
+- Do: read the input through a reader bounded at `MAX_BUNDLE_BYTES + 1` bytes, so an oversize input reaches the codec's own cap refusal without being read whole; the verdict and class for an oversize file are unchanged.
+- Accept:
+  - `verify` over an unbounded input (`/dev/zero`) returns the codec's oversize refusal promptly (a spawned test with a timeout), and a file one byte over the cap gets the same refusal and exit code as before; a plant restoring the unbounded read reddens the unbounded case by message (timeout or memory limit).
+- Notes: **[2026-10-20, wave 41 — TICKED (ruled without a new record, lane L-CFG4).]** Captures on the `TODO.md` row; the lane report's deviations are summarised on the row; D69's 2026-10-20 addendum records what was built.
+
+### U120 — The consent screen's Upload line states a remainder quote's count as every unit of the seal
+- Milestone: M4
+- Size: XS
+- Deps: after S31 (the remainder)
+- Spec: S8 (consent shows exactly what will be paid); D146
+- Discovered by: wave-41 planning lane P2, 2026-10-20 (code-traced in its challenge round). Id assigned centrally.
+- Problem: the consent screen prints *"Upload: {blob_count} blob(s) — every encrypted unit plus the encrypted manifest"* (`crates/antseal-cli/src/seal_consent.rs`), and on a resume's remainder consent `blob_count` is the remainder quote's own count (`crates/antseal-cli/src/pipeline/resume.rs`, `blob_count: quote.blobs.len()`), so the line calls the remainder every unit of the seal; under D209 R7 the proofs-expired re-consent prices a subset too.
+- Do: give `ConsentRequest` the work's blob count and print "{K} of the seal's {N} blob(s)" whenever the two differ (D209 R8).
+- Accept:
+  - A remainder consent and a partial expired re-consent each print K of N with the true counts, and a full first payment prints as before; a plant restoring the old line reddens the partial cases by message.
+- Notes: **[2026-10-20, wave 41 — TICKED (D209 R8, lane L-RESUME3).]** Captures on the `TODO.md` row; D209 §6 records what was built and every deviation.
+
+### U121 — `verify`'s oversize refusal states a length nobody measured when its input is a stream
+- Milestone: M4
+- Size: XS
+- Deps: after U119 (the bounded read)
+- Spec: the house rule that a refusal says only what is true; D10 (the parser caps); the codec's `MAX_BUNDLE_BYTES`, enforced as the decoder's first statement
+- Discovered by: wave-41 implementation lane L-CFG4, 2026-10-20 (executed). Id assigned centrally.
+- Problem: since U119 the `verify` handler reads at most `MAX_BUNDLE_BYTES + 1` bytes, so for a pipe or a device (`/dev/zero`) the codec's `BundleError::InputTooLarge` Display reads *"bundle input of 268435457 bytes exceeds the 268435456-byte limit"* — a length the input does not have. A regular file is refused unread at its true size (U119), so only streams carry the false number. The wording lives in `crates/antseal-core/src/bundle/error.rs` and is pinned by that file's Display test and by `crates/antseal-core/tests/format_registry_freeze.rs`; `antseal-core` is a wasm input.
+- Do: rule where a truthful wording for a truncated input belongs — a codec-side "more than {cap} bytes" for a read that stopped at the cap (a flag or a sibling variant, with the freeze test's consent), or a CLI-side refusal in the same class for a stream — and implement it.
+- Accept:
+  - `verify /dev/zero` (and a pipe longer than the cap) refuses without stating a length the input does not have, in the same class and exit code as today; a regular oversize file keeps its true size; a plant restoring the measured-length wording for a stream reddens it by message.
+
+### U122 — The vault's other own records still open with a blocking read
+- Milestone: M4
+- Size: XS
+- Deps: after U117 (the helper for antseal's own files)
+- Spec: D69 §3 R2 (an input that cannot be read is `io-error`, 4); U117
+- Discovered by: wave-41 implementation lane L-CFG4, 2026-10-20 (code-traced; U117's recorded residue). Id assigned centrally.
+- Problem: U117 moved `config.toml`, `vault.header` and `store/check` onto a helper that refuses a non-regular file before opening it. `store/wallet` (`crates/antseal-cli/src/vault/wallet.rs`), `store/bookkeeping` (`vault/bookkeeping.rs`), the works records (`vault/store.rs`) and `vault export`'s config read (`vault/export.rs`, unreachable while dispatch refuses first) still use a plain open, so a FIFO at one of those paths would hang the command that reads it.
+- Do: move those reads onto U117's helper (exit 4, the same sentence); `vault/wallet.rs` is on the heavy-tier trigger list, so the gate forces the heavy tier.
+- Accept:
+  - A FIFO at each of those paths is refused at once (a test with a per-case timeout); a plant restoring the plain open makes the FIFO cases time out, reddening the test by message.
+
+### U123 — The proof-clock sentence overstates for a receipt whose only paying transactions are unresolved `Submitted` ones
+- Milestone: M4
+- Size: XS
+- Deps: after S54 (D208's resolution, which only the resume runs)
+- Spec: D203 M1–M2 (the wording rule; `list`'s clock); D210 R2 (one clock sentence for `list` and the plan); D208 R9
+- Discovered by: wave-41 implementation lane L-RESUME3, 2026-10-20 (code-traced, answering L-MONEY2's coordination question). Id assigned centrally.
+- Problem: `list`'s note (`ResumeClock::TimeBoxed.note()`, `crates/antseal-cli/src/listing.rs`), the resume plan's last line and abandon's rule-2 receipt clause (`crates/antseal-cli/src/seal_resume.rs`) say *"… a payment for this seal is recorded, and its payment proofs stay usable for uploading only about a day …"* whenever `payment_recorded` holds. For a receipt whose only paying transactions are unresolved `Submitted` ones, the proofs are usable only if the chain later shows a landing, and a legacy record-less capture holds no proof at all. These renderers do not ask the chain (D208's resolution runs inside the resume only), so S54 does not change what they print.
+- Do: word the clock for a receipt whose paying transactions are all `Submitted` (e.g. "a payment for this seal may have been made; re-run it to have antseal check the chain before anything is bought again"), from the one shared source, so `list`, the plan and rule 2 stay in step.
+- Accept:
+  - A `Submitted`-only receipt (as D208 R5's capture writes it) renders the new wording in `list`, the plan and rule 2, and a fully confirmed one keeps today's; a plant restoring the unconditional clock reddens the `Submitted` case by message.

@@ -414,7 +414,7 @@ mod tests {
             // selected — and NOT the banned shape `vault/keyfile.rs:422-426`
             // warns about, which compares a claim against the string that
             // makes it. The constants' own wording stays pinned by
-            // `tests/snapshots/init-report.txt:68` and `:79`.
+            // `tests/snapshots/init-report.txt:17` and `:79`.
             let expected = if wrapped {
                 BACKUP_BY_HAND
             } else {
